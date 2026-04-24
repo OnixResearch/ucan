@@ -23,4 +23,5 @@
 - Repo currently had no `.agent/napkin.md`; start capturing architecture decisions here.
 - `flake.nix` uses Crane, so a tracked `Cargo.lock` is required before Nix-based checks will evaluate.
 - New workspace files also need `git add -N` before Crane-based format/build checks see them.
-- The Nix build now needs a synthetic source tree containing the repo root plus a copied `verified-logic/` subtree, then a `postPatch` symlink from `../verified-logic` back into that subtree so the committed Cargo path dependency resolves inside the sandbox.
+- The Nix build now resolves `verified-logic` from the sibling checkout via `git+file:../verified-logic`, copies that repo under the synthetic source tree, then uses a `postPatch` symlink from `../verified-logic` back into the copied subtree so the committed Cargo path dependency resolves inside the sandbox.
+- Relative `git+file:` flake inputs currently emit a Nix warning (`nix` issue 12281); accept the warning for now because it removes the previous machine-specific absolute path without changing the Cargo dependency contract.

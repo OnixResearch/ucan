@@ -9,8 +9,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    # Keep the sibling dependency portable across checkouts. Current Nix
+    # warns on relative git+file inputs, but this avoids a machine-specific
+    # absolute path while preserving the existing ../verified-logic contract.
     verified-logic-src = {
-      url = "git+file:///home/brittonr/git/verified-logic";
+      url = "git+file:../verified-logic";
       flake = false;
     };
   };
@@ -53,6 +56,7 @@
 
         commonArgs = {
           inherit src nativeBuildInputs buildInputs;
+          cargoToml = ./Cargo.toml;
           cargoLock = ./Cargo.lock;
           postPatch = ''
             ln -sfn "$PWD/verified-logic" ../verified-logic

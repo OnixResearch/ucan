@@ -9,7 +9,8 @@
 - `nix develop -c cargo test --workspace` is the fastest verification path for ordinary changes.
 - `flake.nix` uses Crane, so a tracked `Cargo.lock` must exist before `nix develop` or `nix flake check` can evaluate successfully.
 - New workspace files must be at least staged with `git add -N` before Crane-based checks can see them.
-- `flake.nix` builds from a synthetic source tree that copies the repo at the root and the sibling `verified-logic/` underneath it; `postPatch` then symlinks `../verified-logic` back to that copied subtree so the committed Cargo path dependency still resolves inside the Nix sandbox.
+- `flake.nix` resolves `verified-logic` from the sibling checkout via `git+file:../verified-logic`, copies that source under the synthetic build tree, then uses `postPatch` to symlink `../verified-logic` back to the copied subtree so the committed Cargo path dependency still resolves inside the Nix sandbox.
+- Current Nix emits a warning for relative `git+file:` inputs (`nix` issue 12281), but this is still more portable than the previous machine-specific absolute path.
 
 ## Gotchas
 - Avoid SSH-only Cargo dependencies unless the environment is guaranteed to have matching GitHub SSH credentials; anonymous or CI-like environments will fail before tests run.
