@@ -15,6 +15,7 @@ The design needs to preserve the existing boundary:
 - Keep deterministic claim-structure parsing and field validation in `ucan-core` while the shell owns compact-token serialization.
 - Support the minimum useful interoperability surface first: `did:key` issuers backed by Ed25519 keys and delegation proof chains supplied by the caller.
 - Return verified outputs that expose effective capabilities and effective time windows instead of leaving callers to recompute them.
+- Replace primitive-heavy public seams with named UCAN concepts and staged verification results so invalid wiring and invalid workflow states become harder to represent.
 
 **Non-Goals**
 - Add network DID resolution or built-in remote proof fetching.
@@ -72,7 +73,7 @@ The design needs to preserve the existing boundary:
 
 **Alternative:** Reimplementing attenuation, temporal narrowing, or DID semantics directly in the shell was rejected because it would create two UCAN logic engines that could disagree.
 
-**Implementation:** Keep `ucan-core` responsible for syntax/shape validation only, and keep `ucan` responsible for bridging into `verified-logic` modules such as `ucan_token`, `ucan_ability`, `ucan_temporal`, and `ucan_signature`.
+**Implementation:** Keep `ucan-core` responsible for syntax/shape validation only, and keep `ucan` responsible for bridging into `verified-logic` modules such as `ucan_token`, `ucan_chain::ChainEntry`, `ucan_ability`, `ucan_temporal`, and `ucan_signature`.
 
 ### 6. Ship docs and examples as part of the usable-library bar
 
@@ -84,13 +85,45 @@ The design needs to preserve the existing boundary:
 
 **Implementation:** Add at least one end-to-end consumer example and keep README guidance aligned with the actual supported algorithms, proof model, and current limitations.
 
+### 7. Use named semantic types instead of primitive-heavy public seams
+
+**Choice:** Introduce dedicated UCAN domain types for concepts such as issuer DID, audience DID, compact token strings, proof collections, capability collections, and temporal bounds instead of exposing those roles primarily as `String`, `Vec<_>`, and `u64` parameters.
+
+**Rationale:** This follows the “one behavior, one type” discipline from evermeta. The current primitive-heavy surface makes it too easy to swap issuer and audience, confuse proof material with token bytes, or lose the meaning of a timestamp at the call boundary.
+
+**Alternative:** Keeping raw primitives plus documentation was rejected because documentation does not make bad wiring unrepresentable and does not give the team a stable shared vocabulary for the core UCAN concepts.
+
+**Implementation:** Add owned and borrowed wrappers at the core/shell seam where they buy correctness, keep them zero-cost where possible, and make translations explicit at the boundary to `verified-logic` inputs.
+
+### 8. Model verification as a staged pipeline
+
+**Choice:** Represent parsing, structural validation, signature verification, and authorization as staged result types or typestate-style wrappers instead of one monolithic verifier that accepts and returns mostly untyped data.
+
+**Rationale:** This applies the “state machines the compiler checks” idea from evermeta. Callers should not be able to accidentally authorize undecoded or unsigned material just because every stage currently accepts the same primitive inputs.
+
+**Alternative:** A single verifier with booleans or loosely structured intermediate values was rejected because invalid workflow states remain representable and because it makes both API review and testing less legible.
+
+**Implementation:** Expose a pipeline shaped like `DecodedToken -> StructurallyValidToken -> SignatureVerifiedToken -> AuthorizedToken`, with `StructurallyValidToken` owned by the `ucan-core` validation boundary and the later stages owned by the `ucan` shell via explicit moves across the seam. The shell error surface must keep temporal, attenuation, self-delegation, and signature failures distinct so callers do not lose the reason verification failed.
+
+### 9. Put the architectural standard in the toolchain
+
+**Choice:** Add deterministic verification rails that fail when the FCIS boundary drifts, when semantic checks bypass `vendor/verified-logic`, or when tests stop exercising the intended public workflow surface.
+
+**Rationale:** This follows evermeta’s “the standard is the toolchain” and “one idiom, one verifier” rules. The no-std boundary and verified-logic bridge are core to this change; if they live only in prose, they will erode.
+
+**Alternative:** Relying on code review and contributor discipline alone was rejected because the whole point of this change is to make the library’s usability and correctness story structurally durable.
+
+**Implementation:** Add rails that catch `std`/codec dependency creep in `ucan-core`, bridge-audit checks that confirm semantic routing through `verified-logic`, and test helpers that keep public API coverage readable instead of calcifying around giant shared fixtures.
+
 ## Verification Strategy
 
 - `ucan-core` gets pure unit coverage for positive and negative claim validation, including required-field failures, malformed capability sets, and wildcard-segment alignment with `verified-logic`.
 - `ucan` gets integration coverage for the public workflow: compact-token round-trip, signature verification, malformed compact tokens, missing proofs, self-delegation rejection, expired parents, and over-broad child delegations.
 - Prefer runtime-generated tokens in integration tests so the verification path exercises the same builder/signing surface that consumers use; add targeted tampering of serialized tokens to cover negative cases.
+- Build token/proof test helpers as builders so each positive and negative case declares only the preconditions it needs instead of inheriting a general fixture with hidden coupling.
 - Keep at least one README/example flow buildable as part of verification so docs cannot drift away from the public API.
-- Add a dedicated no-std verification rail for `ucan-core` plus a deterministic bridge audit that fails if attenuation, token-time, or signature semantics stop routing through `vendor/verified-logic`.
+- Structure README/example onboarding as architecture snapshot first, end-to-end flow second, and proof-chain deep dive third so the public surface teaches consumers in the same order they need to understand it.
+- Add a dedicated no-std verification rail for `ucan-core` plus a deterministic bridge audit that fails if attenuation, token-time, or signature semantics stop routing through `vendor/verified-logic`, or if `ucan-core` picks up shell-only concerns such as `std`, JSON, or compact-token codec dependencies.
 - When new files are added, stage them with `git add -N` before Crane-based checks, keep `cargo fmt`/`cargo clippy` scoped to `ucan` and `ucan-core`, and preserve the existing `.gitignore` unignore for `vendor/verified-logic/src/result.rs`.
 
 ## Risks / Trade-offs

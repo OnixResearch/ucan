@@ -8,6 +8,8 @@
 
 The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`. When a primitive needs verified semantics, the shell bridges validated core values into `verified-logic` instead of reimplementing the logic locally.
 
+The shell crate now carries `serde`, `serde_json`, and `snafu` as the intended correctness-focused foundation for upcoming compact-token parsing, strict claim decoding, and typed error reporting. Property-based integration coverage uses Hegel via the `hegeltest` crate.
+
 ## Development
 
 ```bash
@@ -16,6 +18,16 @@ nix develop -c cargo fmt --manifest-path Cargo.toml -p ucan -p ucan-core --check
 nix develop -c cargo clippy --manifest-path Cargo.toml -p ucan -p ucan-core --all-targets --no-deps -- -D warnings
 nix flake check
 ```
+
+The dev shell also includes correctness tooling for follow-up hardening work:
+
+```bash
+cargo-mutants --help
+cargo fuzz --help
+uv --version
+```
+
+Hegel-backed property tests use `uv` on first run to install the pinned `hegel-core` helper into `.hegel/`, which is intentionally gitignored.
 
 `vendor/verified-logic` is a checked-in upstream snapshot. Keep it byte-for-byte aligned with upstream and exclude it from this repo's local `fmt`/`clippy` policy; refresh it with the sync script instead of reformatting or relinting it in place.
 

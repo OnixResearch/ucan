@@ -87,9 +87,12 @@
           inherit buildInputs;
 
           packages = with pkgs; [
+            cargo-fuzz
+            cargo-mutants
             cargo-nextest
             cargo-watch
             rust-analyzer
+            uv
           ];
 
           # Ensure the nightly toolchain and vendored verified-logic source are

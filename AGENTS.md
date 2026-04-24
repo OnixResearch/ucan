@@ -8,6 +8,7 @@
 
 ## Build
 - `nix develop -c cargo test --workspace` is the fastest verification path for ordinary changes.
+- The dev shell now includes `cargo-mutants`, `cargo-fuzz`, and `uv`; Hegel property tests install into `.hegel/` on first run, so keep that directory gitignored.
 - `flake.nix` uses Crane, so a tracked `Cargo.lock` must exist before `nix develop` or `nix flake check` can evaluate successfully.
 - New workspace files must be at least staged with `git add -N` before Crane-based checks can see them.
 - `flake.nix` now builds directly from the repo's cleaned Cargo source because `vendor/verified-logic` is checked in alongside the root manifest.

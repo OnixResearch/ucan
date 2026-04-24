@@ -75,6 +75,14 @@ r[library.delegation-chain.over-broad-child-delegation-is-rejected]
 - THEN verification MUST fail with an attenuation or temporal error
 - AND the token MUST not be treated as authorized
 
+#### Scenario: Self-delegation is rejected
+r[library.delegation-chain.self-delegation-is-rejected]
+
+- GIVEN a token whose issuer and audience are the same DID
+- WHEN the `ucan` shell verifies the token or any proof chain containing it
+- THEN verification MUST fail with a structured self-delegation error
+- AND the token MUST not be treated as authorized
+
 ### Requirement: Functional core and imperative shell stay separate
 r[library.fcis-boundary]
 
