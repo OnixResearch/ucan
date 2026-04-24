@@ -1,9 +1,15 @@
-## ADDED Requirements
+# build Specification
+
+## Purpose
+
+Define the build and contributor workflow requirements that keep the vendored `verified-logic` snapshot deterministic, warning-free, and independent of sibling checkouts.
+
+## Requirements
 
 ### Requirement: Vendored verified-logic source for builds
-r[build.vendored-verified-logic]
 
 The repository MUST track an in-tree `verified-logic` source snapshot under `vendor/verified-logic` so both Cargo and Nix can build without a sibling checkout or a deprecated relative `git+file:` input.
+r[build.vendored-verified-logic]
 
 #### Scenario: Warning-free flake evaluation
 r[build.vendored-verified-logic.warning-free-flake-evaluation]
@@ -30,9 +36,9 @@ r[build.vendored-verified-logic.fresh-clone-resolves-dependency]
 - AND the build MUST not require a sibling checkout to compile
 
 ### Requirement: Contributor sync workflow for vendored verified-logic
-r[build.verified-logic-sync-workflow]
 
 The repository MUST document and support a deterministic workflow for refreshing `vendor/verified-logic` from a committed upstream `verified-logic` revision.
+r[build.verified-logic-sync-workflow]
 
 #### Scenario: Contributor refreshes a stale vendored source
 r[build.verified-logic-sync-workflow.refreshes-stale-vendored-source]
