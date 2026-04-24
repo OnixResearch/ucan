@@ -2,6 +2,7 @@
 target/
 coverage/
 doc/
+vendor/verified-logic/target-test/
 
 # Nix
 result*
