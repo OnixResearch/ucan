@@ -29,3 +29,4 @@
 - Full flake checks must scope `cargo fmt`/`cargo clippy` to `ucan` and `ucan-core`; otherwise the vendored `verified-logic` snapshot is linted against local policy and fails unrelated checks.
 - `.gitignore`'s `result*` pattern also matches `vendor/verified-logic/src/result.rs`; explicitly unignore that path or Crane's cleaned source drops the module.
 - When `flake.nix` is mid-edit, repo-local `direnv` reevaluation can stall shell commands. Run verification Nix commands from outside the repo root with an explicit flake path to avoid hanging on `nix print-dev-env`.
+- Current `ucan` exports are still primitive-heavy: capability-document parsing plus verified helper wrappers. If the goal is a usable library, plan around end-to-end token issuance, parsing, verification, and proof-chain APIs rather than only adding more helper functions.

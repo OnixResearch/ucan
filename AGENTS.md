@@ -4,6 +4,7 @@
 - `crates/ucan-core` is the `#![no_std]` functional core. Keep deterministic parsing/validation there and keep it free of `std` imports.
 - The repo-root `ucan` crate is the `std` shell. Put file/path/reader/writer integration there and delegate validation into `ucan-core`.
 - UCAN semantic primitives in the shell should bridge into the vendored `vendor/verified-logic` crate instead of reimplementing ability, temporal, signature, or DID logic locally.
+- Current public surface is still primitive-heavy: it validates capability documents and wraps verified helpers, but it does not yet provide end-to-end token issuance/parsing/proof-chain APIs. Treat “make it usable” work as adding real token workflows, not just polishing the existing helper exports.
 
 ## Build
 - `nix develop -c cargo test --workspace` is the fastest verification path for ordinary changes.
