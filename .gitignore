@@ -1,0 +1,23 @@
+# Build
+target/
+coverage/
+doc/
+
+# Nix
+result*
+.direnv/
+.pi/
+
+# Agent state
+.agent/review-metrics.jsonl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime
+*.redb
+*.sock
+data/

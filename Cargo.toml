@@ -1,0 +1,31 @@
+[workspace]
+members = ["crates/ucan-core"]
+resolver = "2"
+
+[workspace.metadata.tigerstyle]
+default_scope = ["-p", "ucan", "-p", "ucan-core"]
+cargo_check_args = ["--workspace", "--all-targets"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+[package]
+name = "ucan"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+ucan-core = { path = "crates/ucan-core" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
