@@ -8,11 +8,11 @@
 
 ## Build
 - `nix develop -c cargo test --workspace` is the fastest verification path for ordinary changes.
-- The dev shell now includes `cargo-mutants`, `cargo-fuzz`, and `uv`; Hegel property tests install into `.hegel/` on first run, so keep that directory gitignored.
+- The dev shell includes `uv`; Hegel property tests install into `.hegel/` on first run, so keep that directory gitignored. Sandboxed `nix flake check` skips Hegel integration tests and runs lib/example checks because Hegel's Python server bootstrap is not sandbox-friendly.
 - `flake.nix` uses Crane, so a tracked `Cargo.lock` must exist before `nix develop` or `nix flake check` can evaluate successfully.
 - New workspace files must be at least staged with `git add -N` before Crane-based checks can see them.
 - `flake.nix` now builds directly from the repo's cleaned Cargo source because `vendor/verified-logic` is checked in alongside the root manifest.
-- Full `nix flake check` now scopes `cargo fmt` and `cargo clippy` to `ucan`/`ucan-core`; otherwise the vendored `verified-logic` snapshot gets reformatted or linted against this repo's policy instead of upstream's.
+- Full `nix flake check` now scopes `cargo fmt` and `cargo clippy` to `ucan`/`ucan-core` and allows `clippy::cargo-common-metadata`; otherwise the vendored `verified-logic` snapshot or package metadata gets linted against this repo's policy instead of upstream's.
 - Refresh `vendor/verified-logic` with `./scripts/sync-verified-logic.sh`; the script imports the committed `HEAD` revision from the sibling `../verified-logic` checkout and records the imported revision in `vendor/verified-logic-revision.txt`.
 
 ## Gotchas

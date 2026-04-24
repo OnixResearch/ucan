@@ -8,14 +8,69 @@
 
 The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`. When a primitive needs verified semantics, the shell bridges validated core values into `verified-logic` instead of reimplementing the logic locally.
 
-The shell crate now carries `serde`, `serde_json`, and `snafu` as the intended correctness-focused foundation for upcoming compact-token parsing, strict claim decoding, and typed error reporting. Property-based integration coverage uses Hegel via the `hegeltest` crate.
+The shell crate now carries `serde`, `serde_json`, `base64`, `blake3`, and `snafu` as the correctness-focused foundation for compact-token parsing, strict claim decoding, proof references, and typed error reporting. Property-based integration coverage uses Hegel via the `hegeltest` crate.
+
+## End-to-end issue/parse/verify
+
+The primary public workflow is token-oriented:
+
+```rust
+use ucan::{
+    AudienceDid, CapabilitySet, ED25519_SECRET_KEY_BYTES, Ed25519SigningKey,
+    Ed25519VerificationKey, IssueRequest, KeyResolutionContext, ProofCollection,
+    TokenTimeBounds, VerificationContext, VerificationTime, issue_token,
+    verify_compact_token,
+};
+
+let issuer_key = Ed25519SigningKey::from_bytes([7; ED25519_SECRET_KEY_BYTES]);
+let audience_key = Ed25519SigningKey::from_bytes([9; ED25519_SECRET_KEY_BYTES]);
+let request = IssueRequest::new(
+    issuer_key.clone(),
+    AudienceDid::from(audience_key.issuer()?),
+    CapabilitySet::single("did:key:z6Mkresource", "store/add")?,
+    ProofCollection::empty(),
+    TokenTimeBounds::new(1_000, 2_000)?,
+);
+let token = issue_token(&request)?;
+let context = VerificationContext::new(
+    VerificationTime::from_unix_seconds(1_500),
+    KeyResolutionContext::new(vec![Ed25519VerificationKey::from_signing_key(&issuer_key)?]),
+    ProofCollection::empty(),
+);
+let verified = verify_compact_token(&token, &context)?;
+assert_eq!(verified.capabilities().as_slice().len(), 1);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Run the same happy path as a normal example:
+
+```bash
+cargo run --example issue_and_verify
+```
+
+## Proof-chain delegation
+
+Proof material is explicit. A child token carries BLAKE3 proof references in `prf`; callers provide the actual parent compact tokens through `ProofCollection`. Verification checks each parent signature, issuer/audience linkage, temporal narrowing, capability attenuation, and self-delegation rejection before returning the effective delegation constraints.
+
+```bash
+cargo run --example proof_chain
+```
+
+The verified result exposes the issuer, audience, direct capability set, direct proof list, and effective delegation window/capabilities so callers do not need to recompute chain constraints.
+
+## Support limits
+
+- Supported DID methods: `did:key` for Ed25519 public keys.
+- Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
+- Proof-loading model: caller-supplied proof tokens only; the library does not fetch proofs from storage or the network.
+- Out-of-scope UCAN features in this release: revocation registries, remote DID resolution, network proof fetching, storage layers, invocation-specific caveats, and non-Ed25519 key types.
 
 ## Development
 
 ```bash
 nix develop -c cargo test --workspace
 nix develop -c cargo fmt --manifest-path Cargo.toml -p ucan -p ucan-core --check
-nix develop -c cargo clippy --manifest-path Cargo.toml -p ucan -p ucan-core --all-targets --no-deps -- -D warnings
+nix develop -c cargo clippy --manifest-path Cargo.toml -p ucan -p ucan-core --all-targets --no-deps -- -D warnings -A clippy::cargo-common-metadata
 nix flake check
 ```
 

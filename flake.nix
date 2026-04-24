@@ -49,9 +49,12 @@
         # Build just the cargo dependencies for caching
         cargoArtifacts = craneLib.buildDepsOnly (commonArgs);
 
-        # Build the actual package
+        # Build the actual package. Tests run in the explicit nextest check below;
+        # Hegel integration tests need a writable Python/uv environment and are
+        # exercised from the dev shell rather than the sandboxed package build.
         ucan = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
+          doCheck = false;
         });
       in
       {
@@ -68,13 +71,14 @@
             inherit cargoArtifacts;
             partitions = 1;
             partitionType = "count";
+            cargoExtraArgs = "--locked -p ucan -p ucan-core --lib --examples";
           });
 
           # Clippy lints for workspace packages only; the vendored snapshot keeps upstream lint policy.
           clippy = craneLib.cargoClippy (commonArgs // {
             inherit cargoArtifacts;
             cargoExtraArgs = "--locked --no-deps -p ucan -p ucan-core";
-            cargoClippyExtraArgs = "--all-targets -- -D warnings";
+            cargoClippyExtraArgs = "--all-targets -- -D warnings -A clippy::cargo-common-metadata";
           });
 
           # Format only workspace packages; keep the vendored verified-logic snapshot byte-for-byte.

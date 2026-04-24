@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
+require_pattern() {
+  local pattern=$1
+  local path=$2
+  if ! grep -RInE "$pattern" "$path" >/dev/null; then
+    echo "missing required bridge pattern '$pattern' in $path" >&2
+    return 1
+  fi
+}
+
+reject_pattern() {
+  local pattern=$1
+  local path=$2
+  if grep -RInE "$pattern" "$path"; then
+    echo "forbidden local semantic implementation matched '$pattern' in $path" >&2
+    return 1
+  fi
+}
+
+require_pattern 'use verified_logic::ucan_ability|VerifiedCapability::from_document|\.contains\(' src
+require_pattern 'use verified_logic::ucan_temporal|compose_time_window_chain' src
+require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sign_ed25519' src
+require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
+require_pattern 'use verified_logic::ucan_did|encode_ed25519_did_key' src
+
+reject_pattern 'fn .*attenuat.*\{|fn .*temporal.*\{|fn .*signature.*\{' crates/ucan-core/src
+"$repo_root/scripts/check-ucan-core-no-std.sh"
