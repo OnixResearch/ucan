@@ -70,14 +70,17 @@
             partitionType = "count";
           });
 
-          # Clippy lints
+          # Clippy lints for workspace packages only; the vendored snapshot keeps upstream lint policy.
           clippy = craneLib.cargoClippy (commonArgs // {
             inherit cargoArtifacts;
+            cargoExtraArgs = "--locked --no-deps -p ucan -p ucan-core";
             cargoClippyExtraArgs = "--all-targets -- -D warnings";
           });
 
-          # Format check
-          fmt = craneLib.cargoFmt (commonArgs);
+          # Format only workspace packages; keep the vendored verified-logic snapshot byte-for-byte.
+          fmt = craneLib.cargoFmt (commonArgs // {
+            cargoExtraArgs = "--manifest-path Cargo.toml -p ucan -p ucan-core";
+          });
         };
 
         devShells.default = craneLib.devShell {

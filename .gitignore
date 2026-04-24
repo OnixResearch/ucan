@@ -5,6 +5,7 @@ doc/
 
 # Nix
 result*
+!vendor/verified-logic/src/result.rs
 .direnv/
 .pi/
 
