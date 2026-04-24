@@ -9,16 +9,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
-    # Keep the sibling dependency portable across checkouts. Current Nix
-    # warns on relative git+file inputs, but this avoids a machine-specific
-    # absolute path while preserving the existing ../verified-logic contract.
-    verified-logic-src = {
-      url = "git+file:../verified-logic";
-      flake = false;
-    };
   };
 
-  outputs = { self, nixpkgs, crane, rust-overlay, flake-utils, verified-logic-src, ... }:
+  outputs = { self, nixpkgs, crane, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -30,15 +23,8 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Common source filtering
-        ucanSrc = craneLib.cleanCargoSource ./.;
-        verifiedLogicSrc = craneLib.cleanCargoSource verified-logic-src;
-        src = pkgs.runCommand "ucan-combined-source" {} ''
-          mkdir -p $out/verified-logic
-          cp -R ${ucanSrc}/. $out/
-          cp -R ${verifiedLogicSrc}/. $out/verified-logic/
-          chmod -R u+w $out $out/verified-logic
-        '';
+        # Keep the vendored verified-logic crate inside the cleaned Cargo source.
+        src = craneLib.cleanCargoSource ./.;
 
         # Common build inputs
         nativeBuildInputs = with pkgs; [
@@ -58,9 +44,6 @@
           inherit src nativeBuildInputs buildInputs;
           cargoToml = ./Cargo.toml;
           cargoLock = ./Cargo.lock;
-          postPatch = ''
-            ln -sfn "$PWD/verified-logic" ../verified-logic
-          '';
         };
 
         # Build just the cargo dependencies for caching
@@ -106,8 +89,8 @@
             rust-analyzer
           ];
 
-          # Ensure the nightly toolchain is available and the verified-logic
-          # sibling dependency is present in the Nix source tree.
+          # Ensure the nightly toolchain and vendored verified-logic source are
+          # present in the same cleaned build tree used by the package.
           inputsFrom = [ ucan ];
         };
       }

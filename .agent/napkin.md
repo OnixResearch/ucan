@@ -5,6 +5,7 @@
 |------|--------|----------------|-------------------|
 | 2026-04-23 | self | Tried baseline `cargo test` before confirming a usable toolchain and dependency source; the repo also had no tracked `Cargo.lock` and an SSH-only git dependency | For this repo, use Nix-provided Rust tools, ensure `Cargo.lock` is tracked for Crane, and avoid unauthenticated SSH-only Cargo dependencies |
 | 2026-04-23 | self | Claimed `nix flake check` passed before surfacing an explicit final success record | When using pueue for verification, include the final `pueue_status`/`pueue_log` success evidence before claiming the check passed |
+| 2026-04-24 | self | Assumed `path:../verified-logic` could replace the sibling `git+file:` flake input without changing repo layout | Nix `path:` inputs must stay inside the current flake tree; removing the relative `git+file:` warning requires moving `verified-logic` in-tree (submodule/vendor), not just swapping fetcher syntax |
 
 ## User Preferences
 - Prefer a `no_std` core with a `std` shell; use FCIS boundaries explicitly.
@@ -12,7 +13,7 @@
 ## Patterns That Work
 - Start by checking whether the workspace already separates pure core logic from I/O-heavy shell code.
 - For this repo, a dedicated `crates/ucan-core` `#![no_std]` crate plus a repo-root `ucan` shell crate keeps FCIS boundaries explicit.
-- When verified semantics are required, bridge validated shell values into the sibling `../verified-logic` crate instead of duplicating UCAN logic in `ucan`.
+- When verified semantics are required, bridge validated shell values into the vendored `vendor/verified-logic` crate instead of duplicating UCAN logic in `ucan`.
 
 ## Patterns That Don't Work
 - Assuming architectural boundaries exist without auditing crate features and imports first.
@@ -23,5 +24,6 @@
 - Repo currently had no `.agent/napkin.md`; start capturing architecture decisions here.
 - `flake.nix` uses Crane, so a tracked `Cargo.lock` is required before Nix-based checks will evaluate.
 - New workspace files also need `git add -N` before Crane-based format/build checks see them.
-- The Nix build now resolves `verified-logic` from the sibling checkout via `git+file:../verified-logic`, copies that repo under the synthetic source tree, then uses a `postPatch` symlink from `../verified-logic` back into the copied subtree so the committed Cargo path dependency resolves inside the sandbox.
-- Relative `git+file:` flake inputs currently emit a Nix warning (`nix` issue 12281); accept the warning for now because it removes the previous machine-specific absolute path without changing the Cargo dependency contract.
+- The repo now vendors the verified dependency at `vendor/verified-logic`; both plain Cargo and Nix builds resolve the same checked-in crate path.
+- Refresh the vendored snapshot with `./scripts/sync-verified-logic.sh`; it imports the committed `HEAD` revision from `../verified-logic`, ignores uncommitted sibling changes, and records the imported revision in `vendor/verified-logic-revision.txt`.
+- When `flake.nix` is mid-edit, repo-local `direnv` reevaluation can stall shell commands. Run verification Nix commands from outside the repo root with an explicit flake path to avoid hanging on `nix print-dev-env`.
