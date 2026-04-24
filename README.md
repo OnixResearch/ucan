@@ -12,10 +12,12 @@ The boundary is FCIS-first: the shell gathers bytes and environment state, then 
 
 ```bash
 nix develop -c cargo test --workspace
-nix develop -c cargo fmt --check
-nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+nix develop -c cargo fmt --manifest-path Cargo.toml -p ucan -p ucan-core --check
+nix develop -c cargo clippy --manifest-path Cargo.toml -p ucan -p ucan-core --all-targets --no-deps -- -D warnings
 nix flake check
 ```
+
+`vendor/verified-logic` is a checked-in upstream snapshot. Keep it byte-for-byte aligned with upstream and exclude it from this repo's local `fmt`/`clippy` policy; refresh it with the sync script instead of reformatting or relinting it in place.
 
 Refresh the vendored `verified-logic` snapshot from the sibling source repo with:
 
