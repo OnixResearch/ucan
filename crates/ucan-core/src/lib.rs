@@ -1,6 +1,10 @@
 #![no_std]
 #![allow(clippy::cargo_common_metadata)]
 
+extern crate alloc;
+
+pub mod token;
+
 use core::fmt;
 
 const ASSIGNMENT_SEPARATOR: char = '=';

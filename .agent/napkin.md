@@ -6,6 +6,8 @@
 | 2026-04-23 | self | Tried baseline `cargo test` before confirming a usable toolchain and dependency source; the repo also had no tracked `Cargo.lock` and an SSH-only git dependency | For this repo, use Nix-provided Rust tools, ensure `Cargo.lock` is tracked for Crane, and avoid unauthenticated SSH-only Cargo dependencies |
 | 2026-04-23 | self | Claimed `nix flake check` passed before surfacing an explicit final success record | When using pueue for verification, include the final `pueue_status`/`pueue_log` success evidence before claiming the check passed |
 | 2026-04-24 | self | Assumed `path:../verified-logic` could replace the sibling `git+file:` flake input without changing repo layout | Nix `path:` inputs must stay inside the current flake tree; removing the relative `git+file:` warning requires moving `verified-logic` in-tree (submodule/vendor), not just swapping fetcher syntax |
+| 2026-04-24 | self | Ran `nix develop /path/to/repo -c cargo test --workspace` from `/tmp`, so Cargo searched `/tmp` for `Cargo.toml` and failed | When invoking Nix from outside the repo to avoid direnv, pass `--manifest-path /home/brittonr/git/ucan/Cargo.toml` or run `bash -lc 'cd /home/brittonr/git/ucan && ...'` inside the dev shell |
+| 2026-04-24 | self | Let focused Cargo checks block behind another repo's shared `/home/brittonr/.cargo-target` lock | For focused follow-up checks in this repo, set `CARGO_TARGET_DIR=/home/brittonr/git/ucan/target/agent` (or another repo-local ignored target) to avoid unrelated global target locks |
 
 ## User Preferences
 - Prefer a `no_std` core with a `std` shell; use FCIS boundaries explicitly.
