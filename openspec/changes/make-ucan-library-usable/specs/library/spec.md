@@ -1,9 +1,9 @@
 ## ADDED Requirements
 
 ### Requirement: End-to-end token round-trip
-r[library.token-round-trip]
 
 The `ucan` crate MUST let a consumer build, sign, serialize to a JWT/JWS-style compact token string carrying the first usable claim set (`iss`, `aud`, `att`, `prf`, `exp`, `nbf`), parse that string back, and verify a UCAN token through the public library API without hand-assembling token claims or orchestrating raw verified primitives directly.
+r[library.token-round-trip]
 
 #### Scenario: Consumer issues and verifies a token
 r[library.token-round-trip.consumer-issues-and-verifies-a-token]
@@ -23,9 +23,9 @@ r[library.token-round-trip.invalid-serialized-token]
 - AND the library MUST not panic
 
 ### Requirement: did:key Ed25519 issuance and verification
-r[library.did-key-ed25519]
 
 The first usable library surface MUST support issuing and verifying tokens whose issuer identity is a `did:key` derived from an Ed25519 keypair.
+r[library.did-key-ed25519]
 
 #### Scenario: Issuer did:key matches the signing key
 r[library.did-key-ed25519.issuer-did-key-matches-the-signing-key]
@@ -44,9 +44,9 @@ r[library.did-key-ed25519.signature-mismatch-is-rejected]
 - AND the library MUST not report the token as valid
 
 ### Requirement: Delegation proof chains are verified end to end
-r[library.delegation-chain]
 
 The library MUST verify delegation proof chains across parent tokens, including issuer/audience linkage, temporal narrowing, and capability attenuation.
+r[library.delegation-chain]
 
 #### Scenario: Narrower child token is accepted
 r[library.delegation-chain.narrower-child-token-is-accepted]
@@ -84,9 +84,9 @@ r[library.delegation-chain.self-delegation-is-rejected]
 - AND the token MUST not be treated as authorized
 
 ### Requirement: Functional core and imperative shell stay separate
-r[library.fcis-boundary]
 
 Deterministic claim-shape parsing and structural validation MUST live in `crates/ucan-core`, while compact-token encoding/decoding, clocks, proof loading, and key resolution MUST live in the repo-root `ucan` crate.
+r[library.fcis-boundary]
 
 #### Scenario: Core validation remains pure
 r[library.fcis-boundary.core-validation-remains-pure]
@@ -111,9 +111,9 @@ r[library.fcis-boundary.shell-semantic-bridge-is-auditable]
 - AND the check MUST fail if equivalent local semantic implementations replace those bridges
 
 ### Requirement: `ucan-core` remains `no_std`
-r[library.core-no-std]
 
 The token-claim model and structural validation work added to `crates/ucan-core` MUST preserve the crate's `#![no_std]` boundary.
+r[library.core-no-std]
 
 #### Scenario: Core compiles without `std`
 r[library.core-no-std.core-compiles-without-std]
@@ -124,9 +124,9 @@ r[library.core-no-std.core-compiles-without-std]
 - AND the new token-claim validation surface MUST remain available to that build
 
 ### Requirement: Consumer onboarding is part of the library surface
-r[library.consumer-onboarding]
 
 The repository MUST document the supported issuance and verification flow with runnable examples that match the public API.
+r[library.consumer-onboarding]
 
 #### Scenario: Fresh consumer follows the documented flow
 r[library.consumer-onboarding.fresh-consumer-follows-the-documented-flow]
