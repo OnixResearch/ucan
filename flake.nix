@@ -9,9 +9,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    verified-logic-src = {
+      url = "git+file:///home/brittonr/git/verified-logic";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, crane, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, crane, rust-overlay, flake-utils, verified-logic-src, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -24,7 +28,14 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         # Common source filtering
-        src = craneLib.cleanCargoSource ./.;
+        ucanSrc = craneLib.cleanCargoSource ./.;
+        verifiedLogicSrc = craneLib.cleanCargoSource verified-logic-src;
+        src = pkgs.runCommand "ucan-combined-source" {} ''
+          mkdir -p $out/verified-logic
+          cp -R ${ucanSrc}/. $out/
+          cp -R ${verifiedLogicSrc}/. $out/verified-logic/
+          chmod -R u+w $out $out/verified-logic
+        '';
 
         # Common build inputs
         nativeBuildInputs = with pkgs; [
@@ -40,15 +51,21 @@
           pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
         ];
 
-        # Build just the cargo dependencies for caching
-        cargoArtifacts = craneLib.buildDepsOnly {
+        commonArgs = {
           inherit src nativeBuildInputs buildInputs;
+          cargoLock = ./Cargo.lock;
+          postPatch = ''
+            ln -sfn "$PWD/verified-logic" ../verified-logic
+          '';
         };
 
+        # Build just the cargo dependencies for caching
+        cargoArtifacts = craneLib.buildDepsOnly (commonArgs);
+
         # Build the actual package
-        ucan = craneLib.buildPackage {
-          inherit src cargoArtifacts nativeBuildInputs buildInputs;
-        };
+        ucan = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+        });
       in
       {
         packages = {
@@ -60,22 +77,20 @@
           inherit ucan;
 
           # Run tests with nextest
-          nextest = craneLib.cargoNextest {
-            inherit src cargoArtifacts nativeBuildInputs buildInputs;
+          nextest = craneLib.cargoNextest (commonArgs // {
+            inherit cargoArtifacts;
             partitions = 1;
             partitionType = "count";
-          };
+          });
 
           # Clippy lints
-          clippy = craneLib.cargoClippy {
-            inherit src cargoArtifacts nativeBuildInputs buildInputs;
+          clippy = craneLib.cargoClippy (commonArgs // {
+            inherit cargoArtifacts;
             cargoClippyExtraArgs = "--all-targets -- -D warnings";
-          };
+          });
 
           # Format check
-          fmt = craneLib.cargoFmt {
-            inherit src;
-          };
+          fmt = craneLib.cargoFmt (commonArgs);
         };
 
         devShells.default = craneLib.devShell {
@@ -87,7 +102,8 @@
             rust-analyzer
           ];
 
-          # Ensure the nightly toolchain is available
+          # Ensure the nightly toolchain is available and the verified-logic
+          # sibling dependency is present in the Nix source tree.
           inputsFrom = [ ucan ];
         };
       }

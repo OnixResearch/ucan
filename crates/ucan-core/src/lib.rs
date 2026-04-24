@@ -7,7 +7,7 @@ const ASSIGNMENT_SEPARATOR: char = '=';
 const ABILITY_SEGMENT_SEPARATOR: char = '/';
 const ALLOWED_ABILITY_HYPHEN: char = '-';
 const ALLOWED_ABILITY_UNDERSCORE: char = '_';
-const ALLOWED_ABILITY_WILDCARD: char = '*';
+const WILDCARD_SEGMENT: &str = "*";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapabilityView<'a> {
@@ -23,8 +23,8 @@ impl<'a> CapabilityView<'a> {
     /// Returns [`CapabilityError`] when either field is empty, untrimmed, or
     /// when the ability contains empty or invalid segments.
     pub fn new(resource: &'a str, ability: &'a str) -> Result<Self, CapabilityError> {
-        let resource = validate_resource(resource)?;
-        let ability = validate_ability(ability)?;
+        let resource = validate_resource_value(resource)?;
+        let ability = validate_ability_value(ability)?;
         Ok(Self { resource, ability })
     }
 
@@ -167,32 +167,28 @@ const fn record_unique_field<'a>(
     Ok(())
 }
 
-fn validate_resource(resource: &str) -> Result<&str, CapabilityError> {
+/// Validate a capability resource string.
+///
+/// # Errors
+///
+/// Returns [`CapabilityError`] when the resource is empty or contains leading
+/// or trailing whitespace.
+pub fn validate_resource_value(resource: &str) -> Result<&str, CapabilityError> {
     validate_present_trimmed(CapabilityField::Resource, resource)
 }
 
-fn validate_ability(ability: &str) -> Result<&str, CapabilityError> {
+/// Validate a capability ability string.
+///
+/// # Errors
+///
+/// Returns [`CapabilityError`] when the ability is empty, untrimmed, contains
+/// empty segments, uses unsupported characters, or uses `*` anywhere other
+/// than as a full segment.
+pub fn validate_ability_value(ability: &str) -> Result<&str, CapabilityError> {
     let ability = validate_present_trimmed(CapabilityField::Ability, ability)?;
-    let mut previous_was_separator = true;
 
-    for character in ability.chars() {
-        if character == ABILITY_SEGMENT_SEPARATOR {
-            if previous_was_separator {
-                return Err(CapabilityError::EmptyAbilitySegment);
-            }
-            previous_was_separator = true;
-            continue;
-        }
-
-        if !is_allowed_ability_character(character) {
-            return Err(CapabilityError::InvalidAbilityCharacter { character });
-        }
-
-        previous_was_separator = false;
-    }
-
-    if previous_was_separator {
-        return Err(CapabilityError::EmptyAbilitySegment);
+    for segment in ability.split(ABILITY_SEGMENT_SEPARATOR) {
+        validate_ability_segment(segment)?;
     }
 
     Ok(ability)
@@ -208,12 +204,28 @@ fn validate_present_trimmed(field: CapabilityField, value: &str) -> Result<&str,
     Ok(value)
 }
 
-const fn is_allowed_ability_character(character: char) -> bool {
+fn validate_ability_segment(segment: &str) -> Result<(), CapabilityError> {
+    if segment.is_empty() {
+        return Err(CapabilityError::EmptyAbilitySegment);
+    }
+    if segment == WILDCARD_SEGMENT {
+        return Ok(());
+    }
+
+    for character in segment.chars() {
+        if !is_allowed_non_wildcard_ability_character(character) {
+            return Err(CapabilityError::InvalidAbilityCharacter { character });
+        }
+    }
+
+    Ok(())
+}
+
+const fn is_allowed_non_wildcard_ability_character(character: char) -> bool {
     character.is_ascii_lowercase()
         || character.is_ascii_digit()
         || character == ALLOWED_ABILITY_HYPHEN
         || character == ALLOWED_ABILITY_UNDERSCORE
-        || character == ALLOWED_ABILITY_WILDCARD
 }
 
 #[cfg(test)]
@@ -285,5 +297,20 @@ mod tests {
         let error = CapabilityView::new(VALID_RESOURCE, "store/Add").expect_err("uppercase ability should fail");
 
         assert_eq!(error, CapabilityError::InvalidAbilityCharacter { character: 'A' });
+    }
+
+    #[test]
+    fn allows_glob_ability_segments() {
+        let capability = CapabilityView::new(VALID_RESOURCE, "store/*").expect("glob segment should validate");
+
+        assert_eq!(capability.ability(), "store/*");
+    }
+
+    #[test]
+    fn rejects_wildcard_inside_ability_segment() {
+        let error =
+            CapabilityView::new(VALID_RESOURCE, "sto*re/add").expect_err("wildcard inside a segment should fail");
+
+        assert_eq!(error, CapabilityError::InvalidAbilityCharacter { character: '*' });
     }
 }

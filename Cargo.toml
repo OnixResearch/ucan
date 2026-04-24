@@ -23,8 +23,11 @@ license = "AGPL-3.0-or-later"
 
 [dependencies]
 ucan-core = { path = "crates/ucan-core" }
+verified-logic = { path = "../verified-logic" }
 
 [dev-dependencies]
+pretty_assertions = "1.0"
+proptest = "1.0"
 tempfile = "3"
 
 [lints]

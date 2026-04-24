@@ -2,10 +2,11 @@
 
 ## Architecture
 
-- `crates/ucan-core`: `#![no_std]` functional core. Keep parsing, validation, and other deterministic UCAN logic here.
-- `ucan` (repo root): `std` shell. Keep file I/O, process integration, networking, clocks, and other side effects here.
+- `crates/ucan-core`: `#![no_std]` functional core. Keep parsing, structural validation, and other deterministic UCAN logic here.
+- `ucan` (repo root): `std` shell. Keep file I/O, process integration, networking, clocks, crypto, and other side effects here.
+- `../verified-logic`: sibling verified library used by the `std` shell for UCAN ability subsumption, attenuation checks, token-time validation, Ed25519 signing/verification, and `did:key` encoding.
 
-The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`.
+The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`. When a primitive needs verified semantics, the shell bridges validated core values into `verified-logic` instead of reimplementing the logic locally.
 
 ## Development
 
