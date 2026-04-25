@@ -10,6 +10,7 @@
 | 2026-04-24 | self | Ran `nix develop /path/to/repo -c cargo test --workspace` from `/tmp`, so Cargo searched `/tmp` for `Cargo.toml` and failed | When invoking Nix from outside the repo to avoid direnv, pass `--manifest-path /home/brittonr/git/ucan/Cargo.toml` or run `bash -lc 'cd /home/brittonr/git/ucan && ...'` inside the dev shell |
 | 2026-04-24 | self | Let focused Cargo checks block behind another repo's shared `/home/brittonr/.cargo-target` lock | For focused follow-up checks in this repo, set `CARGO_TARGET_DIR=/home/brittonr/git/ucan/target/agent` (or another repo-local ignored target) to avoid unrelated global target locks |
 | 2026-04-24 | self | Ran unscoped `cargo fmt --all` and touched vendored `verified-logic` sources | Use scoped `cargo fmt --manifest-path Cargo.toml -p ucan -p ucan-core`; never format vendored sources |
+| 2026-04-24 | self | Ran `openspec validate --strict` after archiving and got “Nothing to validate” exit 1 | After archive, validate the repo with `openspec validate --all --strict` or target a specific remaining change/spec |
 | 2026-04-24 | self | `nix flake check` nextest failed because Hegel property tests tried to bootstrap Python/uv inside the sandbox (`/homeless-shelter`, missing managed Python discovery) | Keep Hegel integration tests for dev-shell verification; scope sandboxed Crane nextest to lib/examples and disable package `doCheck` so `nix flake check` stays deterministic |
 
 ## User Preferences

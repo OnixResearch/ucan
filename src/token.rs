@@ -34,7 +34,9 @@ const CAPABILITY_ABILITY_FIELD: &str = "can";
 const PROOF_REFERENCE_DIGEST_LEN: usize = blake3::OUT_LEN;
 pub const ED25519_SECRET_KEY_BYTES: usize = verified_logic::ucan_signature::SECRET_KEY_LEN;
 pub const ED25519_PUBLIC_KEY_BYTES: usize = verified_logic::ucan_signature::PUBLIC_KEY_LEN;
+pub const ED25519_SIGNATURE_BYTES: usize = verified_logic::ucan_signature::SIGNATURE_LEN;
 
+pub type SignerResult<T> = std::result::Result<T, SignerError>;
 pub type TokenResult<T> = std::result::Result<T, TokenError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,36 @@ impl CompactPart {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignerError {
+    Refused,
+    UnsupportedAlgorithm { algorithm: String },
+    InvalidSignatureLength { actual: usize, expected: usize },
+    IssuerPublicKeyMismatch { issuer: String, public_key_issuer: String },
+}
+
+impl fmt::Display for SignerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused => formatter.write_str("signer refused to sign"),
+            Self::UnsupportedAlgorithm { algorithm } => {
+                write!(formatter, "unsupported signer algorithm {algorithm:?}")
+            }
+            Self::InvalidSignatureLength { actual, expected } => {
+                write!(formatter, "signer returned {actual} signature bytes, expected {expected}")
+            }
+            Self::IssuerPublicKeyMismatch {
+                issuer,
+                public_key_issuer,
+            } => {
+                write!(formatter, "signer issuer {issuer} does not match public key issuer {public_key_issuer}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SignerError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenError {
@@ -76,6 +108,7 @@ pub enum TokenError {
     SelfDelegation { did: String },
     ProofChain { message: String },
     Attenuation { resource: String, ability: String },
+    Signer { source: SignerError },
     VerifiedPrimitive { source: VerifiedPrimitiveError },
 }
 
@@ -121,6 +154,7 @@ impl fmt::Display for TokenError {
             Self::Attenuation { resource, ability } => {
                 write!(formatter, "capability {resource} {ability} is not delegated by proofs")
             }
+            Self::Signer { source } => write!(formatter, "signer failed: {source}"),
             Self::VerifiedPrimitive { source } => write!(formatter, "verified primitive failed: {source}"),
         }
     }
@@ -130,6 +164,7 @@ impl std::error::Error for TokenError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::CoreClaims { source } => Some(source),
+            Self::Signer { source } => Some(source),
             Self::VerifiedPrimitive { source } => Some(source),
             Self::EmptyCompactToken
             | Self::CompactTokenMustBeTrimmed
@@ -150,6 +185,12 @@ impl std::error::Error for TokenError {
             | Self::ProofChain { .. }
             | Self::Attenuation { .. } => None,
         }
+    }
+}
+
+impl From<SignerError> for TokenError {
+    fn from(source: SignerError) -> Self {
+        Self::Signer { source }
     }
 }
 
@@ -453,6 +494,132 @@ impl Ed25519SigningKey {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct SignerSignature {
+    bytes: Vec<u8>,
+}
+
+impl fmt::Debug for SignerSignature {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = formatter.debug_struct("SignerSignature");
+        debug.field("byte_len", &self.bytes.len());
+        debug.finish()
+    }
+}
+
+impl SignerSignature {
+    #[must_use]
+    pub const fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
+}
+
+/// Signing boundary for compact-token issuance.
+///
+/// Implementations keep private key custody outside the issuance pipeline while
+/// exposing only algorithm identity, issuer identity, verification material, and
+/// signatures over caller-provided bytes.
+pub trait TokenSigner {
+    #[must_use]
+    fn algorithm(&self) -> &str;
+
+    /// Return the signer issuer DID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenError`] when the signer cannot provide a valid issuer DID.
+    fn issuer(&self) -> TokenResult<IssuerDid>;
+
+    /// Return the public verification key for the signer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenError`] when the signer cannot provide valid verification material.
+    fn public_key(&self) -> TokenResult<Ed25519PublicKey>;
+
+    /// Sign the supplied compact-token signing input bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SignerError`] when the signer refuses or cannot produce a signature.
+    fn sign(&self, signing_input: &[u8]) -> SignerResult<SignerSignature>;
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Ed25519InMemorySigner {
+    signing_key: Ed25519SigningKey,
+}
+
+impl fmt::Debug for Ed25519InMemorySigner {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = formatter.debug_struct("Ed25519InMemorySigner");
+        debug.field("secret_key", &RedactedSecretMaterial);
+        debug.finish()
+    }
+}
+
+impl Ed25519InMemorySigner {
+    #[must_use]
+    pub const fn from_signing_key(signing_key: Ed25519SigningKey) -> Self {
+        Self { signing_key }
+    }
+
+    #[must_use]
+    pub const fn from_seed_bytes(bytes: [u8; ED25519_SECRET_KEY_BYTES]) -> Self {
+        Self::from_signing_key(Ed25519SigningKey::from_bytes(bytes))
+    }
+
+    /// Build an in-memory signer from a byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenError::InvalidSecretKeyLength`] when the slice length is
+    /// not the Ed25519 seed length.
+    pub fn try_from_slice(bytes: &[u8]) -> TokenResult<Self> {
+        let signing_key = Ed25519SigningKey::try_from_slice(bytes)?;
+        Ok(Self::from_signing_key(signing_key))
+    }
+
+    /// Build the matching verification key for this in-memory signer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenError`] if public-key derivation or DID encoding fails.
+    pub fn verification_key(&self) -> TokenResult<Ed25519VerificationKey> {
+        Ed25519VerificationKey::from_signing_key(&self.signing_key)
+    }
+}
+
+impl From<Ed25519SigningKey> for Ed25519InMemorySigner {
+    fn from(signing_key: Ed25519SigningKey) -> Self {
+        Self::from_signing_key(signing_key)
+    }
+}
+
+impl TokenSigner for Ed25519InMemorySigner {
+    fn algorithm(&self) -> &str {
+        TOKEN_ALGORITHM_EDDSA
+    }
+
+    fn issuer(&self) -> TokenResult<IssuerDid> {
+        self.signing_key.issuer()
+    }
+
+    fn public_key(&self) -> TokenResult<Ed25519PublicKey> {
+        self.signing_key.public_key()
+    }
+
+    fn sign(&self, signing_input: &[u8]) -> SignerResult<SignerSignature> {
+        let signature = sign_ed25519(self.signing_key.as_bytes(), signing_input).map_err(|_| SignerError::Refused)?;
+        Ok(SignerSignature::new(signature))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ed25519PublicKey {
     bytes: [u8; ED25519_PUBLIC_KEY_BYTES],
@@ -752,29 +919,43 @@ struct DecodedClaims {
     nbf: Option<u64>,
 }
 
-/// Issue and sign a compact UCAN token.
+/// Issue and sign a compact UCAN token with the compatibility signing-key request.
 ///
 /// # Errors
 ///
 /// Returns [`TokenError`] when signing, DID derivation, JSON encoding, or
 /// structural validation fails.
 pub fn issue_token(request: &IssueRequest) -> TokenResult<CompactToken> {
-    let issuer = request.signing_key.issuer()?;
-    let proof_references = encode_proof_references(request.proofs.as_slice());
-    let header = EncodedHeader {
-        alg: TOKEN_ALGORITHM_EDDSA,
-        typ: TOKEN_TYPE_JWT,
+    let signer = Ed25519InMemorySigner::from_signing_key(request.signing_key.clone());
+    issue_token_with_signer(&signer, &request.audience, &request.capabilities, &request.proofs, request.time_bounds)
+}
+
+/// Issue and sign a compact UCAN token through a signer abstraction.
+///
+/// # Errors
+///
+/// Returns [`TokenError`] when the signer reports unsupported identity,
+/// refuses to sign, returns malformed signature output, or when token encoding
+/// or structural validation fails.
+pub fn issue_token_with_signer<S>(
+    signer: &S,
+    audience: &AudienceDid,
+    capabilities: &CapabilitySet,
+    proofs: &ProofCollection,
+    time_bounds: TokenTimeBounds,
+) -> TokenResult<CompactToken>
+where
+    S: TokenSigner + ?Sized,
+{
+    let issuer = validate_signer_identity(signer)?;
+    let input = IssueClaimsInput {
+        issuer: &issuer,
+        audience,
+        capabilities,
+        proofs,
+        time_bounds,
     };
-    let claims = encoded_claims(&issuer, request);
-    let encoded_header = encode_json_part(&header)?;
-    let encoded_payload = encode_json_part(&claims)?;
-    let signing_input = signing_input(&encoded_header, &encoded_payload);
-    let signature = sign_ed25519(request.signing_key.as_bytes(), signing_input.as_bytes())?;
-    let encoded_signature = URL_SAFE_NO_PAD.encode(signature);
-    let token = join_compact_parts(&encoded_header, &encoded_payload, &encoded_signature);
-    let token = CompactToken::new(token)?;
-    assert_issued_token_is_structurally_valid(&token, proof_references.as_slice())?;
-    Ok(token)
+    issue_compact_token_with_signer(signer, &input)
 }
 
 /// Parse a compact token into decoded-but-unvalidated parts.
@@ -1092,11 +1273,74 @@ fn assert_issued_token_is_structurally_valid(token: &CompactToken, proof_referen
     Ok(())
 }
 
-fn encoded_claims<'a>(issuer: &'a IssuerDid, request: &'a IssueRequest) -> EncodedClaims<'a> {
+struct IssueClaimsInput<'a> {
+    issuer: &'a IssuerDid,
+    audience: &'a AudienceDid,
+    capabilities: &'a CapabilitySet,
+    proofs: &'a ProofCollection,
+    time_bounds: TokenTimeBounds,
+}
+
+fn issue_compact_token_with_signer<S>(signer: &S, input: &IssueClaimsInput<'_>) -> TokenResult<CompactToken>
+where S: TokenSigner + ?Sized {
+    let proof_references = encode_proof_references(input.proofs.as_slice());
+    let header = EncodedHeader {
+        alg: TOKEN_ALGORITHM_EDDSA,
+        typ: TOKEN_TYPE_JWT,
+    };
+    let claims = encoded_claims(input);
+    let encoded_header = encode_json_part(&header)?;
+    let encoded_payload = encode_json_part(&claims)?;
+    let signing_input = signing_input(&encoded_header, &encoded_payload);
+    let signature = signer.sign(signing_input.as_bytes())?;
+    validate_signer_signature(&signature)?;
+    let encoded_signature = URL_SAFE_NO_PAD.encode(signature.as_bytes());
+    let token = join_compact_parts(&encoded_header, &encoded_payload, &encoded_signature);
+    let token = CompactToken::new(token)?;
+    assert_issued_token_is_structurally_valid(&token, proof_references.as_slice())?;
+    Ok(token)
+}
+
+fn validate_signer_identity<S>(signer: &S) -> TokenResult<IssuerDid>
+where S: TokenSigner + ?Sized {
+    validate_signer_algorithm(signer.algorithm())?;
+    let issuer = signer.issuer()?;
+    let public_key_issuer = signer.public_key()?.issuer()?;
+    if issuer != public_key_issuer {
+        return Err(SignerError::IssuerPublicKeyMismatch {
+            issuer: issuer.as_str().to_owned(),
+            public_key_issuer: public_key_issuer.as_str().to_owned(),
+        }
+        .into());
+    }
+    Ok(issuer)
+}
+
+fn validate_signer_algorithm(algorithm: &str) -> SignerResult<()> {
+    if algorithm == TOKEN_ALGORITHM_EDDSA {
+        return Ok(());
+    }
+    Err(SignerError::UnsupportedAlgorithm {
+        algorithm: algorithm.to_owned(),
+    })
+}
+
+const fn validate_signer_signature(signature: &SignerSignature) -> SignerResult<()> {
+    let actual = signature.as_bytes().len();
+    if actual == ED25519_SIGNATURE_BYTES {
+        return Ok(());
+    }
+    Err(SignerError::InvalidSignatureLength {
+        actual,
+        expected: ED25519_SIGNATURE_BYTES,
+    })
+}
+
+fn encoded_claims<'a>(input: &'a IssueClaimsInput<'a>) -> EncodedClaims<'a> {
     EncodedClaims {
-        iss: issuer.as_str(),
-        aud: request.audience.as_str(),
-        att: request
+        iss: input.issuer.as_str(),
+        aud: input.audience.as_str(),
+        att: input
             .capabilities
             .as_slice()
             .iter()
@@ -1105,12 +1349,12 @@ fn encoded_claims<'a>(issuer: &'a IssuerDid, request: &'a IssueRequest) -> Encod
                 ability: capability.ability.as_str(),
             })
             .collect(),
-        prf: encode_proof_references(request.proofs.as_slice())
+        prf: encode_proof_references(input.proofs.as_slice())
             .into_iter()
             .map(|reference| URL_SAFE_NO_PAD.encode(reference))
             .collect(),
-        exp: request.time_bounds.expires_at_seconds(),
-        nbf: request.time_bounds.not_before_seconds(),
+        exp: input.time_bounds.expires_at_seconds(),
+        nbf: input.time_bounds.not_before_seconds(),
     }
 }
 
@@ -1249,16 +1493,25 @@ mod tests {
     use super::AudienceDid;
     use super::CapabilitySet;
     use super::CompactToken;
+    use super::Ed25519InMemorySigner;
+    use super::Ed25519PublicKey;
     use super::Ed25519SigningKey;
     use super::Ed25519VerificationKey;
     use super::IssueRequest;
+    use super::IssuerDid;
     use super::KeyResolutionContext;
     use super::ProofCollection;
+    use super::SignerError;
+    use super::SignerResult;
+    use super::SignerSignature;
     use super::TokenError;
+    use super::TokenResult;
+    use super::TokenSigner;
     use super::TokenTimeBounds;
     use super::VerificationContext;
     use super::VerificationTime;
     use super::issue_token;
+    use super::issue_token_with_signer;
     use super::parse_compact_token;
     use super::validate_decoded_token;
     use super::verify_compact_token;
@@ -1277,10 +1530,12 @@ mod tests {
     const INVALID_KEY_LEN: usize = 1;
     const COMPACT_PART_COUNT: usize = 3;
     const EXPECTED_CLAIM_COUNT: usize = 6;
+    const SHORT_SIGNATURE_LEN: usize = 1;
     const REDACTION_TEST_SECRET_BYTE: u8 = 0xAA;
     const REDACTION_TEST_SECRET_DECIMAL: &str = "170";
     const REDACTION_TEST_SECRET_HEX_LOWER: &str = "aa";
     const REDACTION_TEST_DIRECT_ARRAY_PREFIX: &str = "[170, 170";
+    const UNSUPPORTED_TEST_ALGORITHM: &str = "ES256";
 
     #[test]
     fn issues_and_verifies_token_round_trip() {
@@ -1304,16 +1559,144 @@ mod tests {
         let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
         let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
             .expect("token should issue");
-        let parts: Vec<&str> = token.as_str().split('.').collect();
+        assert_token_shape_and_claim_names(&token);
+    }
 
-        assert_eq!(parts.len(), COMPACT_PART_COUNT);
-        let payload = super::decode_part(parts[1], super::CompactPart::Payload).expect("payload should decode");
-        let json: Value = serde_json::from_slice(payload.as_slice()).expect("payload should be JSON");
-        let object = json.as_object().expect("payload should be object");
-        assert_eq!(object.len(), EXPECTED_CLAIM_COUNT);
-        for key in ["iss", "aud", "att", "prf", "exp", "nbf"] {
-            assert!(object.contains_key(key), "missing claim key {key}");
-        }
+    #[test]
+    fn signer_based_issue_round_trips_with_in_memory_ed25519() {
+        let signer = in_memory_signer(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let capabilities = capabilities("did:key:z6Mkresource", "store/*");
+        let proofs = ProofCollection::empty();
+        let bounds = token_time_bounds();
+        let token = issue_token_with_signer(&signer, &AudienceDid::from(audience), &capabilities, &proofs, bounds)
+            .expect("signer should issue");
+        let context = VerificationContext::new(
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            KeyResolutionContext::new(vec![signer.verification_key().expect("verification key should derive")]),
+            ProofCollection::empty(),
+        );
+
+        let verified = verify_compact_token(&token, &context).expect("signer-issued token should verify");
+
+        assert_eq!(verified.issuer().as_str(), signer.issuer().expect("issuer should derive").as_str());
+        assert_eq!(verified.capabilities().as_slice(), capabilities.as_slice());
+        assert_eq!(verified.effective_delegation().time_bounds(), bounds);
+    }
+
+    #[test]
+    fn signer_based_issue_preserves_compact_shape() {
+        let signer = in_memory_signer(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token_with_signer(
+            &signer,
+            &AudienceDid::from(audience),
+            &capabilities("did:key:z6Mkresource", "store/*"),
+            &ProofCollection::empty(),
+            token_time_bounds(),
+        )
+        .expect("signer should issue");
+
+        assert_token_shape_and_claim_names(&token);
+    }
+
+    #[test]
+    fn refusing_signer_returns_structured_error() {
+        let key = signing_key(ISSUER_SECRET_BYTE);
+        let signer = RefusingSigner::new(&key);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let error = issue_token_with_signer(
+            &signer,
+            &AudienceDid::from(audience),
+            &capabilities("did:key:z6Mkresource", "store/*"),
+            &ProofCollection::empty(),
+            token_time_bounds(),
+        )
+        .expect_err("refusing signer should fail");
+
+        assert!(matches!(error, TokenError::Signer {
+            source: SignerError::Refused
+        }));
+    }
+
+    #[test]
+    fn signer_with_unsupported_algorithm_is_rejected() {
+        let key = signing_key(ISSUER_SECRET_BYTE);
+        let signer = UnsupportedAlgorithmSigner::new(&key);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let error = issue_token_with_signer(
+            &signer,
+            &AudienceDid::from(audience),
+            &capabilities("did:key:z6Mkresource", "store/*"),
+            &ProofCollection::empty(),
+            token_time_bounds(),
+        )
+        .expect_err("unsupported algorithm should fail");
+
+        assert!(matches!(error, TokenError::Signer {
+            source: SignerError::UnsupportedAlgorithm { .. }
+        }));
+    }
+
+    #[test]
+    fn signer_with_wrong_signature_length_is_rejected() {
+        let key = signing_key(ISSUER_SECRET_BYTE);
+        let signer = FixedSignatureSigner::new(&key, SignerSignature::new(vec![0_u8; SHORT_SIGNATURE_LEN]));
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let error = issue_token_with_signer(
+            &signer,
+            &AudienceDid::from(audience),
+            &capabilities("did:key:z6Mkresource", "store/*"),
+            &ProofCollection::empty(),
+            token_time_bounds(),
+        )
+        .expect_err("short signature should fail");
+
+        assert_eq!(error, TokenError::Signer {
+            source: SignerError::InvalidSignatureLength {
+                actual: SHORT_SIGNATURE_LEN,
+                expected: super::ED25519_SIGNATURE_BYTES,
+            }
+        });
+    }
+
+    #[test]
+    fn signer_with_invalid_signature_bytes_is_rejected_by_verification() {
+        let key = signing_key(ISSUER_SECRET_BYTE);
+        let signer = FixedSignatureSigner::new(&key, SignerSignature::new(vec![0_u8; super::ED25519_SIGNATURE_BYTES]));
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token_with_signer(
+            &signer,
+            &AudienceDid::from(audience),
+            &capabilities("did:key:z6Mkresource", "store/*"),
+            &ProofCollection::empty(),
+            token_time_bounds(),
+        )
+        .expect("fixed-length malformed signature can produce a structurally valid token");
+        let context = verification_context(vec![&key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let error = verify_compact_token(&token, &context).expect_err("malformed signature should fail");
+
+        assert!(matches!(error, TokenError::Signature { .. }));
+    }
+
+    #[test]
+    fn signer_with_mismatched_issuer_and_public_key_is_rejected() {
+        let key = signing_key(ISSUER_SECRET_BYTE);
+        let other_issuer = signing_key(OTHER_SECRET_BYTE).issuer().expect("other issuer should derive");
+        let signer = MismatchedIssuerSigner::new(&key, other_issuer);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let error = issue_token_with_signer(
+            &signer,
+            &AudienceDid::from(audience),
+            &capabilities("did:key:z6Mkresource", "store/*"),
+            &ProofCollection::empty(),
+            token_time_bounds(),
+        )
+        .expect_err("issuer mismatch should fail");
+
+        assert!(matches!(error, TokenError::Signer {
+            source: SignerError::IssuerPublicKeyMismatch { .. }
+        }));
     }
 
     #[test]
@@ -1379,6 +1762,16 @@ mod tests {
     }
 
     #[test]
+    fn in_memory_signer_debug_redacts_secret_bytes() {
+        let signer = in_memory_signer(REDACTION_TEST_SECRET_BYTE);
+        let debug_output = format!("{signer:?}");
+
+        assert!(debug_output.contains("Ed25519InMemorySigner"));
+        assert!(debug_output.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
+        assert_secret_material_is_absent(debug_output.as_str());
+    }
+
+    #[test]
     fn assertion_failure_formatting_redacts_secret_bytes() {
         let redacted_key = signing_key(REDACTION_TEST_SECRET_BYTE);
         let other_signing_key = signing_key(OTHER_SECRET_BYTE);
@@ -1387,6 +1780,14 @@ mod tests {
         assert!(key_failure.contains("Ed25519SigningKey"));
         assert!(key_failure.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
         assert_secret_material_is_absent(key_failure.as_str());
+
+        let redacted_signer = in_memory_signer(REDACTION_TEST_SECRET_BYTE);
+        let other_signer = in_memory_signer(OTHER_SECRET_BYTE);
+        let signer_failure = capture_assertion_failure_message(|| assert_eq!(redacted_signer, other_signer));
+
+        assert!(signer_failure.contains("Ed25519InMemorySigner"));
+        assert!(signer_failure.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
+        assert_secret_material_is_absent(signer_failure.as_str());
 
         let issuer_key = signing_key(REDACTION_TEST_SECRET_BYTE);
         let other_issuer_key = signing_key(OTHER_SECRET_BYTE);
@@ -1403,13 +1804,16 @@ mod tests {
     #[test]
     fn invalid_secret_key_errors_do_not_echo_input_bytes() {
         let malformed_key = [REDACTION_TEST_SECRET_BYTE; INVALID_KEY_LEN];
-        let error = Ed25519SigningKey::try_from_slice(&malformed_key).expect_err("short key should fail");
-        let display_output = format!("{error}");
-        let debug_output = format!("{error:?}");
+        let key_error = Ed25519SigningKey::try_from_slice(&malformed_key).expect_err("short key should fail");
+        let signer_error = Ed25519InMemorySigner::try_from_slice(&malformed_key).expect_err("short signer should fail");
 
-        assert!(matches!(error, TokenError::InvalidSecretKeyLength { .. }));
-        assert_secret_material_is_absent(display_output.as_str());
-        assert_secret_material_is_absent(debug_output.as_str());
+        assert!(matches!(key_error, TokenError::InvalidSecretKeyLength { .. }));
+        assert_secret_material_is_absent(format!("{key_error}").as_str());
+        assert_secret_material_is_absent(format!("{key_error:?}").as_str());
+
+        assert!(matches!(signer_error, TokenError::InvalidSecretKeyLength { .. }));
+        assert_secret_material_is_absent(format!("{signer_error}").as_str());
+        assert_secret_material_is_absent(format!("{signer_error:?}").as_str());
     }
 
     #[test]
@@ -1556,8 +1960,150 @@ mod tests {
         assert!(matches!(error, TokenError::ProofChain { .. }));
     }
 
+    #[derive(Clone)]
+    struct RefusingSigner {
+        issuer: IssuerDid,
+        public_key: Ed25519PublicKey,
+    }
+
+    impl RefusingSigner {
+        fn new(signing_key: &Ed25519SigningKey) -> Self {
+            Self {
+                issuer: signing_key.issuer().expect("issuer should derive"),
+                public_key: signing_key.public_key().expect("public key should derive"),
+            }
+        }
+    }
+
+    impl TokenSigner for RefusingSigner {
+        fn algorithm(&self) -> &str {
+            super::TOKEN_ALGORITHM_EDDSA
+        }
+
+        fn issuer(&self) -> TokenResult<IssuerDid> {
+            Ok(self.issuer.clone())
+        }
+
+        fn public_key(&self) -> TokenResult<Ed25519PublicKey> {
+            Ok(self.public_key.clone())
+        }
+
+        fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
+            Err(SignerError::Refused)
+        }
+    }
+
+    #[derive(Clone)]
+    struct UnsupportedAlgorithmSigner {
+        issuer: IssuerDid,
+        public_key: Ed25519PublicKey,
+    }
+
+    impl UnsupportedAlgorithmSigner {
+        fn new(signing_key: &Ed25519SigningKey) -> Self {
+            Self {
+                issuer: signing_key.issuer().expect("issuer should derive"),
+                public_key: signing_key.public_key().expect("public key should derive"),
+            }
+        }
+    }
+
+    impl TokenSigner for UnsupportedAlgorithmSigner {
+        fn algorithm(&self) -> &str {
+            UNSUPPORTED_TEST_ALGORITHM
+        }
+
+        fn issuer(&self) -> TokenResult<IssuerDid> {
+            Ok(self.issuer.clone())
+        }
+
+        fn public_key(&self) -> TokenResult<Ed25519PublicKey> {
+            Ok(self.public_key.clone())
+        }
+
+        fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
+            Ok(SignerSignature::new(vec![0_u8; super::ED25519_SIGNATURE_BYTES]))
+        }
+    }
+
+    #[derive(Clone)]
+    struct FixedSignatureSigner {
+        issuer: IssuerDid,
+        public_key: Ed25519PublicKey,
+        signature: SignerSignature,
+    }
+
+    impl FixedSignatureSigner {
+        fn new(signing_key: &Ed25519SigningKey, signature: SignerSignature) -> Self {
+            Self {
+                issuer: signing_key.issuer().expect("issuer should derive"),
+                public_key: signing_key.public_key().expect("public key should derive"),
+                signature,
+            }
+        }
+    }
+
+    impl TokenSigner for FixedSignatureSigner {
+        fn algorithm(&self) -> &str {
+            super::TOKEN_ALGORITHM_EDDSA
+        }
+
+        fn issuer(&self) -> TokenResult<IssuerDid> {
+            Ok(self.issuer.clone())
+        }
+
+        fn public_key(&self) -> TokenResult<Ed25519PublicKey> {
+            Ok(self.public_key.clone())
+        }
+
+        fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
+            Ok(self.signature.clone())
+        }
+    }
+
+    #[derive(Clone)]
+    struct MismatchedIssuerSigner {
+        issuer: IssuerDid,
+        public_key: Ed25519PublicKey,
+    }
+
+    impl MismatchedIssuerSigner {
+        fn new(signing_key: &Ed25519SigningKey, issuer: IssuerDid) -> Self {
+            Self {
+                issuer,
+                public_key: signing_key.public_key().expect("public key should derive"),
+            }
+        }
+    }
+
+    impl TokenSigner for MismatchedIssuerSigner {
+        fn algorithm(&self) -> &str {
+            super::TOKEN_ALGORITHM_EDDSA
+        }
+
+        fn issuer(&self) -> TokenResult<IssuerDid> {
+            Ok(self.issuer.clone())
+        }
+
+        fn public_key(&self) -> TokenResult<Ed25519PublicKey> {
+            Ok(self.public_key.clone())
+        }
+
+        fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
+            Ok(SignerSignature::new(vec![0_u8; super::ED25519_SIGNATURE_BYTES]))
+        }
+    }
+
     fn signing_key(byte: u8) -> Ed25519SigningKey {
         Ed25519SigningKey::from_bytes([byte; super::ED25519_SECRET_KEY_BYTES])
+    }
+
+    fn in_memory_signer(byte: u8) -> Ed25519InMemorySigner {
+        Ed25519InMemorySigner::from_seed_bytes([byte; super::ED25519_SECRET_KEY_BYTES])
+    }
+
+    fn token_time_bounds() -> TokenTimeBounds {
+        TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_AT_SECONDS).expect("bounds should validate")
     }
 
     fn issue_request(issuer_key: &Ed25519SigningKey, audience: AudienceDid, proofs: ProofCollection) -> IssueRequest {
@@ -1653,8 +2199,21 @@ mod tests {
         };
         let header = super::encode_json_part(&header).expect("header should encode");
         let payload = super::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
-        let signature = super::URL_SAFE_NO_PAD.encode([0_u8; verified_logic::ucan_signature::SIGNATURE_LEN]);
+        let signature = super::URL_SAFE_NO_PAD.encode([0_u8; super::ED25519_SIGNATURE_BYTES]);
         CompactToken::new(super::join_compact_parts(&header, &payload, &signature)).expect("token should wrap")
+    }
+
+    fn assert_token_shape_and_claim_names(token: &CompactToken) {
+        let parts: Vec<&str> = token.as_str().split('.').collect();
+
+        assert_eq!(parts.len(), COMPACT_PART_COUNT);
+        let payload = super::decode_part(parts[1], super::CompactPart::Payload).expect("payload should decode");
+        let json: Value = serde_json::from_slice(payload.as_slice()).expect("payload should be JSON");
+        let object = json.as_object().expect("payload should be object");
+        assert_eq!(object.len(), EXPECTED_CLAIM_COUNT);
+        for key in ["iss", "aud", "att", "prf", "exp", "nbf"] {
+            assert!(object.contains_key(key), "missing claim key {key}");
+        }
     }
 
     fn assert_secret_material_is_absent(output: &str) {

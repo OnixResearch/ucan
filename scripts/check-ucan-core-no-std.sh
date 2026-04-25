@@ -13,9 +13,9 @@ run_cargo_check() {
 }
 
 check_source_purity() {
-  local forbidden_pattern='(^|[^[:alnum:]_])(std::|serde|serde_json|base64|blake3|SystemTime|Instant|Tcp|Udp|File::|PathBuf|std::fs|std::net|std::time)'
+  local forbidden_pattern='(^|[^[:alnum:]_])(std::|serde|serde_json|base64|blake3|SystemTime|Instant|Tcp|Udp|File::|PathBuf|std::fs|std::net|std::time|Signer|SigningKey|Ed25519|signature|signing|rand|random|zeroize)'
   if grep -RInE "$forbidden_pattern" "$core_dir/src"; then
-    echo "ucan-core contains shell-only std/codec/fs/network/clock concerns" >&2
+    echo "ucan-core contains shell-only std/codec/fs/network/clock/signer concerns" >&2
     return 1
   fi
 }

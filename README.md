@@ -16,25 +16,21 @@ The primary public workflow is token-oriented:
 
 ```rust
 use ucan::{
-    AudienceDid, CapabilitySet, ED25519_SECRET_KEY_BYTES, Ed25519SigningKey,
-    Ed25519VerificationKey, IssueRequest, KeyResolutionContext, ProofCollection,
-    TokenTimeBounds, VerificationContext, VerificationTime, issue_token,
-    verify_compact_token,
+    AudienceDid, CapabilitySet, ED25519_SECRET_KEY_BYTES, Ed25519InMemorySigner,
+    KeyResolutionContext, ProofCollection, TokenSigner, TokenTimeBounds,
+    VerificationContext, VerificationTime, issue_token_with_signer, verify_compact_token,
 };
 
-let issuer_key = Ed25519SigningKey::from_bytes([7; ED25519_SECRET_KEY_BYTES]);
-let audience_key = Ed25519SigningKey::from_bytes([9; ED25519_SECRET_KEY_BYTES]);
-let request = IssueRequest::new(
-    issuer_key.clone(),
-    AudienceDid::from(audience_key.issuer()?),
-    CapabilitySet::single("did:key:z6Mkresource", "store/add")?,
-    ProofCollection::empty(),
-    TokenTimeBounds::new(1_000, 2_000)?,
-);
-let token = issue_token(&request)?;
+let issuer = Ed25519InMemorySigner::from_seed_bytes([7; ED25519_SECRET_KEY_BYTES]);
+let audience_key = Ed25519InMemorySigner::from_seed_bytes([9; ED25519_SECRET_KEY_BYTES]);
+let audience = AudienceDid::from(audience_key.issuer()?);
+let capabilities = CapabilitySet::single("did:key:z6Mkresource", "store/add")?;
+let proofs = ProofCollection::empty();
+let time_bounds = TokenTimeBounds::new(1_000, 2_000)?;
+let token = issue_token_with_signer(&issuer, &audience, &capabilities, &proofs, time_bounds)?;
 let context = VerificationContext::new(
     VerificationTime::from_unix_seconds(1_500),
-    KeyResolutionContext::new(vec![Ed25519VerificationKey::from_signing_key(&issuer_key)?]),
+    KeyResolutionContext::new(vec![issuer.verification_key()?]),
     ProofCollection::empty(),
 );
 let verified = verify_compact_token(&token, &context)?;
@@ -60,6 +56,7 @@ The verified result exposes the issuer, audience, direct capability set, direct 
 
 ## Support limits
 
+- Production-oriented issuance should use `TokenSigner` / `issue_token_with_signer`; `IssueRequest` remains as a compatibility wrapper around the in-memory Ed25519 signer path.
 - Supported DID methods: `did:key` for Ed25519 public keys.
 - Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
 - Proof-loading model: caller-supplied proof tokens only; the library does not fetch proofs from storage or the network.

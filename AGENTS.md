@@ -4,7 +4,7 @@
 - `crates/ucan-core` is the `#![no_std]` functional core. Keep deterministic parsing/validation there and keep it free of `std` imports.
 - The repo-root `ucan` crate is the `std` shell. Put file/path/reader/writer integration there and delegate validation into `ucan-core`.
 - UCAN semantic primitives in the shell should bridge into the vendored `vendor/verified-logic` crate instead of reimplementing ability, temporal, signature, or DID logic locally.
-- Current public surface includes end-to-end token issuance, parsing, verification, and proof-chain APIs (`issue_token`, `verify_compact_token`, `IssueRequest`, `VerificationContext`) plus two runnable examples. Treat “make it usable” follow-up work as adding interoperability, ergonomics, key/DID resolver abstractions, caveats/invocations, and production integration examples rather than only polishing helper exports.
+- Current public surface includes end-to-end token issuance, signer-based issuance (`TokenSigner`, `Ed25519InMemorySigner`, `issue_token_with_signer`), parsing, verification, and proof-chain APIs (`issue_token`, `verify_compact_token`, `IssueRequest`, `VerificationContext`) plus two runnable examples. Treat “make it usable” follow-up work as adding interoperability, ergonomics, key/DID resolver abstractions, caveats/invocations, and production integration examples rather than only polishing helper exports.
 
 ## Build
 - `nix develop -c cargo test --workspace` is the fastest verification path for ordinary changes.
@@ -14,6 +14,7 @@
 - `flake.nix` now builds directly from the repo's cleaned Cargo source because `vendor/verified-logic` is checked in alongside the root manifest.
 - Full `nix flake check` now scopes `cargo fmt` and `cargo clippy` to `ucan`/`ucan-core` and allows `clippy::cargo-common-metadata`; otherwise the vendored `verified-logic` snapshot or package metadata gets linted against this repo's policy instead of upstream's.
 - Refresh `vendor/verified-logic` with `./scripts/sync-verified-logic.sh`; the script imports the committed `HEAD` revision from the sibling `../verified-logic` checkout and records the imported revision in `vendor/verified-logic-revision.txt`.
+- After archiving an OpenSpec change, validate repository state with `openspec validate --all --strict`; bare `openspec validate --strict` exits with “Nothing to validate”.
 
 ## Gotchas
 - Avoid SSH-only Cargo dependencies unless the environment is guaranteed to have matching GitHub SSH credentials; anonymous or CI-like environments will fail before tests run.
