@@ -1379,6 +1379,28 @@ mod tests {
     }
 
     #[test]
+    fn assertion_failure_formatting_redacts_secret_bytes() {
+        let redacted_key = signing_key(REDACTION_TEST_SECRET_BYTE);
+        let other_signing_key = signing_key(OTHER_SECRET_BYTE);
+        let key_failure = capture_assertion_failure_message(|| assert_eq!(redacted_key, other_signing_key));
+
+        assert!(key_failure.contains("Ed25519SigningKey"));
+        assert!(key_failure.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
+        assert_secret_material_is_absent(key_failure.as_str());
+
+        let issuer_key = signing_key(REDACTION_TEST_SECRET_BYTE);
+        let other_issuer_key = signing_key(OTHER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let request = issue_request(&issuer_key, AudienceDid::from(audience.clone()), ProofCollection::empty());
+        let other_request = issue_request(&other_issuer_key, AudienceDid::from(audience), ProofCollection::empty());
+        let request_failure = capture_assertion_failure_message(|| assert_eq!(request, other_request));
+
+        assert!(request_failure.contains("IssueRequest"));
+        assert!(request_failure.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
+        assert_secret_material_is_absent(request_failure.as_str());
+    }
+
+    #[test]
     fn invalid_secret_key_errors_do_not_echo_input_bytes() {
         let malformed_key = [REDACTION_TEST_SECRET_BYTE; INVALID_KEY_LEN];
         let error = Ed25519SigningKey::try_from_slice(&malformed_key).expect_err("short key should fail");
@@ -1639,5 +1661,17 @@ mod tests {
         assert!(!output.contains(REDACTION_TEST_SECRET_DECIMAL));
         assert!(!output.contains(REDACTION_TEST_DIRECT_ARRAY_PREFIX));
         assert!(!output.to_ascii_lowercase().contains(REDACTION_TEST_SECRET_HEX_LOWER));
+    }
+
+    fn capture_assertion_failure_message<F>(body: F) -> String
+    where F: FnOnce() + std::panic::UnwindSafe {
+        let panic = std::panic::catch_unwind(body).expect_err("assertion should fail");
+        if let Some(message) = panic.downcast_ref::<String>() {
+            return message.clone();
+        }
+        if let Some(message) = panic.downcast_ref::<&'static str>() {
+            return (*message).to_owned();
+        }
+        panic!("assertion failure should use string panic payload");
     }
 }

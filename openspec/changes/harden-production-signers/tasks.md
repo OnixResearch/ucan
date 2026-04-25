@@ -1,12 +1,28 @@
 ## Phase 1: Baseline and safety audit
 
 - [x] Run the pre-change redaction-slice baseline with focused token tests before editing secret formatting; the full workspace baseline was already green in the ROI probe, and examples are re-run after the slice. [covers=library.production-signers.secret-redaction]
-- [x] From the repo root, run the full token/example baseline before broad signer abstraction changes: `nix develop -c cargo test --manifest-path Cargo.toml -p ucan -p ucan-core --all-targets`, `nix develop -c cargo run --manifest-path Cargo.toml --example issue_and_verify`, and `nix develop -c cargo run --manifest-path Cargo.toml --example proof_chain`. [covers=library.production-signers.signer-abstraction]
+- [x] From the repo root, run the full token/example baseline before broad signer abstraction changes: `nix develop -c cargo test --manifest-path Cargo.toml -p ucan -p ucan-core --all-targets`, `nix develop -c cargo run --manifest-path Cargo.toml --example issue_and_verify`, and `nix develop -c cargo run --manifest-path Cargo.toml --example proof_chain`; evidence captured in `openspec/changes/harden-production-signers/evidence/redaction-slice-verification.txt`. [covers=library.production-signers.signer-abstraction]
 - [x] Inventory current public secret-bearing types and formatting/serde implementations in `docs/public-api.md#secret-material-surface-checklist`, covering `Debug`, display, error text, serde/export surfaces, and test-failure output for `Ed25519SigningKey` and `IssueRequest`. [covers=library.production-signers.secret-redaction library.production-signers.secret-redaction.debug-redacts-in-memory-secrets library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets]
 - [x] Remove derived cleartext formatting from current secret-bearing types and add manual redacted formatting where public debugging remains useful. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets]
 - [x] Redact or remove every display, error-message, serde/export, and expected test-failure path found by the current secret-surface inventory. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets]
-- [x] Run post-redaction-slice verification with `openspec validate harden-production-signers --strict` and focused cargo tests for the secret-leak regressions before starting signer abstraction work. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets]
+- [x] Run post-redaction-slice verification with `openspec validate harden-production-signers --strict` and focused cargo tests for the secret-leak regressions before starting signer abstraction work; evidence captured in `openspec/changes/harden-production-signers/evidence/redaction-slice-verification.txt`. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets]
 - [ ] Re-run and update the secret-surface inventory after the Phase 2 in-memory signer adapter exists, before marking signer-adapter redaction complete. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets]
+
+## Evidence: redaction slice
+
+Full command output is captured in `openspec/changes/harden-production-signers/evidence/redaction-slice-verification.txt`. Key concrete outputs:
+
+- `openspec validate harden-production-signers --strict` → `Change 'harden-production-signers' is valid`.
+- Focused redaction tests → `test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out`.
+- Full token/core all-target tests → `test result: ok. 38 passed`, property tests → `3 passed`, `ucan-core` tests → `24 passed`.
+- `cargo run --example issue_and_verify` printed `issuer: did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z`, `audience: did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3`, and `capability count: 1`.
+- `cargo run --example proof_chain` printed `child issuer: did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3`, `effective window: 1100..1900`, and `direct proof count: 1`.
+- `cargo fmt --manifest-path Cargo.toml -p ucan -p ucan-core --check` → `cargo fmt check passed`.
+- `cargo clippy --manifest-path Cargo.toml -p ucan -p ucan-core --all-targets --no-deps -- -D warnings -A clippy::cargo-common-metadata` → `Finished dev profile`.
+- `./scripts/check-ucan-bridge.sh` → `Checking ucan-core-no-std-smoke` and `Finished dev profile`.
+- Test-failure formatting is directly covered by `src/token.rs::token::tests::assertion_failure_formatting_redacts_secret_bytes`, which captures `assert_eq!` panic payloads for `Ed25519SigningKey` and `IssueRequest`, then asserts `<redacted>` is present and `170`, `[170, 170`, and `aa` are absent.
+
+The full Phase 3 final verification task remains unchecked until the signer abstraction and remaining production-signer tasks are complete.
 
 ## Phase 2: Signer abstraction
 
@@ -24,7 +40,7 @@
 - [ ] Add positive tests proving signer-based issuance verifies successfully, preserves compact-token shape, and reports an issuer claim equal to the verified `did:key` derived from the signer public key. [covers=library.production-signers.signer-abstraction.in-memory-signer-issues-token library.production-signers.ed25519-adapter.issuer-matches-derived-did-key]
 - [ ] Add negative tests proving refusing signers return structured errors and do not panic. [covers=library.production-signers.signer-abstraction.signer-failure-is-structured]
 - [ ] Add bad-signer-output tests covering unsupported algorithm identity, malformed signature bytes, wrong signature length, and issuer/public-key mismatch. [covers=library.production-signers.signer-abstraction.bad-signer-output-is-rejected library.production-signers.ed25519-adapter.issuer-matches-derived-did-key]
-- [x] Add redaction regression tests for current inventory items, asserting known secret material and direct byte-array representations never appear in public `Debug`, error text, or expected test-failure formatting for `Ed25519SigningKey` and `IssueRequest`. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets]
+- [x] Add redaction regression tests for current inventory items, asserting known secret material and direct byte-array representations never appear in public `Debug`, error text, or captured assertion-failure formatting for `Ed25519SigningKey` and `IssueRequest`. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets]
 - [ ] Add redaction regression tests for the future in-memory signer adapter once it exists, asserting known secret material never appears in public `Debug`, display, error text, serde/export output, or expected test-failure messages. [covers=library.production-signers.secret-redaction.debug-redacts-in-memory-secrets library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets]
 - [x] Add malformed-secret-key tests asserting constructor errors, `Debug`, and display output do not contain supplied secret bytes. [covers=library.production-signers.secret-redaction.invalid-key-errors-do-not-echo-secrets library.production-signers.secret-redaction.debug-redacts-in-memory-secrets]
 - [ ] Update `examples/issue_and_verify.rs` and `examples/proof_chain.rs` to demonstrate signer-based issuance or explicitly separate deterministic test-seed construction from the preferred production signer boundary. [covers=library.production-signers.consumer-onboarding.examples-use-signer-api library.production-signers.signer-abstraction.in-memory-signer-issues-token]
