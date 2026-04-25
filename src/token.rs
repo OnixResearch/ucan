@@ -28,6 +28,7 @@ const COMPACT_SIGNATURE_INDEX: usize = 2;
 const COMPACT_SEPARATOR: char = '.';
 const TOKEN_TYPE_JWT: &str = "JWT";
 const TOKEN_ALGORITHM_EDDSA: &str = "EdDSA";
+const REDACTED_SECRET_MATERIAL_DEBUG: &str = "<redacted>";
 const CAPABILITY_RESOURCE_FIELD: &str = "with";
 const CAPABILITY_ABILITY_FIELD: &str = "can";
 const PROOF_REFERENCE_DIGEST_LEN: usize = blake3::OUT_LEN;
@@ -389,9 +390,25 @@ impl VerificationTime {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Ed25519SigningKey {
     bytes: [u8; ED25519_SECRET_KEY_BYTES],
+}
+
+impl fmt::Debug for Ed25519SigningKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = formatter.debug_struct("Ed25519SigningKey");
+        debug.field("secret_key", &RedactedSecretMaterial);
+        debug.finish()
+    }
+}
+
+struct RedactedSecretMaterial;
+
+impl fmt::Debug for RedactedSecretMaterial {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(REDACTED_SECRET_MATERIAL_DEBUG)
+    }
 }
 
 impl Ed25519SigningKey {
@@ -1260,6 +1277,10 @@ mod tests {
     const INVALID_KEY_LEN: usize = 1;
     const COMPACT_PART_COUNT: usize = 3;
     const EXPECTED_CLAIM_COUNT: usize = 6;
+    const REDACTION_TEST_SECRET_BYTE: u8 = 0xAA;
+    const REDACTION_TEST_SECRET_DECIMAL: &str = "170";
+    const REDACTION_TEST_SECRET_HEX_LOWER: &str = "aa";
+    const REDACTION_TEST_DIRECT_ARRAY_PREFIX: &str = "[170, 170";
 
     #[test]
     fn issues_and_verifies_token_round_trip() {
@@ -1333,6 +1354,40 @@ mod tests {
         assert_eq!(error, TokenError::InvalidSecretKeyLength {
             actual: INVALID_KEY_LEN
         });
+    }
+
+    #[test]
+    fn ed25519_signing_key_debug_redacts_secret_bytes() {
+        let key = signing_key(REDACTION_TEST_SECRET_BYTE);
+        let debug_output = format!("{key:?}");
+
+        assert!(debug_output.contains("Ed25519SigningKey"));
+        assert!(debug_output.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
+        assert_secret_material_is_absent(debug_output.as_str());
+    }
+
+    #[test]
+    fn issue_request_debug_redacts_embedded_signing_key() {
+        let issuer_key = signing_key(REDACTION_TEST_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let request = issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty());
+        let debug_output = format!("{request:?}");
+
+        assert!(debug_output.contains("IssueRequest"));
+        assert!(debug_output.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
+        assert_secret_material_is_absent(debug_output.as_str());
+    }
+
+    #[test]
+    fn invalid_secret_key_errors_do_not_echo_input_bytes() {
+        let malformed_key = [REDACTION_TEST_SECRET_BYTE; INVALID_KEY_LEN];
+        let error = Ed25519SigningKey::try_from_slice(&malformed_key).expect_err("short key should fail");
+        let display_output = format!("{error}");
+        let debug_output = format!("{error:?}");
+
+        assert!(matches!(error, TokenError::InvalidSecretKeyLength { .. }));
+        assert_secret_material_is_absent(display_output.as_str());
+        assert_secret_material_is_absent(debug_output.as_str());
     }
 
     #[test]
@@ -1578,5 +1633,11 @@ mod tests {
         let payload = super::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
         let signature = super::URL_SAFE_NO_PAD.encode([0_u8; verified_logic::ucan_signature::SIGNATURE_LEN]);
         CompactToken::new(super::join_compact_parts(&header, &payload, &signature)).expect("token should wrap")
+    }
+
+    fn assert_secret_material_is_absent(output: &str) {
+        assert!(!output.contains(REDACTION_TEST_SECRET_DECIMAL));
+        assert!(!output.contains(REDACTION_TEST_DIRECT_ARRAY_PREFIX));
+        assert!(!output.to_ascii_lowercase().contains(REDACTION_TEST_SECRET_HEX_LOWER));
     }
 }
