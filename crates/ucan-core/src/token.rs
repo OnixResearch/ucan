@@ -8,9 +8,11 @@ use crate::CapabilityView;
 
 pub const MAX_CAPABILITY_COUNT: usize = 64;
 pub const MAX_PROOF_REFERENCE_COUNT: usize = 64;
+pub const MAX_CAVEAT_COUNT: usize = 16;
 
 const MIN_CAPABILITY_COUNT: usize = 1;
 const MIN_PROOF_REFERENCE_BYTES: usize = 1;
+const MIN_CAVEAT_PAYLOAD_BYTES: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DidField {
@@ -65,6 +67,16 @@ pub enum Error {
         index: usize,
         source: CapabilityError,
     },
+    TooManyCaveats {
+        capability_index: usize,
+        actual: usize,
+        max: usize,
+    },
+    InvalidCaveat {
+        capability_index: usize,
+        caveat_index: usize,
+        source: CaveatError,
+    },
     MissingProofs,
     TooManyProofReferences {
         actual: usize,
@@ -99,6 +111,20 @@ impl fmt::Display for Error {
             Self::InvalidCapability { index, source } => {
                 write!(formatter, "capability at index {index} is invalid: {source}")
             }
+            Self::TooManyCaveats {
+                capability_index,
+                actual,
+                max,
+            } => {
+                write!(formatter, "capability at index {capability_index} contains {actual} caveats; max is {max}")
+            }
+            Self::InvalidCaveat {
+                capability_index,
+                caveat_index,
+                source,
+            } => {
+                write!(formatter, "caveat at capability {capability_index}, index {caveat_index} is invalid: {source}")
+            }
             Self::MissingProofs => formatter.write_str("missing 'prf' claim"),
             Self::TooManyProofReferences { actual, max } => {
                 write!(formatter, "'prf' claim contains {actual} proof references; max is {max}")
@@ -119,6 +145,47 @@ impl fmt::Display for Error {
 }
 
 impl core::error::Error for Error {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaveatField {
+    Domain,
+    Type,
+    Key,
+    Payload,
+}
+
+impl CaveatField {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Domain => "domain",
+            Self::Type => "type",
+            Self::Key => "key",
+            Self::Payload => "payload",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaveatError {
+    EmptyField { field: CaveatField },
+    FieldMustBeTrimmed { field: CaveatField },
+    EmptyPayload,
+}
+
+impl fmt::Display for CaveatError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyField { field } => write!(formatter, "caveat field '{}' must not be empty", field.as_str()),
+            Self::FieldMustBeTrimmed { field } => {
+                write!(formatter, "caveat field '{}' must not contain leading or trailing whitespace", field.as_str())
+            }
+            Self::EmptyPayload => formatter.write_str("caveat payload bytes must not be empty"),
+        }
+    }
+}
+
+impl core::error::Error for CaveatError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofReferenceError {
@@ -158,9 +225,119 @@ impl<'a> DidView<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Caveat {
+    domain: String,
+    kind: String,
+    key: String,
+    payload: Vec<u8>,
+}
+
+impl Caveat {
+    /// Build an owned caveat claim after core validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaveatError`] when identity fields or payload bytes are malformed.
+    pub fn new(domain: &str, caveat_type: &str, key: &str, payload: &[u8]) -> Result<Self, CaveatError> {
+        let view = CaveatView::new(domain, caveat_type, key, payload)?;
+        Ok(Self {
+            domain: view.domain().to_owned(),
+            kind: view.caveat_type().to_owned(),
+            key: view.key().to_owned(),
+            payload: view.payload().to_vec(),
+        })
+    }
+
+    #[must_use]
+    pub const fn domain(&self) -> &str {
+        self.domain.as_str()
+    }
+    #[must_use]
+    pub const fn caveat_type(&self) -> &str {
+        self.kind.as_str()
+    }
+    #[must_use]
+    pub const fn key(&self) -> &str {
+        self.key.as_str()
+    }
+    #[must_use]
+    pub const fn payload(&self) -> &[u8] {
+        self.payload.as_slice()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaveatInput<'a> {
+    pub domain: &'a str,
+    pub caveat_type: &'a str,
+    pub key: &'a str,
+    pub payload: &'a [u8],
+}
+
+impl<'a> CaveatInput<'a> {
+    #[must_use]
+    pub const fn new(domain: &'a str, caveat_type: &'a str, key: &'a str, payload: &'a [u8]) -> Self {
+        Self {
+            domain,
+            caveat_type,
+            key,
+            payload,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaveatView<'a> {
+    domain: &'a str,
+    caveat_type: &'a str,
+    key: &'a str,
+    payload: &'a [u8],
+}
+
+impl<'a> CaveatView<'a> {
+    /// Build a validated borrowed caveat view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaveatError`] when identity fields or payload bytes are malformed.
+    pub fn new(domain: &'a str, caveat_type: &'a str, key: &'a str, payload: &'a [u8]) -> Result<Self, CaveatError> {
+        let domain = validate_caveat_text(CaveatField::Domain, domain)?;
+        let caveat_type = validate_caveat_text(CaveatField::Type, caveat_type)?;
+        let key = validate_caveat_text(CaveatField::Key, key)?;
+        if payload.len() < MIN_CAVEAT_PAYLOAD_BYTES {
+            return Err(CaveatError::EmptyPayload);
+        }
+        Ok(Self {
+            domain,
+            caveat_type,
+            key,
+            payload,
+        })
+    }
+
+    #[must_use]
+    pub const fn domain(self) -> &'a str {
+        self.domain
+    }
+    #[must_use]
+    pub const fn caveat_type(self) -> &'a str {
+        self.caveat_type
+    }
+    #[must_use]
+    pub const fn key(self) -> &'a str {
+        self.key
+    }
+    #[must_use]
+    pub const fn payload(self) -> &'a [u8] {
+        self.payload
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capability {
     resource: String,
     ability: String,
+    caveats: Vec<Caveat>,
 }
 
 impl Capability {
@@ -170,10 +347,25 @@ impl Capability {
     ///
     /// Returns [`CapabilityError`] when the resource or ability is malformed.
     pub fn new(resource: &str, ability: &str) -> Result<Self, CapabilityError> {
-        let view = CapabilityView::new(resource, ability)?;
+        Self::new_with_caveats(resource, ability, &[]).map_err(|error| match error {
+            Error::InvalidCapability { source, .. } => source,
+            _ => CapabilityError::UnknownField { line_number: 0 },
+        })
+    }
+
+    /// Build an owned capability claim and caveats after core validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the capability or caveats are malformed.
+    pub fn new_with_caveats(resource: &str, ability: &str, caveats: &[CaveatInput<'_>]) -> Result<Self, Error> {
+        let view =
+            CapabilityView::new(resource, ability).map_err(|source| Error::InvalidCapability { index: 0, source })?;
+        let caveats = build_caveats(0, caveats)?;
         Ok(Self {
             resource: view.resource().to_owned(),
             ability: view.ability().to_owned(),
+            caveats,
         })
     }
 
@@ -196,18 +388,37 @@ impl Capability {
     pub const fn ability(&self) -> &str {
         self.ability.as_str()
     }
+
+    #[must_use]
+    pub const fn caveats(&self) -> &[Caveat] {
+        self.caveats.as_slice()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapabilityInput<'a> {
     pub resource: &'a str,
     pub ability: &'a str,
+    pub caveats: &'a [CaveatInput<'a>],
 }
 
 impl<'a> CapabilityInput<'a> {
     #[must_use]
     pub const fn new(resource: &'a str, ability: &'a str) -> Self {
-        Self { resource, ability }
+        Self {
+            resource,
+            ability,
+            caveats: &[],
+        }
+    }
+
+    #[must_use]
+    pub const fn with_caveats(resource: &'a str, ability: &'a str, caveats: &'a [CaveatInput<'a>]) -> Self {
+        Self {
+            resource,
+            ability,
+            caveats,
+        }
     }
 }
 
@@ -216,6 +427,7 @@ impl<'a> From<CapabilityView<'a>> for CapabilityInput<'a> {
         Self {
             resource: view.resource(),
             ability: view.ability(),
+            caveats: &[],
         }
     }
 }
@@ -495,12 +707,49 @@ fn build_capabilities(inputs: &[CapabilityInput<'_>]) -> Result<Vec<Capability>,
     let mut capabilities = Vec::with_capacity(inputs.len());
 
     for (index, input) in inputs.iter().enumerate() {
-        let capability = Capability::new(input.resource, input.ability)
+        let view = CapabilityView::new(input.resource, input.ability)
             .map_err(|source| Error::InvalidCapability { index, source })?;
-        capabilities.push(capability);
+        let caveats = build_caveats(index, input.caveats)?;
+        capabilities.push(Capability {
+            resource: view.resource().to_owned(),
+            ability: view.ability().to_owned(),
+            caveats,
+        });
     }
 
     Ok(capabilities)
+}
+
+fn build_caveats(capability_index: usize, inputs: &[CaveatInput<'_>]) -> Result<Vec<Caveat>, Error> {
+    if inputs.len() > MAX_CAVEAT_COUNT {
+        return Err(Error::TooManyCaveats {
+            capability_index,
+            actual: inputs.len(),
+            max: MAX_CAVEAT_COUNT,
+        });
+    }
+    let mut caveats = Vec::with_capacity(inputs.len());
+    for (caveat_index, input) in inputs.iter().enumerate() {
+        let caveat = Caveat::new(input.domain, input.caveat_type, input.key, input.payload).map_err(|source| {
+            Error::InvalidCaveat {
+                capability_index,
+                caveat_index,
+                source,
+            }
+        })?;
+        caveats.push(caveat);
+    }
+    Ok(caveats)
+}
+
+fn validate_caveat_text(field: CaveatField, value: &str) -> Result<&str, CaveatError> {
+    if value.is_empty() {
+        return Err(CaveatError::EmptyField { field });
+    }
+    if value.trim() != value {
+        return Err(CaveatError::FieldMustBeTrimmed { field });
+    }
+    Ok(value)
 }
 
 fn required_proofs<'a>(proofs: Option<&'a [ProofReferenceInput<'a>]>) -> Result<&'a [ProofReferenceInput<'a>], Error> {

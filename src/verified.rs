@@ -115,6 +115,9 @@ impl VerifiedCapability {
         let document = CapabilityDocument::new(resource, ability).map_err(|error| match error {
             crate::Error::Capability { source } => VerifiedPrimitiveError::InvalidCapability { source },
             crate::Error::Io { .. } => unreachable!("CapabilityDocument::new performs validation only"),
+            crate::Error::Caveat { .. } | crate::Error::TokenClaims { .. } => {
+                unreachable!("CapabilityDocument::new does not include caveats")
+            }
         })?;
         build_verified_capability(document)
     }
@@ -296,7 +299,9 @@ pub fn verify_ed25519_signature(
 fn validate_capability_document(document: &CapabilityDocument) -> VerifiedResult<()> {
     document.view().map(|_| ()).map_err(|error| match error {
         crate::Error::Capability { source } => VerifiedPrimitiveError::InvalidCapability { source },
-        crate::Error::Io { .. } => unreachable!("capability document validation does not perform I/O"),
+        crate::Error::Io { .. } | crate::Error::Caveat { .. } | crate::Error::TokenClaims { .. } => {
+            unreachable!("capability document view validates resource/ability only")
+        }
     })
 }
 

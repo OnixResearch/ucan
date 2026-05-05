@@ -47,12 +47,23 @@ Run the same happy path as a normal example:
 cargo run --example issue_and_verify
 ```
 
-After `verify_compact_token` succeeds, use `VerifiedToken::authorize` or
-`VerifiedToken::authorize_request` to evaluate a concrete operation against the
-effective delegation only. Authorization decisions are structured: allowed
-decisions expose the matched effective capability, while denied decisions
-separate malformed requests (for example a requested ability containing a `*`
-segment) from requests with no matching effective capability.
+After `verify_compact_token` succeeds, use `VerifiedToken::authorize`,
+`VerifiedToken::authorize_request`, or `VerifiedToken::authorize_with_policies`
+to evaluate a concrete operation against the effective delegation only.
+Authorization decisions are structured: allowed decisions expose the matched
+effective capability, while denied decisions separate malformed requests (for
+example a requested ability containing a `*` segment), missing caveat policies,
+rejected caveats, and requests with no matching effective capability. Caveats are
+opaque domain/type/key/payload records preserved in `ucan-core` and evaluated in
+the shell through caller-supplied `CaveatPolicySet`; unknown caveats fail closed.
+
+For invocation-shaped checks, `verify_invocation` first verifies the compact
+token, then authorizes the requested resource/ability with the supplied caveat
+policies and returns either `InvocationAllowed` context or a structured denial.
+
+```bash
+cargo run --example invocation
+```
 
 ## Proof-chain delegation
 
@@ -73,7 +84,7 @@ The verified result exposes the issuer, audience, direct capability set, direct 
 - Supported DID methods: `did:key` for Ed25519 public keys.
 - Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
 - Proof-loading model: caller-supplied proof tokens only; the library does not fetch proofs from storage or the network.
-- Out-of-scope UCAN features in this release: revocation registries, remote DID resolution, network proof fetching, storage layers, invocation-specific caveats, and non-Ed25519 key types.
+- Out-of-scope UCAN features in this release: revocation registries, remote DID resolution, network proof fetching, storage layers, caveat-specific attenuation rules beyond caller policy evaluation, and non-Ed25519 key types.
 
 ## Development
 

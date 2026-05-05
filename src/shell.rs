@@ -15,9 +15,53 @@ const FIELD_SEPARATOR: &str = "=";
 const LINE_SEPARATOR: &str = "\n";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaveatDocument {
+    pub domain: String,
+    pub caveat_type: String,
+    pub key: String,
+    pub payload: Vec<u8>,
+}
+
+impl CaveatDocument {
+    /// Build an owned shell caveat document after validating it against the core.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Capability`] when caveat identity or payload bytes are malformed.
+    pub fn new(domain: String, caveat_type: String, key: String, payload: Vec<u8>) -> Result<Self> {
+        let _validated =
+            core::token::CaveatView::new(domain.as_str(), caveat_type.as_str(), key.as_str(), payload.as_slice())?;
+        Ok(Self {
+            domain,
+            caveat_type,
+            key,
+            payload,
+        })
+    }
+
+    #[must_use]
+    pub const fn domain(&self) -> &str {
+        self.domain.as_str()
+    }
+    #[must_use]
+    pub const fn caveat_type(&self) -> &str {
+        self.caveat_type.as_str()
+    }
+    #[must_use]
+    pub const fn key(&self) -> &str {
+        self.key.as_str()
+    }
+    #[must_use]
+    pub const fn payload(&self) -> &[u8] {
+        self.payload.as_slice()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityDocument {
     pub resource: String,
     pub ability: String,
+    pub caveats: Vec<CaveatDocument>,
 }
 
 impl CapabilityDocument {
@@ -28,8 +72,34 @@ impl CapabilityDocument {
     /// Returns [`Error::Capability`] when the provided fields violate core
     /// validation rules.
     pub fn new(resource: String, ability: String) -> Result<Self> {
-        let _validated = core::CapabilityView::new(resource.as_str(), ability.as_str())?;
-        Ok(Self { resource, ability })
+        Self::with_caveats(resource, ability, Vec::new())
+    }
+
+    /// Build an owned shell document with caveats after validating it against the core.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Capability`] when the capability or caveats violate core validation rules.
+    pub fn with_caveats(resource: String, ability: String, caveats: Vec<CaveatDocument>) -> Result<Self> {
+        let _capability = core::CapabilityView::new(resource.as_str(), ability.as_str())?;
+        let caveat_inputs: Vec<core::token::CaveatInput<'_>> = caveats
+            .iter()
+            .map(|caveat| {
+                core::token::CaveatInput::new(
+                    caveat.domain.as_str(),
+                    caveat.caveat_type.as_str(),
+                    caveat.key.as_str(),
+                    caveat.payload.as_slice(),
+                )
+            })
+            .collect();
+        let _validated =
+            core::token::Capability::new_with_caveats(resource.as_str(), ability.as_str(), caveat_inputs.as_slice())?;
+        Ok(Self {
+            resource,
+            ability,
+            caveats,
+        })
     }
 
     /// Borrow this owned shell document as a validated core view.
@@ -90,6 +160,7 @@ fn parse_owned_capability(input: &str) -> Result<CapabilityDocument> {
     Ok(CapabilityDocument {
         resource: capability.resource().to_owned(),
         ability: capability.ability().to_owned(),
+        caveats: Vec::new(),
     })
 }
 
@@ -123,6 +194,7 @@ mod tests {
         assert_eq!(capability, CapabilityDocument {
             resource: VALID_RESOURCE.to_owned(),
             ability: VALID_ABILITY.to_owned(),
+            caveats: Vec::new(),
         });
     }
 

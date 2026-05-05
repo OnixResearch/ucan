@@ -61,5 +61,11 @@ fn print_denial(label: &str, decision: &AuthorizationDecision) {
         AuthorizationDecision::Denied {
             reason: AuthorizationDenialReason::MalformedRequest { .. },
         } => println!("{label}: denied (malformed request)"),
+        AuthorizationDecision::Denied {
+            reason: AuthorizationDenialReason::CaveatPolicyMissing { .. },
+        } => println!("{label}: denied (unknown caveat policy)"),
+        AuthorizationDecision::Denied {
+            reason: AuthorizationDenialReason::CaveatRejected { .. },
+        } => println!("{label}: denied (caveat rejected)"),
     }
 }

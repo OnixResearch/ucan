@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::shell::CapabilityDocument;
+use crate::shell::CaveatDocument;
 use crate::verified::TokenEnvelopeInput;
 use crate::verified::TokenTimeWindow;
 use crate::verified::TokenValidationFailure;
@@ -469,7 +470,198 @@ impl AuthorizationRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorizationDenialReason {
     MalformedRequest { message: String },
+    CaveatRejected { caveat: CaveatIdentifier, message: String },
+    CaveatPolicyMissing { caveat: CaveatIdentifier },
     NoMatchingCapability,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaveatIdentifier {
+    domain: String,
+    caveat_type: String,
+    key: String,
+}
+
+impl CaveatIdentifier {
+    /// Build a caveat identity after core validation of identity fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenError`] when any identity field is empty or untrimmed.
+    pub fn new(domain: impl Into<String>, caveat_type: impl Into<String>, key: impl Into<String>) -> TokenResult<Self> {
+        let domain = domain.into();
+        let caveat_type = caveat_type.into();
+        let key = key.into();
+        ucan_core::token::CaveatView::new(domain.as_str(), caveat_type.as_str(), key.as_str(), &[0]).map_err(
+            |source| TokenError::Capability {
+                message: source.to_string(),
+            },
+        )?;
+        Ok(Self {
+            domain,
+            caveat_type,
+            key,
+        })
+    }
+
+    #[must_use]
+    pub const fn domain(&self) -> &str {
+        self.domain.as_str()
+    }
+    #[must_use]
+    pub const fn caveat_type(&self) -> &str {
+        self.caveat_type.as_str()
+    }
+    #[must_use]
+    pub const fn key(&self) -> &str {
+        self.key.as_str()
+    }
+}
+
+impl From<&CaveatDocument> for CaveatIdentifier {
+    fn from(caveat: &CaveatDocument) -> Self {
+        Self {
+            domain: caveat.domain.clone(),
+            caveat_type: caveat.caveat_type.clone(),
+            key: caveat.key.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaveatDecision {
+    Satisfied,
+    Rejected { message: String },
+}
+
+impl CaveatDecision {
+    #[must_use]
+    pub const fn is_satisfied(&self) -> bool {
+        matches!(self, Self::Satisfied)
+    }
+}
+
+pub trait CaveatPolicy {
+    fn evaluate(&self, caveat: &CaveatDocument, request: &AuthorizationRequest) -> CaveatDecision;
+}
+
+pub trait CaveatPolicySet {
+    fn policy_for(&self, caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy>;
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DenyUnknownCaveats;
+
+impl CaveatPolicySet for DenyUnknownCaveats {
+    fn policy_for(&self, _caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy> {
+        None
+    }
+}
+
+pub struct InvocationRequest<'a> {
+    token: &'a CompactToken,
+    context: &'a VerificationContext,
+    resource: String,
+    ability: String,
+    policies: &'a dyn CaveatPolicySet,
+}
+
+impl<'a> InvocationRequest<'a> {
+    #[must_use]
+    pub fn new(
+        token: &'a CompactToken,
+        context: &'a VerificationContext,
+        resource: impl Into<String>,
+        ability: impl Into<String>,
+        policies: &'a dyn CaveatPolicySet,
+    ) -> Self {
+        Self {
+            token,
+            context,
+            resource: resource.into(),
+            ability: ability.into(),
+            policies,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvocationAllowed {
+    issuer: IssuerDid,
+    invoker: IssuerDid,
+    audience: AudienceDid,
+    matched_capability: CapabilityDocument,
+    effective_time_bounds: TokenTimeBounds,
+}
+
+impl InvocationAllowed {
+    #[must_use]
+    pub const fn issuer(&self) -> &IssuerDid {
+        &self.issuer
+    }
+    #[must_use]
+    pub const fn invoker(&self) -> &IssuerDid {
+        &self.invoker
+    }
+    #[must_use]
+    pub const fn audience(&self) -> &AudienceDid {
+        &self.audience
+    }
+    #[must_use]
+    pub const fn matched_capability(&self) -> &CapabilityDocument {
+        &self.matched_capability
+    }
+    #[must_use]
+    pub const fn effective_time_bounds(&self) -> TokenTimeBounds {
+        self.effective_time_bounds
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvocationDenialReason {
+    Authorization { reason: AuthorizationDenialReason },
+    Verification { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvocationResult {
+    Allowed { invocation: InvocationAllowed },
+    Denied { reason: InvocationDenialReason },
+}
+
+impl InvocationResult {
+    #[must_use]
+    pub const fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed { .. })
+    }
+}
+
+#[must_use]
+pub fn verify_invocation(request: &InvocationRequest<'_>) -> InvocationResult {
+    let verified = match verify_compact_token(request.token, request.context) {
+        Ok(verified) => verified,
+        Err(error) => {
+            return InvocationResult::Denied {
+                reason: InvocationDenialReason::Verification {
+                    message: error.to_string(),
+                },
+            };
+        }
+    };
+    match verified.authorize_with_policies(request.resource.as_str(), request.ability.as_str(), request.policies) {
+        AuthorizationDecision::Allowed { matched_capability } => InvocationResult::Allowed {
+            invocation: InvocationAllowed {
+                issuer: verified.issuer().clone(),
+                invoker: verified.issuer().clone(),
+                audience: verified.audience().clone(),
+                matched_capability,
+                effective_time_bounds: verified.effective_delegation().time_bounds(),
+            },
+        },
+        AuthorizationDecision::Denied { reason } => InvocationResult::Denied {
+            reason: InvocationDenialReason::Authorization { reason },
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1160,9 +1352,37 @@ impl VerifiedToken {
         }
     }
 
+    /// Authorize a concrete resource/ability pair through explicit caveat policies.
+    #[must_use]
+    pub fn authorize_with_policies(
+        &self,
+        resource: &str,
+        ability: &str,
+        policies: &dyn CaveatPolicySet,
+    ) -> AuthorizationDecision {
+        match AuthorizationRequest::new(resource.to_owned(), ability.to_owned()) {
+            Ok(request) => self.authorize_request_with_policies(&request, policies),
+            Err(error) => AuthorizationDecision::Denied {
+                reason: AuthorizationDenialReason::MalformedRequest {
+                    message: error.to_string(),
+                },
+            },
+        }
+    }
+
     /// Authorize a prevalidated concrete request against this token's effective delegation.
     #[must_use]
     pub fn authorize_request(&self, request: &AuthorizationRequest) -> AuthorizationDecision {
+        self.authorize_request_with_policies(request, &DenyUnknownCaveats)
+    }
+
+    /// Authorize a prevalidated concrete request through explicit caveat policies.
+    #[must_use]
+    pub fn authorize_request_with_policies(
+        &self,
+        request: &AuthorizationRequest,
+        policies: &dyn CaveatPolicySet,
+    ) -> AuthorizationDecision {
         for capability in self.effective_delegation().capabilities().as_slice() {
             let parent = match VerifiedCapability::from_document(capability.clone()) {
                 Ok(parent) => parent,
@@ -1185,6 +1405,9 @@ impl VerifiedToken {
                 }
             };
             if parent.contains(&requested) {
+                if let Some(reason) = evaluate_capability_caveats(capability, request, policies) {
+                    return AuthorizationDecision::Denied { reason };
+                }
                 return AuthorizationDecision::Allowed {
                     matched_capability: capability.clone(),
                 };
@@ -1194,6 +1417,29 @@ impl VerifiedToken {
             reason: AuthorizationDenialReason::NoMatchingCapability,
         }
     }
+}
+
+fn evaluate_capability_caveats(
+    capability: &CapabilityDocument,
+    request: &AuthorizationRequest,
+    policies: &dyn CaveatPolicySet,
+) -> Option<AuthorizationDenialReason> {
+    for caveat in capability.caveats.as_slice() {
+        let identifier = CaveatIdentifier::from(caveat);
+        let Some(policy) = policies.policy_for(&identifier) else {
+            return Some(AuthorizationDenialReason::CaveatPolicyMissing { caveat: identifier });
+        };
+        match policy.evaluate(caveat, request) {
+            CaveatDecision::Satisfied => {}
+            CaveatDecision::Rejected { message } => {
+                return Some(AuthorizationDenialReason::CaveatRejected {
+                    caveat: identifier,
+                    message,
+                });
+            }
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1216,6 +1462,17 @@ struct EncodedCapability<'a> {
     resource: &'a str,
     #[serde(rename = "can")]
     ability: &'a str,
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "cav")]
+    caveats: Vec<EncodedCaveat<'a>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EncodedCaveat<'a> {
+    domain: &'a str,
+    #[serde(rename = "type")]
+    caveat_type: &'a str,
+    key: &'a str,
+    payload: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1224,6 +1481,20 @@ struct DecodedCapability {
     resource: Option<String>,
     #[serde(default, rename = "can")]
     ability: Option<String>,
+    #[serde(default, rename = "cav")]
+    caveats: Vec<DecodedCaveat>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct DecodedCaveat {
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default, rename = "type")]
+    caveat_type: Option<String>,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1587,14 +1858,25 @@ fn verify_capability_attenuation(child: &CapabilitySet, parents: &[VerifiedToken
 }
 
 fn capability_is_delegated(child: &CapabilityDocument, parents: &[CapabilityDocument]) -> TokenResult<bool> {
-    let child = VerifiedCapability::from_document(child.clone())?;
+    let child_verified = VerifiedCapability::from_document(child.clone())?;
     for parent in parents {
-        let parent = VerifiedCapability::from_document(parent.clone())?;
-        if parent.contains(&child) {
+        let parent_verified = VerifiedCapability::from_document(parent.clone())?;
+        if parent_verified.contains(&child_verified) && parent_caveats_are_preserved(parent, child) {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+fn parent_caveats_are_preserved(parent: &CapabilityDocument, child: &CapabilityDocument) -> bool {
+    parent.caveats.iter().all(|parent_caveat| {
+        child.caveats.iter().any(|child_caveat| {
+            child_caveat.domain == parent_caveat.domain
+                && child_caveat.caveat_type == parent_caveat.caveat_type
+                && child_caveat.key == parent_caveat.key
+                && child_caveat.payload() == parent_caveat.payload()
+        })
+    })
 }
 
 fn parent_effective_capabilities(parents: &[VerifiedToken]) -> Vec<CapabilityDocument> {
@@ -1671,7 +1953,21 @@ fn claims_capabilities(claims: &ucan_core::token::Claims) -> TokenResult<Vec<Cap
     claims
         .capabilities()
         .iter()
-        .map(|capability| CapabilityDocument::new(capability.resource().to_owned(), capability.ability().to_owned()))
+        .map(|capability| {
+            let caveats = capability
+                .caveats()
+                .iter()
+                .map(|caveat| {
+                    CaveatDocument::new(
+                        caveat.domain().to_owned(),
+                        caveat.caveat_type().to_owned(),
+                        caveat.key().to_owned(),
+                        caveat.payload().to_vec(),
+                    )
+                })
+                .collect::<crate::Result<Vec<_>>>()?;
+            CapabilityDocument::with_caveats(capability.resource().to_owned(), capability.ability().to_owned(), caveats)
+        })
         .collect::<crate::Result<Vec<_>>>()
         .map_err(|error| TokenError::Capability {
             message: error.to_string(),
@@ -1825,6 +2121,16 @@ fn encoded_claims<'a>(input: &'a IssueClaimsInput<'a>) -> EncodedClaims<'a> {
             .map(|capability| EncodedCapability {
                 resource: capability.resource.as_str(),
                 ability: capability.ability.as_str(),
+                caveats: capability
+                    .caveats
+                    .iter()
+                    .map(|caveat| EncodedCaveat {
+                        domain: caveat.domain.as_str(),
+                        caveat_type: caveat.caveat_type.as_str(),
+                        key: caveat.key.as_str(),
+                        payload: URL_SAFE_NO_PAD.encode(caveat.payload.as_slice()),
+                    })
+                    .collect(),
             })
             .collect(),
         prf: encode_proof_references(input.proofs.as_slice())
@@ -1932,7 +2238,8 @@ fn decoded_capability_inputs(
             index,
             field: CAPABILITY_ABILITY_FIELD,
         })?;
-        inputs.push(ucan_core::token::CapabilityInput::new(resource, ability));
+        let caveats = decoded_caveat_inputs(capability)?;
+        inputs.push(ucan_core::token::CapabilityInput::with_caveats(resource, ability, Box::leak(caveats)));
     }
     Ok(Some(inputs))
 }
@@ -1948,6 +2255,27 @@ fn decoded_proof_references(claims: &DecodedClaims) -> TokenResult<Option<Vec<Ve
         .map(Some)
 }
 
+fn decoded_caveat_inputs(capability: &DecodedCapability) -> TokenResult<Box<[ucan_core::token::CaveatInput<'_>]>> {
+    let mut inputs = Vec::with_capacity(capability.caveats.len());
+    for caveat in &capability.caveats {
+        let domain = caveat.domain.as_deref().ok_or_else(|| TokenError::Capability {
+            message: "caveat is missing domain".to_owned(),
+        })?;
+        let caveat_type = caveat.caveat_type.as_deref().ok_or_else(|| TokenError::Capability {
+            message: "caveat is missing type".to_owned(),
+        })?;
+        let key = caveat.key.as_deref().ok_or_else(|| TokenError::Capability {
+            message: "caveat is missing key".to_owned(),
+        })?;
+        let payload = caveat.payload.as_deref().ok_or_else(|| TokenError::Capability {
+            message: "caveat is missing payload".to_owned(),
+        })?;
+        let payload = decode_part(payload, CompactPart::Payload)?;
+        inputs.push(ucan_core::token::CaveatInput::new(domain, caveat_type, key, payload.leak()));
+    }
+    Ok(inputs.into_boxed_slice())
+}
+
 fn proof_reference_inputs(references: &[Vec<u8>]) -> Vec<ucan_core::token::ProofReferenceInput<'_>> {
     references
         .iter()
@@ -1959,7 +2287,23 @@ fn capability_inputs(capabilities: &[CapabilityDocument]) -> Vec<ucan_core::toke
     capabilities
         .iter()
         .map(|capability| {
-            ucan_core::token::CapabilityInput::new(capability.resource.as_str(), capability.ability.as_str())
+            let caveats: Vec<ucan_core::token::CaveatInput<'_>> = capability
+                .caveats
+                .iter()
+                .map(|caveat| {
+                    ucan_core::token::CaveatInput::new(
+                        caveat.domain.as_str(),
+                        caveat.caveat_type.as_str(),
+                        caveat.key.as_str(),
+                        caveat.payload.as_slice(),
+                    )
+                })
+                .collect();
+            ucan_core::token::CapabilityInput::with_caveats(
+                capability.resource.as_str(),
+                capability.ability.as_str(),
+                caveats.leak(),
+            )
         })
         .collect()
 }
@@ -1982,12 +2326,19 @@ mod tests {
     use super::AuthorizationDenialReason;
     use super::AuthorizationRequest;
     use super::CapabilitySet;
+    use super::CaveatDecision;
+    use super::CaveatIdentifier;
+    use super::CaveatPolicy;
+    use super::CaveatPolicySet;
     use super::CompactToken;
     use super::Ed25519InMemorySigner;
     use super::Ed25519PublicKey;
     use super::Ed25519SigningKey;
     use super::Ed25519VerificationKey;
     use super::EffectiveDelegation;
+    use super::InvocationDenialReason;
+    use super::InvocationRequest;
+    use super::InvocationResult;
     use super::IssueRequest;
     use super::IssuerDid;
     use super::KeyResolutionContext;
@@ -2015,6 +2366,7 @@ mod tests {
     use super::validate_decoded_token;
     use super::verify_compact_token;
     use crate::shell::CapabilityDocument;
+    use crate::shell::CaveatDocument;
 
     const ISSUER_SECRET_BYTE: u8 = 7;
     const AUDIENCE_SECRET_BYTE: u8 = 9;
@@ -2088,6 +2440,120 @@ mod tests {
         let decision = verified.authorize_request(&request);
 
         assert_allowed_capability(&decision, "did:key:z6Mkresource", "store/*");
+    }
+
+    #[test]
+    fn verified_token_authorizes_satisfied_caveat_policy() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            caveat("time", "before", "unix", b"2000"),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+        let policies = SinglePolicySet::new("time", "before", "unix", AllowPolicy);
+
+        let decision = verified.authorize_with_policies("did:key:z6Mkresource/photos", "store/add", &policies);
+
+        assert!(decision.is_allowed());
+        assert_eq!(decision.matched_capability().expect("matched").resource, "did:key:z6Mkresource");
+        assert_eq!(decision.matched_capability().expect("matched").ability, "store/*");
+        assert_eq!(decision.matched_capability().expect("matched").caveats.len(), 1);
+    }
+
+    #[test]
+    fn verified_token_denies_unknown_or_rejected_caveats() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            caveat("time", "before", "unix", b"2000"),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+
+        let unknown = verified.authorize("did:key:z6Mkresource/photos", "store/add");
+        let reject = verified.authorize_with_policies(
+            "did:key:z6Mkresource/photos",
+            "store/add",
+            &SinglePolicySet::new("time", "before", "unix", RejectPolicy),
+        );
+
+        assert!(matches!(unknown.denial_reason(), Some(AuthorizationDenialReason::CaveatPolicyMissing { .. })));
+        assert!(matches!(reject.denial_reason(), Some(AuthorizationDenialReason::CaveatRejected { .. })));
+    }
+
+    #[test]
+    fn invocation_allows_satisfied_caveat_and_exposes_effective_context() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience.clone()),
+            ProofCollection::empty(),
+            caveat("time", "before", "unix", b"2000"),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let policies = SinglePolicySet::new("time", "before", "unix", AllowPolicy);
+        let request = InvocationRequest::new(&token, &context, "did:key:z6Mkresource/photos", "store/add", &policies);
+
+        let result = super::verify_invocation(&request);
+
+        let InvocationResult::Allowed { invocation } = result else {
+            panic!("invocation should be allowed");
+        };
+        assert_eq!(invocation.issuer().as_str(), issuer_key.issuer().expect("issuer").as_str());
+        assert_eq!(invocation.invoker().as_str(), issuer_key.issuer().expect("issuer").as_str());
+        assert_eq!(invocation.audience().as_str(), audience.as_str());
+        assert_eq!(invocation.matched_capability().resource, "did:key:z6Mkresource");
+        assert_eq!(invocation.effective_time_bounds(), token_time_bounds());
+    }
+
+    #[test]
+    fn invocation_denies_caveat_rejection_and_verification_failure() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            caveat("time", "before", "unix", b"2000"),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let reject_policies = SinglePolicySet::new("time", "before", "unix", RejectPolicy);
+        let rejected = super::verify_invocation(&InvocationRequest::new(
+            &token,
+            &context,
+            "did:key:z6Mkresource/photos",
+            "store/add",
+            &reject_policies,
+        ));
+        let tampered = CompactToken::new("not.enough").expect("non-empty wrapper");
+        let verified_bad = super::verify_invocation(&InvocationRequest::new(
+            &tampered,
+            &context,
+            "did:key:z6Mkresource/photos",
+            "store/add",
+            &reject_policies,
+        ));
+
+        assert!(matches!(rejected, InvocationResult::Denied {
+            reason: InvocationDenialReason::Authorization {
+                reason: AuthorizationDenialReason::CaveatRejected { .. }
+            }
+        }));
+        assert!(matches!(verified_bad, InvocationResult::Denied {
+            reason: InvocationDenialReason::Verification { .. }
+        }));
     }
 
     #[test]
@@ -2461,6 +2927,36 @@ mod tests {
     }
 
     #[test]
+    fn child_must_preserve_parent_caveat_payload_for_attenuation() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent_caveat = caveat("time", "before", "unix", b"2000");
+        let parent = issue_token(&issue_request_with_caveat(
+            &parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+            parent_caveat.clone(),
+        ))
+        .expect("parent should issue");
+        let missing_caveat_child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
+        let narrowed_child = issue_token(&child_request_with_caveat(&child_key, parent.clone(), parent_caveat))
+            .expect("child should issue");
+        let context = verification_context(
+            vec![&parent_key, &child_key],
+            ProofCollection::from_tokens(vec![parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+
+        let missing_error = verify_compact_token(&missing_caveat_child, &context)
+            .expect_err("child that drops parent caveat should fail attenuation");
+        let verified = verify_compact_token(&narrowed_child, &context).expect("preserved caveat should verify");
+
+        assert!(matches!(missing_error, TokenError::Attenuation { .. }));
+        assert_eq!(verified.effective_delegation().capabilities().as_slice()[0].caveats.len(), 1);
+    }
+
+    #[test]
     fn over_broad_child_capability_is_rejected() {
         let parent_key = signing_key(ISSUER_SECRET_BYTE);
         let child_key = signing_key(CHILD_SECRET_BYTE);
@@ -2819,6 +3315,48 @@ mod tests {
         }
     }
 
+    struct AllowPolicy;
+
+    impl CaveatPolicy for AllowPolicy {
+        fn evaluate(&self, _caveat: &CaveatDocument, _request: &AuthorizationRequest) -> CaveatDecision {
+            CaveatDecision::Satisfied
+        }
+    }
+
+    struct RejectPolicy;
+
+    impl CaveatPolicy for RejectPolicy {
+        fn evaluate(&self, _caveat: &CaveatDocument, _request: &AuthorizationRequest) -> CaveatDecision {
+            CaveatDecision::Rejected {
+                message: "rejected by test policy".to_owned(),
+            }
+        }
+    }
+
+    struct SinglePolicySet<P> {
+        identifier: CaveatIdentifier,
+        policy: P,
+    }
+
+    impl<P> SinglePolicySet<P> {
+        fn new(domain: &str, caveat_type: &str, key: &str, policy: P) -> Self {
+            Self {
+                identifier: CaveatIdentifier::new(domain, caveat_type, key).expect("identifier should validate"),
+                policy,
+            }
+        }
+    }
+
+    impl<P: CaveatPolicy> CaveatPolicySet for SinglePolicySet<P> {
+        fn policy_for(&self, caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy> {
+            if caveat == &self.identifier {
+                Some(&self.policy)
+            } else {
+                None
+            }
+        }
+    }
+
     struct CyclicProofStore {
         token: CompactToken,
     }
@@ -2995,12 +3533,59 @@ mod tests {
         )
     }
 
+    fn issue_request_with_caveat(
+        issuer_key: &Ed25519SigningKey,
+        audience: AudienceDid,
+        proofs: ProofCollection,
+        caveat: CaveatDocument,
+    ) -> IssueRequest {
+        IssueRequest::new(
+            issuer_key.clone(),
+            audience,
+            CapabilitySet::new(vec![
+                CapabilityDocument::with_caveats("did:key:z6Mkresource".to_owned(), "store/*".to_owned(), vec![caveat])
+                    .expect("capability with caveat should validate"),
+            ])
+            .expect("capability set should validate"),
+            proofs,
+            TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_AT_SECONDS).expect("bounds should validate"),
+        )
+    }
+
+    fn caveat(domain: &str, caveat_type: &str, key: &str, payload: &[u8]) -> CaveatDocument {
+        CaveatDocument::new(domain.to_owned(), caveat_type.to_owned(), key.to_owned(), payload.to_vec())
+            .expect("caveat should validate")
+    }
+
     fn child_request(issuer_key: &Ed25519SigningKey, parent: CompactToken) -> IssueRequest {
         let audience = signing_key(OTHER_SECRET_BYTE).issuer().expect("audience should derive");
         IssueRequest::new(
             issuer_key.clone(),
             AudienceDid::from(audience),
             capabilities("did:key:z6Mkresource/photos", "store/add"),
+            ProofCollection::from_tokens(vec![parent]),
+            TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS).expect("bounds should validate"),
+        )
+    }
+
+    fn child_request_with_caveat(
+        issuer_key: &Ed25519SigningKey,
+        parent: CompactToken,
+        caveat: CaveatDocument,
+    ) -> IssueRequest {
+        let audience = signing_key(OTHER_SECRET_BYTE).issuer().expect("audience should derive");
+        IssueRequest::new(
+            issuer_key.clone(),
+            AudienceDid::from(audience),
+            CapabilitySet::new(vec![
+                CapabilityDocument::with_caveats(
+                    "did:key:z6Mkresource/photos".to_owned(),
+                    "store/add".to_owned(),
+                    vec![caveat],
+                )
+                .expect("capability with caveat should validate"),
+            ])
+            .expect("capability set should validate"),
             ProofCollection::from_tokens(vec![parent]),
             TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
