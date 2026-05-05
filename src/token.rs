@@ -19,12 +19,17 @@ use crate::verified::TokenTimeWindow;
 use crate::verified::TokenValidationFailure;
 use crate::verified::VerifiedCapability;
 use crate::verified::VerifiedPrimitiveError;
+use crate::verified::VerifiedProofTraversalBudget;
+use crate::verified::VerifiedProofTraversalEntry;
+use crate::verified::VerifiedProofTraversalTarget;
+use crate::verified::VerifiedProofTraversalTranscript;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
+use crate::verified::proof_traversal_transcript_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
 use crate::verified::validate_token_envelope;
@@ -1760,6 +1765,18 @@ pub struct EffectiveDelegation {
     time_bounds: TokenTimeBounds,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveDelegationEvaluation {
+    effective: EffectiveDelegation,
+    parent_proof_transcript: Option<LiveProofTraversalTranscript>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiveProofTraversalTranscript {
+    entries: Vec<VerifiedProofTraversalEntry>,
+    total_input_bytes: u64,
+}
+
 impl EffectiveDelegation {
     #[must_use]
     pub const fn capabilities(&self) -> &CapabilitySet {
@@ -1779,6 +1796,7 @@ pub struct VerifiedToken {
     capabilities: CapabilitySet,
     proofs: ProofCollection,
     effective: EffectiveDelegation,
+    proof_transcript: Option<LiveProofTraversalTranscript>,
 }
 
 impl VerifiedToken {
@@ -2233,8 +2251,9 @@ where
     let audience = AudienceDid::new(token.claims.audience_did().to_owned())?;
     let capabilities = claims_capability_set(&token.claims)?;
     let time_bounds = claims_time_bounds(&token.claims)?;
+    let token_reference = proof_reference_for_token(token.compact());
     let proofs = direct_proofs(&token, proof_store, limits, traversal)?;
-    let effective = effective_delegation(
+    let evaluation = effective_delegation(
         &issuer,
         &capabilities,
         time_bounds,
@@ -2247,13 +2266,26 @@ where
         traversal,
         depth,
     )?;
-    Ok(VerifiedToken {
+    let proof_transcript = proof_transcript_for_verified_token(
+        &token_reference,
+        token.compact().as_str().len(),
+        !proofs.as_slice().is_empty(),
+        &issuer,
+        &audience,
+        &capabilities,
+        time_bounds,
+        evaluation.parent_proof_transcript.as_ref(),
+    )?;
+    let verified = VerifiedToken {
         issuer,
         audience,
         capabilities,
         proofs,
-        effective,
-    })
+        effective: evaluation.effective,
+        proof_transcript,
+    };
+    verify_live_linear_proof_transcript(&verified, time, limits)?;
+    Ok(verified)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2269,16 +2301,19 @@ fn effective_delegation<R, S, V>(
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
-) -> TokenResult<EffectiveDelegation>
+) -> TokenResult<EffectiveDelegationEvaluation>
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
     V: RevocationChecker + ?Sized,
 {
     if proofs.as_slice().is_empty() {
-        return Ok(EffectiveDelegation {
-            capabilities: capabilities.clone(),
-            time_bounds,
+        return Ok(EffectiveDelegationEvaluation {
+            effective: EffectiveDelegation {
+                capabilities: capabilities.clone(),
+                time_bounds,
+            },
+            parent_proof_transcript: None,
         });
     }
     let parent_tokens =
@@ -2286,9 +2321,12 @@ where
     verify_child_is_linked_to_parent_audience(child_issuer, &parent_tokens)?;
     let effective_time = verify_temporal_attenuation(time_bounds, parent_tokens.as_slice())?;
     let effective_capabilities = verify_capability_attenuation(capabilities, parent_tokens.as_slice())?;
-    Ok(EffectiveDelegation {
-        capabilities: effective_capabilities,
-        time_bounds: effective_time,
+    Ok(EffectiveDelegationEvaluation {
+        effective: EffectiveDelegation {
+            capabilities: effective_capabilities,
+            time_bounds: effective_time,
+        },
+        parent_proof_transcript: parent_proof_transcript(parent_tokens.as_slice()),
     })
 }
 
@@ -2395,6 +2433,160 @@ fn parent_effective_capabilities(parents: &[VerifiedToken]) -> Vec<CapabilityDoc
         .iter()
         .flat_map(|parent| parent.effective_delegation().capabilities().as_slice().iter().cloned())
         .collect()
+}
+
+fn parent_proof_transcript(parents: &[VerifiedToken]) -> Option<LiveProofTraversalTranscript> {
+    match parents {
+        [parent] => parent.proof_transcript.clone(),
+        _ => None,
+    }
+}
+
+fn proof_transcript_for_verified_token(
+    proof_reference: &ProofReference,
+    compact_token_bytes: usize,
+    has_proofs: bool,
+    issuer: &IssuerDid,
+    audience: &AudienceDid,
+    capabilities: &CapabilitySet,
+    time_bounds: TokenTimeBounds,
+    parent_transcript: Option<&LiveProofTraversalTranscript>,
+) -> TokenResult<Option<LiveProofTraversalTranscript>> {
+    let token_bytes = u64::try_from(compact_token_bytes).unwrap_or(u64::MAX);
+    let parent_caveat_ids = parent_transcript
+        .and_then(|transcript| transcript.entries.last())
+        .map(|entry| entry.caveat_ids.as_slice());
+    let entry = proof_traversal_entry(proof_reference, issuer, audience, capabilities, time_bounds, parent_caveat_ids)?;
+    let Some(parent_transcript) = parent_transcript else {
+        if has_proofs {
+            return Ok(None);
+        }
+        return Ok(Some(LiveProofTraversalTranscript {
+            entries: vec![entry],
+            total_input_bytes: token_bytes,
+        }));
+    };
+    if !linear_proof_edge_representable(parent_transcript.entries.last(), &entry) {
+        return Ok(None);
+    }
+    let mut entries = parent_transcript.entries.clone();
+    entries.push(entry);
+    Ok(Some(LiveProofTraversalTranscript {
+        entries,
+        total_input_bytes: parent_transcript.total_input_bytes.saturating_add(token_bytes),
+    }))
+}
+
+#[allow(clippy::suspicious_operation_groupings)]
+fn linear_proof_edge_representable(
+    parent: Option<&VerifiedProofTraversalEntry>,
+    child: &VerifiedProofTraversalEntry,
+) -> bool {
+    let Some(parent) = parent else {
+        return false;
+    };
+    parent.audience_did == child.issuer_did
+        && parent.not_before_seconds <= child.not_before_seconds
+        && child.expires_at_seconds <= parent.expires_at_seconds
+        && child.capabilities.iter().all(|child_capability| {
+            parent.capabilities.iter().any(|parent_capability| {
+                child_capability.resource.starts_with(parent_capability.resource.as_str())
+                    && child_capability.ability == parent_capability.ability
+            })
+        })
+}
+
+fn proof_traversal_entry(
+    proof_reference: &ProofReference,
+    issuer: &IssuerDid,
+    audience: &AudienceDid,
+    capabilities: &CapabilitySet,
+    time_bounds: TokenTimeBounds,
+    parent_caveat_ids: Option<&[Vec<u8>]>,
+) -> TokenResult<VerifiedProofTraversalEntry> {
+    Ok(VerifiedProofTraversalEntry {
+        proof_reference: proof_reference.as_bytes().to_vec(),
+        issuer_did: issuer.as_str().to_owned(),
+        audience_did: audience.as_str().to_owned(),
+        capabilities: capabilities.as_slice().to_vec(),
+        caveat_ids: effective_caveat_ids(capabilities, parent_caveat_ids)?,
+        not_before_seconds: time_bounds.not_before_seconds(),
+        expires_at_seconds: time_bounds.expires_at_seconds(),
+        signature_valid: true,
+        revoked: false,
+    })
+}
+
+fn effective_caveat_ids(
+    capabilities: &CapabilitySet,
+    parent_caveat_ids: Option<&[Vec<u8>]>,
+) -> TokenResult<Vec<Vec<u8>>> {
+    let mut caveat_ids = parent_caveat_ids.map_or_else(Vec::new, <[Vec<u8>]>::to_vec);
+    for capability in capabilities.as_slice() {
+        for caveat in capability.caveats.as_slice() {
+            let caveat_id = caveat_identifier_bytes(caveat)?;
+            if !caveat_ids.iter().any(|existing| existing == &caveat_id) {
+                caveat_ids.push(caveat_id);
+            }
+        }
+    }
+    Ok(caveat_ids)
+}
+
+fn caveat_identifier_bytes(caveat: &CaveatDocument) -> TokenResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    append_length_prefixed(caveat.domain.as_bytes(), &mut bytes)?;
+    append_length_prefixed(caveat.caveat_type.as_bytes(), &mut bytes)?;
+    append_length_prefixed(caveat.key.as_bytes(), &mut bytes)?;
+    append_length_prefixed(caveat.payload(), &mut bytes)?;
+    Ok(bytes)
+}
+
+fn append_length_prefixed(input: &[u8], output: &mut Vec<u8>) -> TokenResult<()> {
+    let len = u64::try_from(input.len()).map_err(|_| TokenError::ProofChain {
+        message: "caveat identifier component exceeds transcript length encoding".to_owned(),
+    })?;
+    output.extend_from_slice(&len.to_be_bytes());
+    output.extend_from_slice(input);
+    Ok(())
+}
+
+fn verify_live_linear_proof_transcript(
+    verified: &VerifiedToken,
+    time: VerificationTime,
+    limits: VerificationLimits,
+) -> TokenResult<()> {
+    let Some(transcript) = &verified.proof_transcript else {
+        return Ok(());
+    };
+    let Some(target_capability) = verified.capabilities().as_slice().first() else {
+        return Err(TokenError::ProofChain {
+            message: "verified proof traversal transcript has no authorization target".to_owned(),
+        });
+    };
+    let target = VerifiedProofTraversalTarget {
+        resource: target_capability.resource.clone(),
+        ability: target_capability.ability.clone(),
+        now_seconds: time.as_unix_seconds(),
+        tolerance_seconds: 0,
+    };
+    let bridge_transcript = VerifiedProofTraversalTranscript {
+        entries: transcript.entries.clone(),
+        visited_references: transcript.entries.iter().map(|entry| entry.proof_reference.clone()).collect(),
+        total_input_bytes: transcript.total_input_bytes,
+        target,
+    };
+    let budget = VerifiedProofTraversalBudget {
+        max_depth: u64::try_from(limits.max_proof_depth()).unwrap_or(u64::MAX),
+        max_proofs: u64::try_from(limits.max_proof_count()).unwrap_or(u64::MAX),
+        max_input_bytes: u64::try_from(limits.max_compact_token_bytes()).unwrap_or(u64::MAX),
+    };
+    if !proof_traversal_transcript_is_valid(&bridge_transcript, &budget)? {
+        return Err(TokenError::ProofChain {
+            message: "verified proof traversal transcript rejected live linear chain".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn direct_proofs<S>(
@@ -3308,6 +3500,7 @@ mod tests {
                 capabilities: capabilities("did:key:z6Mkresource/photos", "store/add"),
                 time_bounds: token_time_bounds(),
             },
+            proof_transcript: None,
         };
         assert_eq!(verified.capabilities().as_slice(), capabilities("did:key:z6Mkresource", "store/*").as_slice());
 
@@ -3614,6 +3807,40 @@ mod tests {
         assert!(matches!(signer_error, TokenError::InvalidSecretKeyLength { .. }));
         assert_secret_material_is_absent(format!("{signer_error}").as_str());
         assert_secret_material_is_absent(format!("{signer_error:?}").as_str());
+    }
+
+    #[test]
+    fn exact_linear_delegation_emits_verified_proof_transcript() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent = issue_token(&issue_request_with_capability(
+            &parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+            "did:key:z6Mkresource",
+            "store/add",
+        ))
+        .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
+        let context = verification_context(
+            vec![&parent_key, &child_key],
+            ProofCollection::from_tokens(vec![parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+
+        let verified = verify_compact_token(&child, &context).expect("exact linear chain should verify");
+
+        let transcript = verified.proof_transcript.as_ref().expect("exact linear chains should be transcript-checked");
+        assert_eq!(transcript.entries.len(), 2);
+        assert!(transcript.total_input_bytes > 0);
+    }
+
+    #[test]
+    fn wildcard_linear_delegation_keeps_verified_transcript_boundary_explicit() {
+        let verified = verified_child_token();
+
+        assert!(verified.proof_transcript.is_none());
     }
 
     #[test]
