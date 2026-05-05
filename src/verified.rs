@@ -529,7 +529,20 @@ pub fn web_of_trust_principal_digest(public_key_bytes: &[u8]) -> Vec<u8> {
     web_of_trust_principal::principal_id_from_bytes(public_key_bytes).digest
 }
 
-/// Authorize a UCAN payload with caller-supplied finite Web-of-Trust data.
+/// Check whether raw Web-of-Trust principal digest bytes are admissible.
+///
+/// This is a deterministic data-only bridge to the vendored WOT principal
+/// digest admission primitive. It accepts exactly the fixed-width digest bytes
+/// used by [`web_of_trust_ucan_authorization`] inputs, but it does not resolve
+/// identities, fetch or validate trust records, validate attestations, check
+/// revocation freshness, authorize UCANs, access storage/network backends,
+/// sign, replay-protect, or read an ambient clock.
+#[must_use]
+pub fn web_of_trust_principal_digest_is_valid(digest: &[u8]) -> bool {
+    web_of_trust_principal::principal_id_from_digest_bytes(digest.to_vec()).is_some()
+}
+
+/// Authorize a UCAN token envelope with caller-supplied Web-of-Trust evidence.
 ///
 /// This is the shell bridge to verified-logic's Web-of-Trust UCAN authorizer.
 /// It delegates a structurally valid token envelope, caller-supplied
@@ -863,12 +876,8 @@ fn build_token_payload(envelope: &TokenEnvelopeInput) -> VerifiedResult<ucan_tok
 
 fn build_web_of_trust_principal(digest: &[u8]) -> VerifiedResult<web_of_trust_principal::PrincipalId> {
     let actual = digest.len();
-    if actual != web_of_trust_principal::PRINCIPAL_ID_LEN {
-        return Err(VerifiedPrimitiveError::InvalidPrincipalDigestLength { actual });
-    }
-    Ok(web_of_trust_principal::PrincipalId {
-        digest: digest.to_vec(),
-    })
+    web_of_trust_principal::principal_id_from_digest_bytes(digest.to_vec())
+        .ok_or(VerifiedPrimitiveError::InvalidPrincipalDigestLength { actual })
 }
 
 const fn to_web_of_trust_caveat(caveat: &VerifiedWebOfTrustCaveat) -> ucan_caveat::Caveat {
@@ -1015,6 +1024,7 @@ mod tests {
     use super::validate_token_envelope;
     use super::verify_ed25519_signature;
     use super::web_of_trust_principal_digest;
+    use super::web_of_trust_principal_digest_is_valid;
     use super::web_of_trust_ucan_authorization;
     use crate::shell::CapabilityDocument;
 
@@ -1391,6 +1401,19 @@ mod tests {
         assert_eq!(digest, repeated);
         assert_eq!(digest.len(), verified_wot_principal::PRINCIPAL_ID_LEN);
         assert_ne!(digest, other);
+    }
+
+    #[test]
+    fn web_of_trust_principal_digest_admission_uses_verified_constructor() {
+        let digest = web_of_trust_principal_digest(b"example public key bytes");
+        let mut short = digest.clone();
+        short.pop();
+        let mut long = digest.clone();
+        long.push(0);
+
+        assert!(web_of_trust_principal_digest_is_valid(&digest));
+        assert!(!web_of_trust_principal_digest_is_valid(&short));
+        assert!(!web_of_trust_principal_digest_is_valid(&long));
     }
 
     #[test]
