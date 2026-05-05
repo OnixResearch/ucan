@@ -517,6 +517,18 @@ pub fn invocation_chain_is_authorized(
     ))
 }
 
+/// Derive a Web-of-Trust principal digest from public key bytes.
+///
+/// This is a deterministic data-only bridge to the vendored WOT principal
+/// primitive. It returns the fixed-width principal digest bytes used by
+/// [`web_of_trust_ucan_authorization`] inputs, but it does not resolve
+/// identities, fetch or validate trust records, check revocations, authorize
+/// UCANs, access storage/network backends, or read an ambient clock.
+#[must_use]
+pub fn web_of_trust_principal_digest(public_key_bytes: &[u8]) -> Vec<u8> {
+    web_of_trust_principal::principal_id_from_bytes(public_key_bytes).digest
+}
+
 /// Authorize a UCAN payload with caller-supplied finite Web-of-Trust data.
 ///
 /// This is the shell bridge to verified-logic's Web-of-Trust UCAN authorizer.
@@ -1002,6 +1014,7 @@ mod tests {
     use super::token_time_valid;
     use super::validate_token_envelope;
     use super::verify_ed25519_signature;
+    use super::web_of_trust_principal_digest;
     use super::web_of_trust_ucan_authorization;
     use crate::shell::CapabilityDocument;
 
@@ -1369,6 +1382,18 @@ mod tests {
     }
 
     #[test]
+    fn web_of_trust_principal_digest_uses_verified_principal_derivation() {
+        let key_bytes = b"example public key bytes";
+        let digest = web_of_trust_principal_digest(key_bytes);
+        let repeated = web_of_trust_principal_digest(key_bytes);
+        let other = web_of_trust_principal_digest(b"different public key bytes");
+
+        assert_eq!(digest, repeated);
+        assert_eq!(digest.len(), verified_wot_principal::PRINCIPAL_ID_LEN);
+        assert_ne!(digest, other);
+    }
+
+    #[test]
     fn web_of_trust_ucan_authorization_uses_verified_facade() {
         let root_key = vec![1, 2, 3];
         let subject_key = vec![7, 8, 9];
@@ -1603,7 +1628,7 @@ mod tests {
     }
 
     fn principal_digest(key_bytes: &[u8]) -> Vec<u8> {
-        verified_wot_principal::principal_id_from_bytes(key_bytes).digest
+        web_of_trust_principal_digest(key_bytes)
     }
 
     fn sign_wot_bytes(domain_tag: u8, issuer_key_bytes: &[u8], payload_bytes: &[u8]) -> Vec<u8> {

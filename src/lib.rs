@@ -119,4 +119,5 @@ pub use verified::token_time_valid;
 pub use verified::token_time_valid_at;
 pub use verified::validate_token_envelope;
 pub use verified::verify_ed25519_signature;
+pub use verified::web_of_trust_principal_digest;
 pub use verified::web_of_trust_ucan_authorization;
