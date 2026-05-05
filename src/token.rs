@@ -22,9 +22,9 @@ use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedPrimitiveError;
 use crate::verified::VerifiedProofTraversalBudget;
+use crate::verified::VerifiedProofTraversalDagTranscript;
 use crate::verified::VerifiedProofTraversalEntry;
 use crate::verified::VerifiedProofTraversalTarget;
-use crate::verified::VerifiedProofTraversalTranscript;
 use crate::verified::compact_token_envelope_is_valid;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
@@ -32,7 +32,7 @@ use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
-use crate::verified::proof_traversal_transcript_is_valid;
+use crate::verified::proof_traversal_dag_transcript_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
 use crate::verified::validate_token_envelope;
@@ -1782,6 +1782,8 @@ struct EffectiveDelegationEvaluation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LiveProofTraversalTranscript {
     entries: Vec<VerifiedProofTraversalEntry>,
+    parent_indices: Vec<Vec<usize>>,
+    leaf_indices: Vec<usize>,
     total_input_bytes: u64,
 }
 
@@ -2304,7 +2306,7 @@ where
         effective: evaluation.effective,
         proof_transcript,
     };
-    verify_live_linear_proof_transcript(&verified, time, limits)?;
+    verify_live_dag_proof_transcript(&verified, time, limits)?;
     Ok(verified)
 }
 
@@ -2456,10 +2458,29 @@ fn parent_effective_capabilities(parents: &[VerifiedToken]) -> Vec<CapabilityDoc
 }
 
 fn parent_proof_transcript(parents: &[VerifiedToken]) -> Option<LiveProofTraversalTranscript> {
-    match parents {
-        [parent] => parent.proof_transcript.clone(),
-        _ => None,
+    let mut entries = Vec::new();
+    let mut parent_indices = Vec::new();
+    let mut leaf_indices = Vec::new();
+    let mut total_input_bytes = 0_u64;
+    for parent in parents {
+        let parent_transcript = parent.proof_transcript.as_ref()?;
+        let offset = entries.len();
+        entries.extend(parent_transcript.entries.iter().cloned());
+        parent_indices.extend(
+            parent_transcript
+                .parent_indices
+                .iter()
+                .map(|indices| indices.iter().map(|index| index.saturating_add(offset)).collect()),
+        );
+        leaf_indices.extend(parent_transcript.leaf_indices.iter().map(|index| index.saturating_add(offset)));
+        total_input_bytes = total_input_bytes.saturating_add(parent_transcript.total_input_bytes);
     }
+    Some(LiveProofTraversalTranscript {
+        entries,
+        parent_indices,
+        leaf_indices,
+        total_input_bytes,
+    })
 }
 
 fn proof_transcript_for_verified_token(
@@ -2483,43 +2504,22 @@ fn proof_transcript_for_verified_token(
         }
         return Ok(Some(LiveProofTraversalTranscript {
             entries: vec![entry],
+            parent_indices: vec![Vec::new()],
+            leaf_indices: vec![0],
             total_input_bytes: token_bytes,
         }));
     };
-    if !linear_proof_edge_representable(parent_transcript.entries.last(), &entry) {
-        return Ok(None);
-    }
     let mut entries = parent_transcript.entries.clone();
+    let mut parent_indices = parent_transcript.parent_indices.clone();
+    let child_index = entries.len();
     entries.push(entry);
+    parent_indices.push(parent_transcript.leaf_indices.clone());
     Ok(Some(LiveProofTraversalTranscript {
         entries,
+        parent_indices,
+        leaf_indices: vec![child_index],
         total_input_bytes: parent_transcript.total_input_bytes.saturating_add(token_bytes),
     }))
-}
-
-#[allow(clippy::suspicious_operation_groupings)]
-fn linear_proof_edge_representable(
-    parent: Option<&VerifiedProofTraversalEntry>,
-    child: &VerifiedProofTraversalEntry,
-) -> bool {
-    let Some(parent) = parent else {
-        return false;
-    };
-    parent.audience_did == child.issuer_did
-        && parent.not_before_seconds <= child.not_before_seconds
-        && child.expires_at_seconds <= parent.expires_at_seconds
-        && child.capabilities.iter().all(|child_capability| {
-            let Ok(child_verified) = VerifiedCapability::from_document(child_capability.clone()) else {
-                return false;
-            };
-            parent.capabilities.iter().any(|parent_capability| {
-                let Ok(parent_verified) = VerifiedCapability::from_document(parent_capability.clone()) else {
-                    return false;
-                };
-                parent_verified.contains(&child_verified)
-                    && parent_caveats_are_preserved(parent_capability, child_capability)
-            })
-        })
 }
 
 fn proof_traversal_entry(
@@ -2577,7 +2577,7 @@ fn append_length_prefixed(input: &[u8], output: &mut Vec<u8>) -> TokenResult<()>
     Ok(())
 }
 
-fn verify_live_linear_proof_transcript(
+fn verify_live_dag_proof_transcript(
     verified: &VerifiedToken,
     time: VerificationTime,
     limits: VerificationLimits,
@@ -2596,8 +2596,9 @@ fn verify_live_linear_proof_transcript(
         now_seconds: time.as_unix_seconds(),
         tolerance_seconds: 0,
     };
-    let bridge_transcript = VerifiedProofTraversalTranscript {
+    let bridge_transcript = VerifiedProofTraversalDagTranscript {
         entries: transcript.entries.clone(),
+        parent_indices: transcript.parent_indices.clone(),
         visited_references: transcript.entries.iter().map(|entry| entry.proof_reference.clone()).collect(),
         total_input_bytes: transcript.total_input_bytes,
         target,
@@ -2607,9 +2608,9 @@ fn verify_live_linear_proof_transcript(
         max_proofs: u64::try_from(limits.max_proof_count()).unwrap_or(u64::MAX),
         max_input_bytes: u64::try_from(limits.max_compact_token_bytes()).unwrap_or(u64::MAX),
     };
-    if !proof_traversal_transcript_is_valid(&bridge_transcript, &budget)? {
+    if !proof_traversal_dag_transcript_is_valid(&bridge_transcript, &budget)? {
         return Err(TokenError::ProofChain {
-            message: "verified proof traversal transcript rejected live linear chain".to_owned(),
+            message: "verified proof traversal DAG transcript rejected live proof graph".to_owned(),
         });
     }
     Ok(())
@@ -3869,6 +3870,49 @@ mod tests {
         let transcript =
             verified.proof_transcript.as_ref().expect("wildcard linear chains should be transcript-checked");
         assert_eq!(transcript.entries.len(), 2);
+        assert_eq!(transcript.parent_indices, vec![Vec::<usize>::new(), vec![0]]);
+        assert_eq!(transcript.leaf_indices, vec![1]);
+        assert!(transcript.total_input_bytes > 0);
+    }
+
+    #[test]
+    fn multi_parent_delegation_emits_verified_dag_proof_transcript() {
+        let storage_parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let audit_parent_key = signing_key(OTHER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let storage_parent = issue_token(&issue_request_with_capability(
+            &storage_parent_key,
+            AudienceDid::from(child_issuer.clone()),
+            ProofCollection::empty(),
+            "did:key:z6Mkresource",
+            "store/*",
+        ))
+        .expect("first parent should issue");
+        let audit_parent = issue_token(&issue_request_with_capability(
+            &audit_parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+            "did:key:z6Mkresource",
+            "store/*",
+        ))
+        .expect("second parent should issue");
+        let child =
+            issue_token(&child_request_with_proofs(&child_key, vec![storage_parent.clone(), audit_parent.clone()]))
+                .expect("child should issue");
+        let context = verification_context(
+            vec![&storage_parent_key, &audit_parent_key, &child_key],
+            ProofCollection::from_tokens(vec![storage_parent, audit_parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+
+        let verified = verify_compact_token(&child, &context).expect("multi-parent chain should verify");
+
+        let transcript =
+            verified.proof_transcript.as_ref().expect("multi-parent chains should be DAG transcript-checked");
+        assert_eq!(transcript.entries.len(), 3);
+        assert_eq!(transcript.parent_indices, vec![Vec::<usize>::new(), Vec::new(), vec![0, 1]]);
+        assert_eq!(transcript.leaf_indices, vec![2]);
         assert!(transcript.total_input_bytes > 0);
     }
 
@@ -4681,12 +4725,16 @@ mod tests {
     }
 
     fn child_request(issuer_key: &Ed25519SigningKey, parent: CompactToken) -> IssueRequest {
+        child_request_with_proofs(issuer_key, vec![parent])
+    }
+
+    fn child_request_with_proofs(issuer_key: &Ed25519SigningKey, parents: Vec<CompactToken>) -> IssueRequest {
         let audience = signing_key(OTHER_SECRET_BYTE).issuer().expect("audience should derive");
         IssueRequest::new(
             issuer_key.clone(),
             AudienceDid::from(audience),
             capabilities("did:key:z6Mkresource/photos", "store/add"),
-            ProofCollection::from_tokens(vec![parent]),
+            ProofCollection::from_tokens(parents),
             TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
     }

@@ -193,10 +193,8 @@ pub open spec fn dag_within_budget_spec(t: &TraversalDagTranscript, budget: &Tra
 pub open spec fn dag_parent_indices_well_formed_spec(t: &TraversalDagTranscript) -> bool {
     t.entries@.len() == t.parent_indices@.len()
     && t.entries@.len() > 0
-    && t.parent_indices@[0].len() == 0
-    && forall|child: int| #![trigger t.parent_indices@[child]] 1 <= child < t.parent_indices@.len() ==>
-        t.parent_indices@[child].len() > 0
-        && forall|slot: int| #![trigger t.parent_indices@[child][slot]] 0 <= slot < t.parent_indices@[child].len() ==>
+    && forall|child: int| #![trigger t.parent_indices@[child]] 0 <= child < t.parent_indices@.len() ==>
+        forall|slot: int| #![trigger t.parent_indices@[child][slot]] 0 <= slot < t.parent_indices@[child].len() ==>
             (t.parent_indices@[child][slot] as int) < child
 }
 
@@ -235,7 +233,7 @@ pub open spec fn dag_child_edges_well_formed_spec(t: &TraversalDagTranscript, ch
 
 pub open spec fn dag_edges_well_formed_spec(t: &TraversalDagTranscript) -> bool {
     dag_parent_indices_well_formed_spec(t)
-    && forall|child: int| #![trigger t.entries@[child]] 1 <= child < t.entries@.len() ==>
+    && forall|child: int| #![trigger t.entries@[child]] 0 <= child < t.entries@.len() && t.parent_indices@[child].len() > 0 ==>
         dag_child_edges_well_formed_spec(t, child)
 }
 
@@ -689,30 +687,22 @@ pub fn dag_parent_indices_well_formed(t: &TraversalDagTranscript) -> (result: bo
     if t.entries.len() != t.parent_indices.len() {
         return false;
     }
-    if t.parent_indices[0].len() != 0 {
-        return false;
-    }
-    let mut child: usize = 1;
+    let mut child: usize = 0;
     while child < t.parent_indices.len()
         invariant
-            1 <= child <= t.parent_indices.len(),
+            0 <= child <= t.parent_indices.len(),
             t.entries.len() == t.parent_indices.len(),
             t.entries.len() > 0,
-            t.parent_indices@[0].len() == 0,
-            forall|c: int| #![trigger t.parent_indices@[c]] 1 <= c < child ==>
-                t.parent_indices@[c].len() > 0
-                && forall|slot: int| #![trigger t.parent_indices@[c][slot]] 0 <= slot < t.parent_indices@[c].len() ==>
+            forall|c: int| #![trigger t.parent_indices@[c]] 0 <= c < child ==>
+                forall|slot: int| #![trigger t.parent_indices@[c][slot]] 0 <= slot < t.parent_indices@[c].len() ==>
                     (t.parent_indices@[c][slot] as int) < c,
         decreases t.parent_indices.len() - child,
     {
-        if t.parent_indices[child].len() == 0 {
-            return false;
-        }
         let mut slot: usize = 0;
         while slot < t.parent_indices[child].len()
             invariant
                 0 <= slot <= t.parent_indices@[child as int].len(),
-                1 <= child < t.parent_indices.len(),
+                0 <= child < t.parent_indices.len(),
                 forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < slot ==>
                     (t.parent_indices@[child as int][s] as int) < child,
             decreases t.parent_indices@[child as int].len() - slot,
@@ -880,15 +870,16 @@ pub fn dag_edges_well_formed(t: &TraversalDagTranscript) -> (result: bool)
     if !dag_parent_indices_well_formed(t) {
         return false;
     }
-    let mut child: usize = 1;
+    let mut child: usize = 0;
     while child < t.entries.len()
         invariant
-            1 <= child <= t.entries.len(),
+            0 <= child <= t.entries.len(),
             dag_parent_indices_well_formed_spec(t),
-            forall|c: int| #![trigger t.entries@[c]] 1 <= c < child ==> dag_child_edges_well_formed_spec(t, c),
+            forall|c: int| #![trigger t.entries@[c]] 0 <= c < child && t.parent_indices@[c].len() > 0 ==>
+                dag_child_edges_well_formed_spec(t, c),
         decreases t.entries.len() - child,
     {
-        if !dag_child_edges_well_formed(t, child) {
+        if t.parent_indices[child].len() > 0 && !dag_child_edges_well_formed(t, child) {
             return false;
         }
         child = child + 1;
