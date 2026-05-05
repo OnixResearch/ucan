@@ -26,7 +26,7 @@ These helpers remain public as supporting APIs for advanced callers and tests, b
 
 ## Verified boundary notes
 
-`docs/verified-boundaries.md` records the current audit. Compact-token codec/serde/signing-input construction, proof-reference hashing, live recursive proof traversal/backends, backend error freshness, and opaque caveat-preserving attenuation payload semantics remain shell-local tested boundaries. Finite proof traversal transcript consistency is verified for already-resolved caller/shell-supplied data, and live verification now emits/checks such transcripts for no-proof tokens plus exact or wildcard-ability single-parent linear proof chains.
+`docs/verified-boundaries.md` records the current audit. Compact-token codec/serde/signing-input construction, proof-reference hashing, live recursive proof traversal/backends, backend error freshness, and opaque caveat-preserving attenuation payload semantics remain shell-local tested boundaries. Finite proof traversal transcript consistency is verified for already-resolved caller/shell-supplied data, including explicit topologically ordered multi-parent DAG transcripts; live verification now emits/checks such transcripts for no-proof tokens plus exact or wildcard-ability single-parent linear proof chains.
 
 ## Secret material surface checklist
 

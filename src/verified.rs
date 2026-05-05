@@ -176,6 +176,15 @@ pub struct VerifiedProofTraversalTranscript {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedProofTraversalDagTranscript {
+    pub entries: Vec<VerifiedProofTraversalEntry>,
+    pub parent_indices: Vec<Vec<usize>>,
+    pub visited_references: Vec<Vec<u8>>,
+    pub total_input_bytes: u64,
+    pub target: VerifiedProofTraversalTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedDidKey {
     pub public_key_bytes: Vec<u8>,
     pub codec: u64,
@@ -584,6 +593,36 @@ pub fn proof_traversal_transcript_is_valid(
         max_input_bytes: budget.max_input_bytes,
     };
     Ok(ucan_proof_traversal::traversal_transcript_valid(&transcript, &budget))
+}
+
+/// Validate a finite multi-parent proof DAG transcript with verified logic.
+///
+/// This is the DAG-shaped shell bridge to verified-logic's traversal-transcript
+/// model. It checks caller-supplied resolved entries, topologically ordered
+/// parent indices, depth/proof/input-byte budgets, issuer/audience linkage,
+/// capability attenuation, ordered caveat-id preservation, leaf authorization,
+/// evaluation-time validity, and supplied revocation-denial facts.
+///
+/// It does not resolve proofs, parse compact UCANs, verify signatures from
+/// bytes, derive proof references, query revocation backends, evaluate opaque
+/// caveat policies, access storage/network backends, persist state, sign,
+/// replay-protect, or read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidCapability`] when any supplied
+/// traversal capability fails core capability validation.
+pub fn proof_traversal_dag_transcript_is_valid(
+    transcript: &VerifiedProofTraversalDagTranscript,
+    budget: &VerifiedProofTraversalBudget,
+) -> VerifiedResult<bool> {
+    let transcript = to_proof_traversal_dag_transcript(transcript)?;
+    let budget = ucan_proof_traversal::TraversalBudget {
+        max_depth: budget.max_depth,
+        max_proofs: budget.max_proofs,
+        max_input_bytes: budget.max_input_bytes,
+    };
+    Ok(ucan_proof_traversal::dag_traversal_transcript_valid(&transcript, &budget))
 }
 
 /// Derive a Web-of-Trust principal digest from public key bytes.
@@ -1158,14 +1197,33 @@ fn to_proof_traversal_transcript(
         entries,
         visited_refs: transcript.visited_references.clone(),
         total_input_bytes: transcript.total_input_bytes,
-        target: ucan_proof_traversal::TraversalAuthorizationTarget {
-            resource: transcript.target.resource.as_bytes().to_vec(),
-            ability: ucan_ability::Ability {
-                segments: collect_ability_segments(transcript.target.ability.as_str())?,
-            },
-            now: transcript.target.now_seconds,
-            tolerance: transcript.target.tolerance_seconds,
+        target: to_proof_traversal_target(&transcript.target)?,
+    })
+}
+
+fn to_proof_traversal_dag_transcript(
+    transcript: &VerifiedProofTraversalDagTranscript,
+) -> VerifiedResult<ucan_proof_traversal::TraversalDagTranscript> {
+    let entries = transcript.entries.iter().map(to_proof_traversal_entry).collect::<VerifiedResult<Vec<_>>>()?;
+    Ok(ucan_proof_traversal::TraversalDagTranscript {
+        entries,
+        parent_indices: transcript.parent_indices.clone(),
+        visited_refs: transcript.visited_references.clone(),
+        total_input_bytes: transcript.total_input_bytes,
+        target: to_proof_traversal_target(&transcript.target)?,
+    })
+}
+
+fn to_proof_traversal_target(
+    target: &VerifiedProofTraversalTarget,
+) -> VerifiedResult<ucan_proof_traversal::TraversalAuthorizationTarget> {
+    Ok(ucan_proof_traversal::TraversalAuthorizationTarget {
+        resource: target.resource.as_bytes().to_vec(),
+        ability: ucan_ability::Ability {
+            segments: collect_ability_segments(target.ability.as_str())?,
         },
+        now: target.now_seconds,
+        tolerance: target.tolerance_seconds,
     })
 }
 
@@ -1313,6 +1371,7 @@ mod tests {
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedPrimitiveError;
     use super::VerifiedProofTraversalBudget;
+    use super::VerifiedProofTraversalDagTranscript;
     use super::VerifiedProofTraversalEntry;
     use super::VerifiedProofTraversalTarget;
     use super::VerifiedProofTraversalTranscript;
@@ -1332,6 +1391,7 @@ mod tests {
     use super::invocation_request_is_authorized;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
+    use super::proof_traversal_dag_transcript_is_valid;
     use super::proof_traversal_transcript_is_valid;
     use super::receipt_execution_is_valid;
     use super::revocation_reference_is_listed;
@@ -2132,6 +2192,44 @@ mod tests {
     }
 
     #[test]
+    fn proof_traversal_dag_transcript_uses_verified_multi_parent_model() {
+        let transcript = proof_traversal_dag_transcript();
+        let budget = VerifiedProofTraversalBudget {
+            max_depth: 4,
+            max_proofs: 8,
+            max_input_bytes: 1024,
+        };
+
+        let valid = proof_traversal_dag_transcript_is_valid(&transcript, &budget)
+            .expect("proof DAG traversal inputs should validate");
+        assert!(valid);
+
+        let mut cycle = transcript.clone();
+        cycle.parent_indices[1] = vec![1];
+        let valid = proof_traversal_dag_transcript_is_valid(&cycle, &budget)
+            .expect("proof DAG traversal inputs should validate");
+        assert!(!valid);
+
+        let mut missing_parent_caveat = transcript.clone();
+        missing_parent_caveat.entries[3].caveat_ids.retain(|id| id != b"region");
+        let valid = proof_traversal_dag_transcript_is_valid(&missing_parent_caveat, &budget)
+            .expect("proof DAG traversal inputs should validate");
+        assert!(!valid);
+
+        let mut wrong_parent_link = transcript.clone();
+        wrong_parent_link.entries[2].audience_did = "did:key:zMallory".to_owned();
+        let valid = proof_traversal_dag_transcript_is_valid(&wrong_parent_link, &budget)
+            .expect("proof DAG traversal inputs should validate");
+        assert!(!valid);
+
+        let mut duplicate_reference = transcript;
+        duplicate_reference.visited_references[2] = duplicate_reference.visited_references[1].clone();
+        let valid = proof_traversal_dag_transcript_is_valid(&duplicate_reference, &budget)
+            .expect("proof DAG traversal inputs should validate");
+        assert!(!valid);
+    }
+
+    #[test]
     fn ed25519_verification_rejects_wrong_message() {
         let secret_key = [SIGNING_KEY_BYTE; ucan_signature::SECRET_KEY_LEN];
         let public_key = derive_ed25519_public_key(&secret_key).expect("public key derivation should succeed");
@@ -2197,6 +2295,43 @@ mod tests {
             total_input_bytes: 256,
             target: VerifiedProofTraversalTarget {
                 resource: VALID_RESOURCE_CHILD.to_owned(),
+                ability: "store/add".to_owned(),
+                now_seconds: NOW_SECONDS,
+                tolerance_seconds: 0,
+            },
+        }
+    }
+
+    fn proof_traversal_dag_transcript() -> VerifiedProofTraversalDagTranscript {
+        let root = proof_traversal_entry(b"root-proof", "did:key:zRoot", "did:key:zBob", VALID_RESOURCE, Vec::new());
+        let proof_a = proof_traversal_entry(b"proof-a", "did:key:zBob", "did:key:zCarol", VALID_RESOURCE_CHILD, vec![
+            b"geo".to_vec(),
+            b"rate".to_vec(),
+        ]);
+        let proof_b = proof_traversal_entry(b"proof-b", "did:key:zBob", "did:key:zCarol", VALID_RESOURCE_CHILD, vec![
+            b"geo".to_vec(),
+            b"rate".to_vec(),
+            b"region".to_vec(),
+        ]);
+        let leaf = proof_traversal_entry(
+            b"leaf-proof",
+            "did:key:zCarol",
+            "did:key:zInvoker",
+            "did:key:z6Mkexample/photos/grandchild",
+            vec![b"geo".to_vec(), b"rate".to_vec(), b"region".to_vec(), b"ttl".to_vec()],
+        );
+        VerifiedProofTraversalDagTranscript {
+            entries: vec![root, proof_a, proof_b, leaf],
+            parent_indices: vec![vec![], vec![0], vec![0], vec![1, 2]],
+            visited_references: vec![
+                b"root-proof".to_vec(),
+                b"proof-a".to_vec(),
+                b"proof-b".to_vec(),
+                b"leaf-proof".to_vec(),
+            ],
+            total_input_bytes: 512,
+            target: VerifiedProofTraversalTarget {
+                resource: "did:key:z6Mkexample/photos/grandchild/item".to_owned(),
                 ability: "store/add".to_owned(),
                 now_seconds: NOW_SECONDS,
                 tolerance_seconds: 0,

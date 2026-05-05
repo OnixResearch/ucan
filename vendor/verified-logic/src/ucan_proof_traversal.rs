@@ -54,6 +54,15 @@ pub struct TraversalTranscript {
     pub target: TraversalAuthorizationTarget,
 }
 
+/// A finite topologically ordered proof DAG transcript.
+pub struct TraversalDagTranscript {
+    pub entries: Vec<TraversalEntry>,
+    pub parent_indices: Vec<Vec<usize>>,
+    pub visited_refs: Vec<Vec<u8>>,
+    pub total_input_bytes: u64,
+    pub target: TraversalAuthorizationTarget,
+}
+
 pub open spec fn bytes_equal_spec(a: Seq<u8>, b: Seq<u8>) -> bool {
     a =~= b
 }
@@ -164,6 +173,88 @@ pub open spec fn traversal_transcript_valid_spec(t: &TraversalTranscript, budget
     traversal_within_budget_spec(t, budget)
     && proof_chain_authorizes_spec(t)
     && traversal_not_revoked_spec(t)
+}
+
+pub open spec fn dag_entry_refs_match_visited_spec(entries: Seq<TraversalEntry>, refs: Seq<Vec<u8>>) -> bool {
+    entries.len() == refs.len()
+    && forall|i: int| #![trigger entries[i]] 0 <= i < entries.len() ==> bytes_equal_spec(entries[i].proof_ref@, refs[i]@)
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub open spec fn dag_within_budget_spec(t: &TraversalDagTranscript, budget: &TraversalBudget) -> bool {
+    t.entries@.len() > 0
+    && t.entries@.len() <= budget.max_proofs
+    && (t.entries@.len() - 1) <= budget.max_depth
+    && t.total_input_bytes <= budget.max_input_bytes
+    && dag_entry_refs_match_visited_spec(t.entries@, t.visited_refs@)
+    && no_duplicate_refs_spec(t.visited_refs@)
+}
+
+pub open spec fn dag_parent_indices_well_formed_spec(t: &TraversalDagTranscript) -> bool {
+    t.entries@.len() == t.parent_indices@.len()
+    && t.entries@.len() > 0
+    && t.parent_indices@[0].len() == 0
+    && forall|child: int| #![trigger t.parent_indices@[child]] 1 <= child < t.parent_indices@.len() ==>
+        t.parent_indices@[child].len() > 0
+        && forall|slot: int| #![trigger t.parent_indices@[child][slot]] 0 <= slot < t.parent_indices@[child].len() ==>
+            (t.parent_indices@[child][slot] as int) < child
+}
+
+pub open spec fn parent_link_well_formed_spec(parent: &TraversalEntry, child: &TraversalEntry) -> bool {
+    parent.audience@ =~= child.issuer@
+    && parent.nbf <= child.nbf
+    && child.exp <= parent.exp
+}
+
+pub open spec fn dag_child_capability_has_parent_spec(
+    t: &TraversalDagTranscript,
+    child: int,
+    capability: &TraversalCapability,
+) -> bool {
+    exists|slot: int| 0 <= slot < t.parent_indices@[child].len()
+        && capability_set_contains_child_spec(t.entries@[(#[trigger] t.parent_indices@[child][slot]) as int].capabilities@, capability)
+}
+
+pub open spec fn dag_child_capabilities_attenuate_spec(t: &TraversalDagTranscript, child: int) -> bool {
+    forall|cap: int| #![trigger t.entries@[child].capabilities@[cap]] 0 <= cap < t.entries@[child].capabilities@.len() ==>
+        dag_child_capability_has_parent_spec(t, child, &t.entries@[child].capabilities@[cap])
+}
+
+pub open spec fn dag_parent_caveats_preserved_spec(t: &TraversalDagTranscript, child: int) -> bool {
+    forall|slot: int| #![trigger t.parent_indices@[child][slot]] 0 <= slot < t.parent_indices@[child].len() ==>
+        parent_caveats_preserved_spec(&t.entries@[t.parent_indices@[child][slot] as int], &t.entries@[child])
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub open spec fn dag_child_edges_well_formed_spec(t: &TraversalDagTranscript, child: int) -> bool {
+    (forall|slot: int| #![trigger t.parent_indices@[child][slot]] 0 <= slot < t.parent_indices@[child].len() ==>
+        parent_link_well_formed_spec(&t.entries@[t.parent_indices@[child][slot] as int], &t.entries@[child]))
+    && dag_child_capabilities_attenuate_spec(t, child)
+    && dag_parent_caveats_preserved_spec(t, child)
+}
+
+pub open spec fn dag_edges_well_formed_spec(t: &TraversalDagTranscript) -> bool {
+    dag_parent_indices_well_formed_spec(t)
+    && forall|child: int| #![trigger t.entries@[child]] 1 <= child < t.entries@.len() ==>
+        dag_child_edges_well_formed_spec(t, child)
+}
+
+pub open spec fn dag_proof_authorizes_spec(t: &TraversalDagTranscript) -> bool {
+    t.entries@.len() > 0
+    && dag_edges_well_formed_spec(t)
+    && all_entries_temporal_valid_spec(t.entries@, &t.target)
+    && capability_set_authorizes_spec(t.entries@[t.entries@.len() - 1].capabilities@, &t.target)
+}
+
+pub open spec fn dag_not_revoked_spec(t: &TraversalDagTranscript) -> bool {
+    forall|i: int| #![trigger t.entries@[i]] 0 <= i < t.entries@.len() ==> !t.entries@[i].revoked
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub open spec fn dag_traversal_transcript_valid_spec(t: &TraversalDagTranscript, budget: &TraversalBudget) -> bool {
+    dag_within_budget_spec(t, budget)
+    && dag_proof_authorizes_spec(t)
+    && dag_not_revoked_spec(t)
 }
 
 // r[impl ucan-proof-traversal.byte-equality]
@@ -556,6 +647,310 @@ pub fn traversal_transcript_valid(t: &TraversalTranscript, budget: &TraversalBud
     true
 }
 
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_entry_refs_match_visited(entries: &Vec<TraversalEntry>, refs: &Vec<Vec<u8>>) -> (result: bool)
+    ensures result == dag_entry_refs_match_visited_spec(entries@, refs@),
+{
+    entry_refs_match_visited(entries, refs)
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_within_budget(t: &TraversalDagTranscript, budget: &TraversalBudget) -> (result: bool)
+    ensures result == dag_within_budget_spec(t, budget),
+{
+    if t.entries.len() == 0 {
+        return false;
+    }
+    if (t.entries.len() as u128) > (budget.max_proofs as u128) {
+        return false;
+    }
+    if ((t.entries.len() - 1) as u128) > (budget.max_depth as u128) {
+        return false;
+    }
+    if t.total_input_bytes > budget.max_input_bytes {
+        return false;
+    }
+    if !dag_entry_refs_match_visited(&t.entries, &t.visited_refs) {
+        return false;
+    }
+    if !no_duplicate_refs(&t.visited_refs) {
+        return false;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_parent_indices_well_formed(t: &TraversalDagTranscript) -> (result: bool)
+    ensures result == dag_parent_indices_well_formed_spec(t),
+{
+    if t.entries.len() == 0 {
+        return false;
+    }
+    if t.entries.len() != t.parent_indices.len() {
+        return false;
+    }
+    if t.parent_indices[0].len() != 0 {
+        return false;
+    }
+    let mut child: usize = 1;
+    while child < t.parent_indices.len()
+        invariant
+            1 <= child <= t.parent_indices.len(),
+            t.entries.len() == t.parent_indices.len(),
+            t.entries.len() > 0,
+            t.parent_indices@[0].len() == 0,
+            forall|c: int| #![trigger t.parent_indices@[c]] 1 <= c < child ==>
+                t.parent_indices@[c].len() > 0
+                && forall|slot: int| #![trigger t.parent_indices@[c][slot]] 0 <= slot < t.parent_indices@[c].len() ==>
+                    (t.parent_indices@[c][slot] as int) < c,
+        decreases t.parent_indices.len() - child,
+    {
+        if t.parent_indices[child].len() == 0 {
+            return false;
+        }
+        let mut slot: usize = 0;
+        while slot < t.parent_indices[child].len()
+            invariant
+                0 <= slot <= t.parent_indices@[child as int].len(),
+                1 <= child < t.parent_indices.len(),
+                forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < slot ==>
+                    (t.parent_indices@[child as int][s] as int) < child,
+            decreases t.parent_indices@[child as int].len() - slot,
+        {
+            if t.parent_indices[child][slot] >= child {
+                return false;
+            }
+            slot = slot + 1;
+        }
+        child = child + 1;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn parent_link_well_formed(parent: &TraversalEntry, child: &TraversalEntry) -> (result: bool)
+    ensures result == parent_link_well_formed_spec(parent, child),
+{
+    if !bytes_equal(&parent.audience, &child.issuer) {
+        return false;
+    }
+    if parent.nbf > child.nbf {
+        return false;
+    }
+    if child.exp > parent.exp {
+        return false;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_child_capability_has_parent(
+    t: &TraversalDagTranscript,
+    child: usize,
+    capability: &TraversalCapability,
+) -> (result: bool)
+    requires
+        child < t.parent_indices@.len(),
+        forall|slot: int| #![trigger t.parent_indices@[child as int][slot]] 0 <= slot < t.parent_indices@[child as int].len() ==>
+            (t.parent_indices@[child as int][slot] as int) < t.entries@.len(),
+    ensures result == dag_child_capability_has_parent_spec(t, child as int, capability),
+{
+    let mut slot: usize = 0;
+    while slot < t.parent_indices[child].len()
+        invariant
+            child < t.parent_indices@.len(),
+            0 <= slot <= t.parent_indices@[child as int].len(),
+            forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < t.parent_indices@[child as int].len() ==>
+                (t.parent_indices@[child as int][s] as int) < t.entries@.len(),
+            forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < slot ==>
+                !capability_set_contains_child_spec(
+                    t.entries@[(t.parent_indices@[child as int][s]) as int].capabilities@,
+                    capability,
+                ),
+        decreases t.parent_indices@[child as int].len() - slot,
+    {
+        let parent_index = t.parent_indices[child][slot];
+        if child_capability_has_parent(&t.entries[parent_index].capabilities, capability) {
+            return true;
+        }
+        slot = slot + 1;
+    }
+    false
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_child_capabilities_attenuate(t: &TraversalDagTranscript, child: usize) -> (result: bool)
+    requires
+        child < t.entries@.len(),
+        child < t.parent_indices@.len(),
+        forall|slot: int| #![trigger t.parent_indices@[child as int][slot]] 0 <= slot < t.parent_indices@[child as int].len() ==>
+            (t.parent_indices@[child as int][slot] as int) < t.entries@.len(),
+    ensures result == dag_child_capabilities_attenuate_spec(t, child as int),
+{
+    let mut cap: usize = 0;
+    while cap < t.entries[child].capabilities.len()
+        invariant
+            child < t.entries@.len(),
+            child < t.parent_indices@.len(),
+            0 <= cap <= t.entries@[child as int].capabilities@.len(),
+            forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < t.parent_indices@[child as int].len() ==>
+                (t.parent_indices@[child as int][s] as int) < t.entries@.len(),
+            forall|k: int| #![trigger t.entries@[child as int].capabilities@[k]] 0 <= k < cap ==>
+                dag_child_capability_has_parent_spec(t, child as int, &t.entries@[child as int].capabilities@[k]),
+        decreases t.entries@[child as int].capabilities@.len() - cap,
+    {
+        if !dag_child_capability_has_parent(t, child, &t.entries[child].capabilities[cap]) {
+            return false;
+        }
+        cap = cap + 1;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_parent_caveats_preserved(t: &TraversalDagTranscript, child: usize) -> (result: bool)
+    requires
+        child < t.entries@.len(),
+        child < t.parent_indices@.len(),
+        forall|slot: int| #![trigger t.parent_indices@[child as int][slot]] 0 <= slot < t.parent_indices@[child as int].len() ==>
+            (t.parent_indices@[child as int][slot] as int) < t.entries@.len(),
+    ensures result == dag_parent_caveats_preserved_spec(t, child as int),
+{
+    let mut slot: usize = 0;
+    while slot < t.parent_indices[child].len()
+        invariant
+            child < t.entries@.len(),
+            child < t.parent_indices@.len(),
+            0 <= slot <= t.parent_indices@[child as int].len(),
+            forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < t.parent_indices@[child as int].len() ==>
+                (t.parent_indices@[child as int][s] as int) < t.entries@.len(),
+            forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < slot ==>
+                parent_caveats_preserved_spec(&t.entries@[t.parent_indices@[child as int][s] as int], &t.entries@[child as int]),
+        decreases t.parent_indices@[child as int].len() - slot,
+    {
+        let parent_index = t.parent_indices[child][slot];
+        if !parent_caveats_preserved(&t.entries[parent_index], &t.entries[child]) {
+            return false;
+        }
+        slot = slot + 1;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_child_edges_well_formed(t: &TraversalDagTranscript, child: usize) -> (result: bool)
+    requires
+        child < t.entries@.len(),
+        child < t.parent_indices@.len(),
+        forall|slot: int| #![trigger t.parent_indices@[child as int][slot]] 0 <= slot < t.parent_indices@[child as int].len() ==>
+            (t.parent_indices@[child as int][slot] as int) < t.entries@.len(),
+    ensures result == dag_child_edges_well_formed_spec(t, child as int),
+{
+    let mut slot: usize = 0;
+    while slot < t.parent_indices[child].len()
+        invariant
+            child < t.entries@.len(),
+            child < t.parent_indices@.len(),
+            0 <= slot <= t.parent_indices@[child as int].len(),
+            forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < t.parent_indices@[child as int].len() ==>
+                (t.parent_indices@[child as int][s] as int) < t.entries@.len(),
+            forall|s: int| #![trigger t.parent_indices@[child as int][s]] 0 <= s < slot ==>
+                parent_link_well_formed_spec(&t.entries@[t.parent_indices@[child as int][s] as int], &t.entries@[child as int]),
+        decreases t.parent_indices@[child as int].len() - slot,
+    {
+        let parent_index = t.parent_indices[child][slot];
+        if !parent_link_well_formed(&t.entries[parent_index], &t.entries[child]) {
+            return false;
+        }
+        slot = slot + 1;
+    }
+    if !dag_child_capabilities_attenuate(t, child) {
+        return false;
+    }
+    if !dag_parent_caveats_preserved(t, child) {
+        return false;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_edges_well_formed(t: &TraversalDagTranscript) -> (result: bool)
+    ensures result == dag_edges_well_formed_spec(t),
+{
+    if !dag_parent_indices_well_formed(t) {
+        return false;
+    }
+    let mut child: usize = 1;
+    while child < t.entries.len()
+        invariant
+            1 <= child <= t.entries.len(),
+            dag_parent_indices_well_formed_spec(t),
+            forall|c: int| #![trigger t.entries@[c]] 1 <= c < child ==> dag_child_edges_well_formed_spec(t, c),
+        decreases t.entries.len() - child,
+    {
+        if !dag_child_edges_well_formed(t, child) {
+            return false;
+        }
+        child = child + 1;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_proof_authorizes(t: &TraversalDagTranscript) -> (result: bool)
+    ensures result == dag_proof_authorizes_spec(t),
+{
+    if t.entries.len() == 0 {
+        return false;
+    }
+    if !dag_edges_well_formed(t) {
+        return false;
+    }
+    if !all_entries_temporal_valid(&t.entries, &t.target) {
+        return false;
+    }
+    let leaf = t.entries.len() - 1;
+    if !capability_set_authorizes(&t.entries[leaf].capabilities, &t.target) {
+        return false;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_not_revoked(t: &TraversalDagTranscript) -> (result: bool)
+    ensures result == dag_not_revoked_spec(t),
+{
+    let mut i: usize = 0;
+    while i < t.entries.len()
+        invariant
+            0 <= i <= t.entries.len(),
+            forall|k: int| #![trigger t.entries@[k]] 0 <= k < i ==> !t.entries@[k].revoked,
+        decreases t.entries.len() - i,
+    {
+        if t.entries[i].revoked {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+// r[impl ucan-proof-traversal.dag-transcript-consistency]
+pub fn dag_traversal_transcript_valid(t: &TraversalDagTranscript, budget: &TraversalBudget) -> (result: bool)
+    ensures result == dag_traversal_transcript_valid_spec(t, budget),
+{
+    if !dag_within_budget(t, budget) {
+        return false;
+    }
+    if !dag_proof_authorizes(t) {
+        return false;
+    }
+    if !dag_not_revoked(t) {
+        return false;
+    }
+    true
+}
+
 // r[verify ucan-proof-traversal.byte-equality]
 pub proof fn byte_equality_refl(bytes: Seq<u8>)
     ensures bytes_equal_spec(bytes, bytes),
@@ -630,6 +1025,16 @@ pub proof fn valid_transcript_composes_checks(t: TraversalTranscript, budget: Tr
 {
 }
 
+// r[verify ucan-proof-traversal.dag-transcript-consistency]
+pub proof fn valid_dag_transcript_composes_checks(t: TraversalDagTranscript, budget: TraversalBudget)
+    requires dag_traversal_transcript_valid_spec(&t, &budget),
+    ensures
+        dag_within_budget_spec(&t, &budget),
+        dag_proof_authorizes_spec(&t),
+        dag_not_revoked_spec(&t),
+{
+}
+
 } // verus!
 
 #[cfg(test)]
@@ -681,6 +1086,33 @@ mod tests {
         }
     }
 
+    fn dag_transcript() -> TraversalDagTranscript {
+        let root = entry(b"root", b"alice", b"bob", b"store", false);
+        let mut proof_a = entry(b"proof-a", b"bob", b"carol", b"store/docs", false);
+        proof_a.caveat_ids = vec![b"geo".to_vec(), b"rate".to_vec()];
+        let mut proof_b = entry(b"proof-b", b"bob", b"carol", b"store/docs", false);
+        proof_b.caveat_ids = vec![b"geo".to_vec(), b"rate".to_vec(), b"region".to_vec()];
+        let mut leaf = entry(b"leaf", b"carol", b"dave", b"store/docs/reports", false);
+        leaf.caveat_ids = vec![b"geo".to_vec(), b"rate".to_vec(), b"region".to_vec(), b"ttl".to_vec()];
+        TraversalDagTranscript {
+            entries: vec![root, proof_a, proof_b, leaf],
+            parent_indices: vec![vec![], vec![0], vec![0], vec![1, 2]],
+            visited_refs: vec![
+                b"root".to_vec(),
+                b"proof-a".to_vec(),
+                b"proof-b".to_vec(),
+                b"leaf".to_vec(),
+            ],
+            total_input_bytes: 128,
+            target: TraversalAuthorizationTarget {
+                resource: b"store/docs/reports/q1".to_vec(),
+                ability: ability(b"read"),
+                now: 50,
+                tolerance: 0,
+            },
+        }
+    }
+
     #[test]
     fn valid_transcript_accepts() {
         let t = transcript();
@@ -690,6 +1122,29 @@ mod tests {
             max_input_bytes: 1024,
         };
         assert!(traversal_transcript_valid(&t, &b));
+    }
+
+    #[test]
+    fn valid_dag_transcript_accepts_and_rejects_bad_edges() {
+        let b = TraversalBudget {
+            max_depth: 4,
+            max_proofs: 8,
+            max_input_bytes: 1024,
+        };
+        let t = dag_transcript();
+        assert!(dag_traversal_transcript_valid(&t, &b));
+
+        let mut cycle = dag_transcript();
+        cycle.parent_indices[1] = vec![1];
+        assert!(!dag_traversal_transcript_valid(&cycle, &b));
+
+        let mut missing_parent_caveat = dag_transcript();
+        missing_parent_caveat.entries[3].caveat_ids.retain(|id| id != b"region");
+        assert!(!dag_traversal_transcript_valid(&missing_parent_caveat, &b));
+
+        let mut wrong_parent = dag_transcript();
+        wrong_parent.entries[2].audience = b"mallory".to_vec();
+        assert!(!dag_traversal_transcript_valid(&wrong_parent, &b));
     }
 
     #[test]
