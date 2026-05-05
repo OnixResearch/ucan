@@ -632,6 +632,26 @@ pub fn invocation_chain_is_authorized(
     ))
 }
 
+/// Check that compact-token bytes match a verified separator-free three-part split.
+///
+/// This is a data-only bridge to vendored verified-logic. It checks that the
+/// caller/shell-supplied encoded compact-token parts contain no embedded compact
+/// separators and that the compact bytes equal `header.payload.signature`.
+///
+/// It does not perform the string split, decode base64url, parse JSON, derive
+/// proof references, hash, sign, verify signatures, resolve keys, fetch proofs,
+/// query revocation backends, access storage/network backends, persist state,
+/// replay-protect, or read an ambient clock.
+#[must_use]
+pub fn compact_token_split_is_valid(compact: &[u8], parts: &VerifiedCompactTokenParts) -> bool {
+    let parts = ucan_compact::CompactTokenParts {
+        header: parts.header.clone(),
+        payload: parts.payload.clone(),
+        signature: parts.signature.clone(),
+    };
+    ucan_compact::compact_split_matches_parts(&compact.to_vec(), &parts)
+}
+
 /// Check that compact-token bytes and signing input match verified framing.
 ///
 /// This is a data-only bridge to vendored verified-logic. It checks only the
@@ -1569,6 +1589,7 @@ mod tests {
     use super::backend_transcript_first_failed_operation;
     use super::capability_set_authorizes;
     use super::compact_token_envelope_is_valid;
+    use super::compact_token_split_is_valid;
     use super::compose_time_window_chain;
     use super::decode_did_key;
     use super::derive_ed25519_public_key;
@@ -1669,6 +1690,24 @@ mod tests {
 
         assert!(!backend_transcript_accepts(&transcript));
         assert_eq!(backend_transcript_first_failed_operation(&transcript), Some(VerifiedBackendOperation::ProofLoad));
+    }
+
+    #[test]
+    fn compact_token_split_uses_verified_separator_admission() {
+        let parts = VerifiedCompactTokenParts {
+            header: b"header".to_vec(),
+            payload: b"payload".to_vec(),
+            signature: b"signature".to_vec(),
+        };
+        assert!(compact_token_split_is_valid(b"header.payload.signature", &parts));
+
+        let embedded_separator = VerifiedCompactTokenParts {
+            header: b"header".to_vec(),
+            payload: b"pay.load".to_vec(),
+            signature: b"signature".to_vec(),
+        };
+        assert!(!compact_token_split_is_valid(b"header.pay.load.signature", &embedded_separator));
+        assert!(!compact_token_split_is_valid(b"header.payload", &parts));
     }
 
     #[test]

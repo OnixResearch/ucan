@@ -33,6 +33,7 @@ use crate::verified::VerifiedWebOfTrustCaveatContext;
 use crate::verified::backend_transcript_accepts;
 use crate::verified::backend_transcript_first_failed_operation;
 use crate::verified::compact_token_envelope_is_valid;
+use crate::verified::compact_token_split_is_valid;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
@@ -2221,14 +2222,18 @@ where
 /// base64url decoding, or JSON decoding fails.
 pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
     let parts = compact_parts(token.as_str())?;
+    let verified_parts = VerifiedCompactTokenParts {
+        header: parts[COMPACT_HEADER_INDEX].as_bytes().to_vec(),
+        payload: parts[COMPACT_PAYLOAD_INDEX].as_bytes().to_vec(),
+        signature: parts[COMPACT_SIGNATURE_INDEX].as_bytes().to_vec(),
+    };
+    if !compact_token_split_is_valid(token.as_str().as_bytes(), &verified_parts) {
+        return Err(TokenError::CompactTokenFramingMismatch);
+    }
     let signing_input = signing_input(parts[COMPACT_HEADER_INDEX], parts[COMPACT_PAYLOAD_INDEX]).into_bytes();
     let envelope = VerifiedCompactTokenEnvelope {
         compact: token.as_str().as_bytes().to_vec(),
-        parts: VerifiedCompactTokenParts {
-            header: parts[COMPACT_HEADER_INDEX].as_bytes().to_vec(),
-            payload: parts[COMPACT_PAYLOAD_INDEX].as_bytes().to_vec(),
-            signature: parts[COMPACT_SIGNATURE_INDEX].as_bytes().to_vec(),
-        },
+        parts: verified_parts,
         signing_input: signing_input.clone(),
     };
     if !compact_token_envelope_is_valid(&envelope) {
@@ -4043,6 +4048,12 @@ mod tests {
         let error = parse_compact_token(&token).expect_err("two-part token should fail");
 
         assert_eq!(error, TokenError::InvalidCompactTokenStructure { actual_parts: 2 });
+
+        let token = CompactToken::new("header.pay.load.signature")
+            .expect("string wrapper should accept embedded separator shape");
+        let error = parse_compact_token(&token).expect_err("four-part token should fail before decoding");
+
+        assert_eq!(error, TokenError::InvalidCompactTokenStructure { actual_parts: 4 });
     }
 
     #[test]

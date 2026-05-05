@@ -121,6 +121,68 @@ pub fn bytes_equal(left: &Vec<u8>, right: &Vec<u8>) -> (result: bool)
     true
 }
 
+/// A byte sequence contains no compact-token separators.
+// r[impl ucan-compact.three-part-framing]
+pub open spec fn no_compact_separator_spec(bytes: Seq<u8>) -> bool {
+    forall|i: int| 0 <= i < bytes.len() ==> bytes[i] != COMPACT_SEPARATOR_BYTE
+}
+
+/// Already-split compact-token parts contain no embedded separators.
+// r[impl ucan-compact.three-part-framing]
+pub open spec fn parts_have_no_separators_spec(parts: &CompactTokenParts) -> bool {
+    no_compact_separator_spec(parts.header@)
+        && no_compact_separator_spec(parts.payload@)
+        && no_compact_separator_spec(parts.signature@)
+}
+
+/// Check that a finite byte vector contains no compact-token separators.
+// r[impl ucan-compact.three-part-framing]
+pub fn bytes_have_no_separator(bytes: &Vec<u8>) -> (result: bool)
+    ensures result == no_compact_separator_spec(bytes@),
+{
+    let mut i: usize = 0;
+    while i < bytes.len()
+        invariant
+            0 <= i <= bytes.len(),
+            forall|k: int| 0 <= k < i ==> bytes@[k] != COMPACT_SEPARATOR_BYTE,
+        decreases bytes.len() - i,
+    {
+        if bytes[i] == COMPACT_SEPARATOR_BYTE {
+            assert(bytes@[i as int] == COMPACT_SEPARATOR_BYTE);
+            assert(!no_compact_separator_spec(bytes@));
+            return false;
+        }
+        i = i + 1;
+    }
+    assert(no_compact_separator_spec(bytes@));
+    true
+}
+
+/// Check that caller-provided compact bytes match a separator-free three-part
+/// split. This proves only finite byte-level separator admission and canonical
+/// `header.payload.signature` framing over caller/shell-supplied parts.
+/// It does not decode base64url, parse JSON, hash, sign, or verify
+/// cryptographic signatures.
+// r[impl ucan-compact.three-part-framing]
+pub fn compact_split_matches_parts(compact: &Vec<u8>, parts: &CompactTokenParts) -> (result: bool)
+    ensures result == (compact@ == parts_compact_token_spec(parts) && parts_have_no_separators_spec(parts)),
+{
+    if !bytes_have_no_separator(&parts.header) {
+        return false;
+    }
+    if !bytes_have_no_separator(&parts.payload) {
+        return false;
+    }
+    if !bytes_have_no_separator(&parts.signature) {
+        return false;
+    }
+    let expected_compact = compact_token_from_parts(parts);
+    if !bytes_equal(compact, &expected_compact) {
+        return false;
+    }
+    true
+}
+
 /// Check that caller-provided compact bytes and signing input match the
 /// canonical three-part compact framing. This does not decode base64url, parse
 /// JSON, hash, sign, or verify cryptographic signatures.
@@ -203,7 +265,16 @@ mod tests {
         assert_eq!(signing, b"header.payload".to_vec());
         let compact = compact_token_from_parts(&parts);
         assert_eq!(compact, b"header.payload.signature".to_vec());
+        assert!(compact_split_matches_parts(&compact, &parts));
         assert!(compact_envelope_matches_parts(&compact, &parts, &signing));
+    }
+
+    #[test]
+    fn compact_split_rejects_embedded_separator() {
+        let mut parts = parts();
+        parts.payload = b"pay.load".to_vec();
+        let compact = compact_token_from_parts(&parts);
+        assert!(!compact_split_matches_parts(&compact, &parts));
     }
 
     #[test]
