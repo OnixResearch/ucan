@@ -56,10 +56,13 @@ segment) from requests with no matching effective capability.
 
 ## Proof-chain delegation
 
-Proof material is explicit. A child token carries BLAKE3 proof references in `prf`; callers provide the actual parent compact tokens through `ProofCollection`. Verification checks each parent signature, issuer/audience linkage, temporal narrowing, capability attenuation, and self-delegation rejection before returning the effective delegation constraints.
+Proof material is explicit. A child token carries BLAKE3 proof references in `prf`; callers may keep using `ProofCollection`, or inject their own synchronous `ProofStore` with `verify_compact_token_with_resolvers`. Verification checks each parent signature, issuer/audience linkage, temporal narrowing, capability attenuation, and self-delegation rejection before returning the effective delegation constraints.
+
+`KeyResolver` and `ProofStore` are std-shell injection points only: the crate does not provide built-in HTTP, IPFS, database, filesystem, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, and `ProofCollection` implements `ProofStore` for deterministic in-memory verification. `VerificationLimits::default()` bounds recursion with visible defaults for maximum proof depth, maximum resolved proof count, and maximum serialized compact-token byte length; use `VerificationContext::with_limits` or `verify_compact_token_with_resolvers` to override them. To reject oversized caller input before constructing a `CompactToken`, call `verify_compact_token_str`.
 
 ```bash
 cargo run --example proof_chain
+cargo run --example proof_store
 ```
 
 The verified result exposes the issuer, audience, direct capability set, direct proof list, and effective delegation window/capabilities so callers do not need to recompute chain constraints.

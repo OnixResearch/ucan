@@ -34,6 +34,9 @@ const CAPABILITY_ABILITY_FIELD: &str = "can";
 const ABILITY_SEGMENT_SEPARATOR: char = '/';
 const WILDCARD_ABILITY_SEGMENT: &str = "*";
 const PROOF_REFERENCE_DIGEST_LEN: usize = blake3::OUT_LEN;
+const DEFAULT_MAX_PROOF_DEPTH: usize = 16;
+const DEFAULT_MAX_PROOF_COUNT: usize = 64;
+const DEFAULT_MAX_COMPACT_TOKEN_BYTES: usize = 64 * 1024;
 pub const ED25519_SECRET_KEY_BYTES: usize = verified_logic::ucan_signature::SECRET_KEY_LEN;
 pub const ED25519_PUBLIC_KEY_BYTES: usize = verified_logic::ucan_signature::PUBLIC_KEY_LEN;
 pub const ED25519_SIGNATURE_BYTES: usize = verified_logic::ucan_signature::SIGNATURE_LEN;
@@ -105,6 +108,9 @@ pub enum TokenError {
     InvalidPublicKeyLength { actual: usize },
     DidEncodingUtf8,
     MissingVerificationKey { issuer: String },
+    KeyResolver { source: KeyResolverError },
+    ProofStore { source: ProofStoreError },
+    LimitExceeded { source: VerificationLimitError },
     Signature { issuer: String },
     Temporal { message: String },
     SelfDelegation { did: String },
@@ -149,6 +155,9 @@ impl fmt::Display for TokenError {
             Self::MissingVerificationKey { issuer } => {
                 write!(formatter, "no verification key registered for issuer {issuer}")
             }
+            Self::KeyResolver { source } => write!(formatter, "key resolver failed: {source}"),
+            Self::ProofStore { source } => write!(formatter, "proof store failed: {source}"),
+            Self::LimitExceeded { source } => write!(formatter, "verification limit exceeded: {source}"),
             Self::Signature { issuer } => write!(formatter, "signature failed for issuer {issuer}"),
             Self::Temporal { message } => write!(formatter, "temporal verification failed: {message}"),
             Self::SelfDelegation { did } => write!(formatter, "self-delegation rejected for {did}"),
@@ -167,6 +176,9 @@ impl std::error::Error for TokenError {
         match self {
             Self::CoreClaims { source } => Some(source),
             Self::Signer { source } => Some(source),
+            Self::KeyResolver { source } => Some(source),
+            Self::ProofStore { source } => Some(source),
+            Self::LimitExceeded { source } => Some(source),
             Self::VerifiedPrimitive { source } => Some(source),
             Self::EmptyCompactToken
             | Self::CompactTokenMustBeTrimmed
@@ -207,6 +219,69 @@ impl From<VerifiedPrimitiveError> for TokenError {
         Self::VerifiedPrimitive { source }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyResolverError {
+    MissingKey { issuer: String },
+    Backend { issuer: String, message: String },
+}
+
+impl fmt::Display for KeyResolverError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingKey { issuer } => write!(formatter, "missing verification key for issuer {issuer}"),
+            Self::Backend { issuer, message } => {
+                write!(formatter, "backend failed resolving issuer {issuer}: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for KeyResolverError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProofStoreError {
+    MissingProof { reference: ProofReference },
+    Backend { reference: ProofReference, message: String },
+}
+
+impl fmt::Display for ProofStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingProof { reference } => write!(formatter, "missing proof token {reference}"),
+            Self::Backend { reference, message } => {
+                write!(formatter, "backend failed resolving proof {reference}: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ProofStoreError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerificationLimitError {
+    ProofDepthExceeded { depth: usize, max_depth: usize },
+    ProofCountExceeded { count: usize, max_count: usize },
+    CompactTokenTooLarge { byte_len: usize, max_byte_len: usize },
+}
+
+impl fmt::Display for VerificationLimitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ProofDepthExceeded { depth, max_depth } => {
+                write!(formatter, "proof depth {depth} exceeds configured maximum {max_depth}")
+            }
+            Self::ProofCountExceeded { count, max_count } => {
+                write!(formatter, "proof count {count} exceeds configured maximum {max_count}")
+            }
+            Self::CompactTokenTooLarge { byte_len, max_byte_len } => {
+                write!(formatter, "compact token has {byte_len} bytes, maximum is {max_byte_len}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VerificationLimitError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactToken(String);
@@ -426,6 +501,55 @@ impl AuthorizationDecision {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofReference(Vec<u8>);
+
+impl ProofReference {
+    #[must_use]
+    pub const fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+
+    #[must_use]
+    pub fn to_base64url(&self) -> String {
+        URL_SAFE_NO_PAD.encode(self.as_bytes())
+    }
+}
+
+impl fmt::Display for ProofReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.to_base64url().as_str())
+    }
+}
+
+/// Synchronous shell-owned key resolver used by verification.
+pub trait KeyResolver {
+    /// Resolve a verification key for the supplied issuer DID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KeyResolverError`] when the issuer key is missing or the
+    /// resolver backend fails.
+    fn resolve_key(&self, issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError>;
+}
+
+/// Synchronous shell-owned proof store used by verification.
+pub trait ProofStore {
+    /// Resolve a compact proof token by its proof reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofStoreError`] when the proof is missing or the store
+    /// backend fails. Implementations should return serialized compact tokens
+    /// so verification can enforce size limits before parsing.
+    fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProofCollection(Vec<CompactToken>);
 
@@ -448,6 +572,58 @@ impl ProofCollection {
     #[must_use]
     pub fn into_vec(self) -> Vec<CompactToken> {
         self.0
+    }
+}
+
+impl ProofStore for ProofCollection {
+    fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+        self.as_slice()
+            .iter()
+            .find(|candidate| proof_reference_for_token(candidate).as_bytes() == reference.as_bytes())
+            .cloned()
+            .ok_or_else(|| ProofStoreError::MissingProof {
+                reference: reference.clone(),
+            })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
+pub struct VerificationLimits {
+    proof_depth_limit: usize,
+    proof_count_limit: usize,
+    compact_token_byte_limit: usize,
+}
+
+impl VerificationLimits {
+    #[must_use]
+    pub const fn new(max_proof_depth: usize, max_proof_count: usize, max_compact_token_bytes: usize) -> Self {
+        Self {
+            proof_depth_limit: max_proof_depth,
+            proof_count_limit: max_proof_count,
+            compact_token_byte_limit: max_compact_token_bytes,
+        }
+    }
+
+    #[must_use]
+    pub const fn max_proof_depth(self) -> usize {
+        self.proof_depth_limit
+    }
+
+    #[must_use]
+    pub const fn max_proof_count(self) -> usize {
+        self.proof_count_limit
+    }
+
+    #[must_use]
+    pub const fn max_compact_token_bytes(self) -> usize {
+        self.compact_token_byte_limit
+    }
+}
+
+impl Default for VerificationLimits {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_PROOF_DEPTH, DEFAULT_MAX_PROOF_COUNT, DEFAULT_MAX_COMPACT_TOKEN_BYTES)
     }
 }
 
@@ -799,6 +975,14 @@ impl KeyResolutionContext {
     }
 }
 
+impl KeyResolver for KeyResolutionContext {
+    fn resolve_key(&self, issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError> {
+        self.resolve(issuer).cloned().ok_or_else(|| KeyResolverError::MissingKey {
+            issuer: issuer.as_str().to_owned(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueRequest {
     signing_key: Ed25519SigningKey,
@@ -832,12 +1016,33 @@ pub struct VerificationContext {
     time: VerificationTime,
     keys: KeyResolutionContext,
     proofs: ProofCollection,
+    limits: VerificationLimits,
 }
 
 impl VerificationContext {
     #[must_use]
-    pub const fn new(time: VerificationTime, keys: KeyResolutionContext, proofs: ProofCollection) -> Self {
-        Self { time, keys, proofs }
+    pub fn new(time: VerificationTime, keys: KeyResolutionContext, proofs: ProofCollection) -> Self {
+        Self::with_limits(time, keys, proofs, VerificationLimits::default())
+    }
+
+    #[must_use]
+    pub const fn with_limits(
+        time: VerificationTime,
+        keys: KeyResolutionContext,
+        proofs: ProofCollection,
+        limits: VerificationLimits,
+    ) -> Self {
+        Self {
+            time,
+            keys,
+            proofs,
+            limits,
+        }
+    }
+
+    #[must_use]
+    pub const fn limits(&self) -> VerificationLimits {
+        self.limits
     }
 }
 
@@ -1143,9 +1348,25 @@ pub fn verify_token_signature(
     token: StructurallyValidToken,
     keys: &KeyResolutionContext,
 ) -> TokenResult<SignatureVerifiedToken> {
+    verify_token_signature_with_resolver(token, keys)
+}
+
+/// Verify the signature on a structurally valid token through an explicit key resolver.
+///
+/// # Errors
+///
+/// Returns [`TokenError`] when key resolution fails or the signature is invalid.
+pub fn verify_token_signature_with_resolver<R>(
+    token: StructurallyValidToken,
+    resolver: &R,
+) -> TokenResult<SignatureVerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+{
     let issuer = IssuerDid::new(token.claims.issuer_did().to_owned())?;
-    let public_key = keys.resolve(&issuer).ok_or_else(|| TokenError::MissingVerificationKey {
-        issuer: issuer.as_str().to_owned(),
+    let public_key = resolver.resolve_key(&issuer).map_err(|source| match source {
+        KeyResolverError::MissingKey { issuer } => TokenError::MissingVerificationKey { issuer },
+        source @ KeyResolverError::Backend { .. } => TokenError::KeyResolver { source },
     })?;
     let valid =
         verify_ed25519_signature(public_key.as_bytes(), token.signing_input.as_slice(), token.signature.as_slice())?;
@@ -1164,38 +1385,100 @@ pub fn verify_token_signature(
 /// Returns [`TokenError`] when parsing, structural validation, signature
 /// validation, temporal validation, or proof-chain validation fails.
 pub fn verify_compact_token(token: &CompactToken, context: &VerificationContext) -> TokenResult<VerifiedToken> {
-    let mut trail = Vec::new();
-    verify_compact_token_with_trail(token, context, &mut trail)
+    verify_compact_token_with_resolvers(token, context.time, &context.keys, &context.proofs, context.limits)
 }
 
-fn verify_compact_token_with_trail(
+/// Verify a serialized compact token string with size limits applied before parsing.
+///
+/// # Errors
+///
+/// Returns [`TokenError`] when size limits, parsing, structural validation,
+/// signature validation, temporal validation, or proof-chain validation fails.
+pub fn verify_compact_token_str(token: &str, context: &VerificationContext) -> TokenResult<VerifiedToken> {
+    enforce_compact_token_size(token, context.limits)?;
+    let token = CompactToken::new(token.to_owned())?;
+    verify_compact_token(&token, context)
+}
+
+/// Verify a compact token through explicit shell-owned resolver and proof-store abstractions.
+///
+/// # Errors
+///
+/// Returns [`TokenError`] when size limits, parsing, structural validation,
+/// signature validation, temporal validation, proof-store lookup, or proof-chain
+/// validation fails.
+pub fn verify_compact_token_with_resolvers<R, S>(
     token: &CompactToken,
-    context: &VerificationContext,
-    trail: &mut Vec<Vec<u8>>,
-) -> TokenResult<VerifiedToken> {
-    reject_cycle(token, trail)?;
-    trail.push(proof_reference_for_token(token));
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    limits: VerificationLimits,
+) -> TokenResult<VerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+{
+    let mut traversal = VerificationTraversal::default();
+    verify_compact_token_with_traversal(token, time, key_resolver, proof_store, limits, &mut traversal, 0)
+}
+
+fn verify_compact_token_with_traversal<R, S>(
+    token: &CompactToken,
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    limits: VerificationLimits,
+    traversal: &mut VerificationTraversal,
+    depth: usize,
+) -> TokenResult<VerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+{
+    enforce_proof_depth(depth, limits)?;
+    enforce_compact_token_size(token.as_str(), limits)?;
+    reject_cycle(token, traversal.trail.as_slice())?;
+    traversal.trail.push(proof_reference_for_token(token));
     let decoded = parse_compact_token(token)?;
     let valid = validate_decoded_token(decoded)?;
-    let signed = verify_token_signature(valid, &context.keys)?;
-    let verified = authorize_signed_token(signed, context, trail)?;
-    let _removed = trail.pop();
+    let signed = verify_token_signature_with_resolver(valid, key_resolver)?;
+    let verified = authorize_signed_token(signed, time, key_resolver, proof_store, limits, traversal, depth)?;
+    let _removed = traversal.trail.pop();
     Ok(verified)
 }
 
-fn authorize_signed_token(
+fn authorize_signed_token<R, S>(
     signed: SignatureVerifiedToken,
-    context: &VerificationContext,
-    trail: &mut Vec<Vec<u8>>,
-) -> TokenResult<VerifiedToken> {
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    limits: VerificationLimits,
+    traversal: &mut VerificationTraversal,
+    depth: usize,
+) -> TokenResult<VerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+{
     let token = signed.token;
-    validate_envelope_for_token(&token, context.time)?;
+    validate_envelope_for_token(&token, time)?;
     let issuer = IssuerDid::new(token.claims.issuer_did().to_owned())?;
     let audience = AudienceDid::new(token.claims.audience_did().to_owned())?;
     let capabilities = claims_capability_set(&token.claims)?;
     let time_bounds = claims_time_bounds(&token.claims)?;
-    let proofs = direct_proofs(&token, context)?;
-    let effective = effective_delegation(&issuer, &capabilities, time_bounds, &proofs, context, trail)?;
+    let proofs = direct_proofs(&token, proof_store, limits, traversal)?;
+    let effective = effective_delegation(
+        &issuer,
+        &capabilities,
+        time_bounds,
+        &proofs,
+        time,
+        key_resolver,
+        proof_store,
+        limits,
+        traversal,
+        depth,
+    )?;
     Ok(VerifiedToken {
         issuer,
         audience,
@@ -1205,21 +1488,29 @@ fn authorize_signed_token(
     })
 }
 
-fn effective_delegation(
+fn effective_delegation<R, S>(
     child_issuer: &IssuerDid,
     capabilities: &CapabilitySet,
     time_bounds: TokenTimeBounds,
     proofs: &ProofCollection,
-    context: &VerificationContext,
-    trail: &mut Vec<Vec<u8>>,
-) -> TokenResult<EffectiveDelegation> {
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    limits: VerificationLimits,
+    traversal: &mut VerificationTraversal,
+    depth: usize,
+) -> TokenResult<EffectiveDelegation>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+{
     if proofs.as_slice().is_empty() {
         return Ok(EffectiveDelegation {
             capabilities: capabilities.clone(),
             time_bounds,
         });
     }
-    let parent_tokens = verify_parent_tokens(proofs, context, trail)?;
+    let parent_tokens = verify_parent_tokens(proofs, time, key_resolver, proof_store, limits, traversal, depth + 1)?;
     verify_child_is_linked_to_parent_audience(child_issuer, &parent_tokens)?;
     let effective_time = verify_temporal_attenuation(time_bounds, parent_tokens.as_slice())?;
     let effective_capabilities = verify_capability_attenuation(capabilities, parent_tokens.as_slice())?;
@@ -1229,14 +1520,23 @@ fn effective_delegation(
     })
 }
 
-fn verify_parent_tokens(
+fn verify_parent_tokens<R, S>(
     proofs: &ProofCollection,
-    context: &VerificationContext,
-    trail: &mut Vec<Vec<u8>>,
-) -> TokenResult<Vec<VerifiedToken>> {
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    limits: VerificationLimits,
+    traversal: &mut VerificationTraversal,
+    depth: usize,
+) -> TokenResult<Vec<VerifiedToken>>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+{
     let mut parents = Vec::with_capacity(proofs.as_slice().len());
     for proof in proofs.as_slice() {
-        let parent = verify_compact_token_with_trail(proof, context, trail)?;
+        let parent =
+            verify_compact_token_with_traversal(proof, time, key_resolver, proof_store, limits, traversal, depth)?;
         parents.push(parent);
     }
     Ok(parents)
@@ -1304,18 +1604,21 @@ fn parent_effective_capabilities(parents: &[VerifiedToken]) -> Vec<CapabilityDoc
         .collect()
 }
 
-fn direct_proofs(token: &StructurallyValidToken, context: &VerificationContext) -> TokenResult<ProofCollection> {
+fn direct_proofs<S>(
+    token: &StructurallyValidToken,
+    proof_store: &S,
+    limits: VerificationLimits,
+    traversal: &mut VerificationTraversal,
+) -> TokenResult<ProofCollection>
+where
+    S: ProofStore + ?Sized,
+{
     let mut proofs = Vec::with_capacity(token.claims.proofs().len());
     for reference in token.claims.proofs() {
-        let proof = context
-            .proofs
-            .as_slice()
-            .iter()
-            .find(|candidate| proof_reference_for_token(candidate).as_slice() == reference.as_bytes())
-            .cloned()
-            .ok_or_else(|| TokenError::ProofChain {
-                message: "required proof token was not supplied".to_owned(),
-            })?;
+        traversal.resolve_one_proof(limits)?;
+        let reference = ProofReference::new(reference.as_bytes().to_vec());
+        let proof = proof_store.resolve_proof(&reference).map_err(|source| TokenError::ProofStore { source })?;
+        enforce_compact_token_size(proof.as_str(), limits)?;
         proofs.push(proof);
     }
     Ok(ProofCollection::from_tokens(proofs))
@@ -1379,9 +1682,56 @@ const fn claims_time_bounds(claims: &ucan_core::token::Claims) -> TokenResult<To
     TokenTimeBounds::new(claims.time_bounds().not_before_seconds(), claims.time_bounds().expires_at_seconds())
 }
 
-fn reject_cycle(token: &CompactToken, trail: &[Vec<u8>]) -> TokenResult<()> {
+#[derive(Debug, Default)]
+struct VerificationTraversal {
+    trail: Vec<ProofReference>,
+    resolved_proofs: usize,
+}
+
+impl VerificationTraversal {
+    const fn resolve_one_proof(&mut self, limits: VerificationLimits) -> TokenResult<()> {
+        let next_count = self.resolved_proofs.saturating_add(1);
+        if next_count > limits.max_proof_count() {
+            return Err(TokenError::LimitExceeded {
+                source: VerificationLimitError::ProofCountExceeded {
+                    count: next_count,
+                    max_count: limits.max_proof_count(),
+                },
+            });
+        }
+        self.resolved_proofs = next_count;
+        Ok(())
+    }
+}
+
+const fn enforce_proof_depth(depth: usize, limits: VerificationLimits) -> TokenResult<()> {
+    if depth > limits.max_proof_depth() {
+        return Err(TokenError::LimitExceeded {
+            source: VerificationLimitError::ProofDepthExceeded {
+                depth,
+                max_depth: limits.max_proof_depth(),
+            },
+        });
+    }
+    Ok(())
+}
+
+const fn enforce_compact_token_size(token: &str, limits: VerificationLimits) -> TokenResult<()> {
+    let byte_len = token.len();
+    if byte_len > limits.max_compact_token_bytes() {
+        return Err(TokenError::LimitExceeded {
+            source: VerificationLimitError::CompactTokenTooLarge {
+                byte_len,
+                max_byte_len: limits.max_compact_token_bytes(),
+            },
+        });
+    }
+    Ok(())
+}
+
+fn reject_cycle(token: &CompactToken, trail: &[ProofReference]) -> TokenResult<()> {
     let current = proof_reference_for_token(token);
-    if trail.iter().any(|reference| reference.as_slice() == current.as_slice()) {
+    if trail.iter().any(|reference| reference == &current) {
         return Err(TokenError::ProofChain {
             message: "proof chain contains a cycle".to_owned(),
         });
@@ -1487,14 +1837,19 @@ fn encoded_claims<'a>(input: &'a IssueClaimsInput<'a>) -> EncodedClaims<'a> {
 }
 
 fn encode_proof_references(proofs: &[CompactToken]) -> Vec<Vec<u8>> {
-    proofs.iter().map(proof_reference_for_token).collect()
+    proofs.iter().map(|proof| proof_reference_for_token(proof).as_bytes().to_vec()).collect()
 }
 
-fn proof_reference_for_token(token: &CompactToken) -> Vec<u8> {
+#[must_use]
+pub fn proof_reference(token: &CompactToken) -> ProofReference {
+    proof_reference_for_token(token)
+}
+
+fn proof_reference_for_token(token: &CompactToken) -> ProofReference {
     let digest = blake3::hash(token.as_str().as_bytes());
     let bytes = digest.as_bytes();
     debug_assert_eq!(bytes.len(), PROOF_REFERENCE_DIGEST_LEN);
-    bytes.to_vec()
+    ProofReference::new(bytes.to_vec())
 }
 
 fn compact_parts(token: &str) -> TokenResult<Vec<&str>> {
@@ -1636,7 +1991,12 @@ mod tests {
     use super::IssueRequest;
     use super::IssuerDid;
     use super::KeyResolutionContext;
+    use super::KeyResolver;
+    use super::KeyResolverError;
     use super::ProofCollection;
+    use super::ProofReference;
+    use super::ProofStore;
+    use super::ProofStoreError;
     use super::SignerError;
     use super::SignerResult;
     use super::SignerSignature;
@@ -1645,6 +2005,8 @@ mod tests {
     use super::TokenSigner;
     use super::TokenTimeBounds;
     use super::VerificationContext;
+    use super::VerificationLimitError;
+    use super::VerificationLimits;
     use super::VerificationTime;
     use super::VerifiedToken;
     use super::issue_token;
@@ -2217,7 +2579,254 @@ mod tests {
             verification_context(vec![&parent_key, &child_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
         let error = verify_compact_token(&child, &context).expect_err("missing proof should fail");
 
+        assert!(matches!(error, TokenError::ProofStore {
+            source: ProofStoreError::MissingProof { .. }
+        }));
+    }
+
+    #[test]
+    fn resolver_backend_errors_preserve_issuer_context() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = verification_context(vec![], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let resolver = BackendFailingResolver;
+        let error = super::verify_compact_token_with_resolvers(
+            &token,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &resolver,
+            &context.proofs,
+            context.limits(),
+        )
+        .expect_err("resolver backend should fail");
+
+        assert!(matches!(error, TokenError::KeyResolver {
+            source: KeyResolverError::Backend { issuer, message }
+        } if issuer == issuer_key.issuer().expect("issuer should derive").as_str() && message == BACKEND_FAILURE_MESSAGE));
+    }
+
+    #[test]
+    fn proof_store_backend_errors_preserve_reference_context() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent)).expect("child should issue");
+        let keys = KeyResolutionContext::new(
+            [&parent_key, &child_key]
+                .into_iter()
+                .map(Ed25519VerificationKey::from_signing_key)
+                .collect::<Result<Vec<_>, _>>()
+                .expect("keys should derive"),
+        );
+        let store = BackendFailingProofStore;
+        let error = super::verify_compact_token_with_resolvers(
+            &child,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &store,
+            VerificationLimits::default(),
+        )
+        .expect_err("proof store backend should fail");
+
+        assert!(matches!(error, TokenError::ProofStore {
+            source: ProofStoreError::Backend { reference, message }
+        } if !reference.as_bytes().is_empty() && message == BACKEND_FAILURE_MESSAGE));
+    }
+
+    #[test]
+    fn verification_limits_reject_oversized_input_before_parse() {
+        let context = VerificationContext::with_limits(
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            KeyResolutionContext::new(Vec::new()),
+            ProofCollection::empty(),
+            VerificationLimits::new(1, 1, 3),
+        );
+        let error = super::verify_compact_token_str("not.enough.parts", &context)
+            .expect_err("oversized input should fail before parse");
+
+        assert!(matches!(error, TokenError::LimitExceeded {
+            source: VerificationLimitError::CompactTokenTooLarge {
+                byte_len: 16,
+                max_byte_len: 3
+            }
+        }));
+    }
+
+    #[test]
+    fn proof_depth_limit_rejects_parent_traversal() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
+        let context = VerificationContext::with_limits(
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            KeyResolutionContext::new(
+                [&parent_key, &child_key]
+                    .into_iter()
+                    .map(Ed25519VerificationKey::from_signing_key)
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("keys should derive"),
+            ),
+            ProofCollection::from_tokens(vec![parent]),
+            VerificationLimits::new(0, 1, usize::MAX),
+        );
+        let error = verify_compact_token(&child, &context).expect_err("depth limit should fail");
+
+        assert!(matches!(error, TokenError::LimitExceeded {
+            source: VerificationLimitError::ProofDepthExceeded { depth: 1, max_depth: 0 }
+        }));
+    }
+
+    #[test]
+    fn proof_count_limit_stops_before_proof_lookup() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent)).expect("child should issue");
+        let keys = KeyResolutionContext::new(
+            [&parent_key, &child_key]
+                .into_iter()
+                .map(Ed25519VerificationKey::from_signing_key)
+                .collect::<Result<Vec<_>, _>>()
+                .expect("keys should derive"),
+        );
+        let limits = VerificationLimits::new(1, 0, usize::MAX);
+        let error = super::verify_compact_token_with_resolvers(
+            &child,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &CountingProofStore,
+            limits,
+        )
+        .expect_err("proof count limit should fail");
+
+        assert!(matches!(error, TokenError::LimitExceeded {
+            source: VerificationLimitError::ProofCountExceeded { count: 1, max_count: 0 }
+        }));
+    }
+
+    #[test]
+    fn resolved_proof_size_limit_precedes_parsing() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent)).expect("child should issue");
+        let keys = KeyResolutionContext::new(
+            [&parent_key, &child_key]
+                .into_iter()
+                .map(Ed25519VerificationKey::from_signing_key)
+                .collect::<Result<Vec<_>, _>>()
+                .expect("keys should derive"),
+        );
+        let limits = VerificationLimits::new(1, 1, child.as_str().len() + 10);
+        let error = super::verify_compact_token_with_resolvers(
+            &child,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &OversizedProofStore,
+            limits,
+        )
+        .expect_err("oversized resolved proof should fail before parse");
+
+        assert!(matches!(error, TokenError::LimitExceeded {
+            source: VerificationLimitError::CompactTokenTooLarge { .. }
+        }));
+    }
+
+    #[test]
+    fn proof_store_cycle_is_rejected_by_trail_detection() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent)).expect("child should issue");
+        let keys = KeyResolutionContext::new(
+            [&parent_key, &child_key]
+                .into_iter()
+                .map(Ed25519VerificationKey::from_signing_key)
+                .collect::<Result<Vec<_>, _>>()
+                .expect("keys should derive"),
+        );
+        let store = CyclicProofStore { token: child.clone() };
+        let error = super::verify_compact_token_with_resolvers(
+            &child,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &store,
+            VerificationLimits::default(),
+        )
+        .expect_err("proof cycle should fail");
+
         assert!(matches!(error, TokenError::ProofChain { .. }));
+    }
+
+    const BACKEND_FAILURE_MESSAGE: &str = "backend unavailable";
+
+    struct BackendFailingResolver;
+
+    impl KeyResolver for BackendFailingResolver {
+        fn resolve_key(&self, issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError> {
+            Err(KeyResolverError::Backend {
+                issuer: issuer.as_str().to_owned(),
+                message: BACKEND_FAILURE_MESSAGE.to_owned(),
+            })
+        }
+    }
+
+    struct BackendFailingProofStore;
+
+    impl ProofStore for BackendFailingProofStore {
+        fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+            Err(ProofStoreError::Backend {
+                reference: reference.clone(),
+                message: BACKEND_FAILURE_MESSAGE.to_owned(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingProofStore;
+
+    impl ProofStore for CountingProofStore {
+        fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+            panic!("proof store should not be called after proof-count limit for {reference}");
+        }
+    }
+
+    struct OversizedProofStore;
+
+    impl ProofStore for OversizedProofStore {
+        fn resolve_proof(&self, _reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+            CompactToken::new("x".repeat(8192)).map_err(|error| ProofStoreError::Backend {
+                reference: ProofReference::new(Vec::new()),
+                message: error.to_string(),
+            })
+        }
+    }
+
+    struct CyclicProofStore {
+        token: CompactToken,
+    }
+
+    impl ProofStore for CyclicProofStore {
+        fn resolve_proof(&self, _reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+            Ok(self.token.clone())
+        }
     }
 
     #[derive(Clone)]
