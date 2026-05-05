@@ -615,7 +615,7 @@ r[library.ergonomics.integration-examples.failure-handling-maps-errors]
 - THEN it MUST show stable application-level handling for parse and verification failures
 
 ### Requirement: Verification accepts explicit revocation checkers [r[library.revocation.explicit-checker]]
-The library MUST let callers inject revocation state through explicit checker objects without process-global registries, implicit network fetches, persistence layers, or ambient default stores.
+The library MUST let callers inject revocation state through explicit checker objects without process-global registries, implicit network fetches, persistence layers, or ambient default stores. The deterministic in-memory revocation-list helper MUST perform finite proof-reference membership through the vendored verified revocation-set bridge rather than a shell-local membership scan.
 
 #### Scenario: No-op checker preserves current verification [r[library.revocation.explicit-checker.noop-preserves-behavior]]
 - GIVEN a compact token and proof chain that verifies successfully with the existing verification API
@@ -626,6 +626,13 @@ The library MUST let callers inject revocation state through explicit checker ob
 - GIVEN a revocation checker that returns a backend error for a token reference
 - WHEN verification reaches that reference
 - THEN verification MUST fail with a structured revocation backend error instead of allowing the token
+
+#### Scenario: In-memory revocation list uses verified set semantics [r[library.revocation.verified-set-membership]]
+
+- GIVEN a proof reference and an in-memory revocation list
+- WHEN the revocation list evaluates membership
+- THEN the lookup MUST pass through the verified revocation-set bridge helper
+- AND listed references MUST deny verification while unlisted references remain allowed
 
 ### Requirement: Revocation covers the full proof chain [r[library.revocation.chain-denial]]
 The library MUST reject a token when the leaf token or any recursively resolved proof-chain token is revoked by the caller-supplied checker.

@@ -5,6 +5,7 @@ use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
 use verified_logic::ucan_chain;
 use verified_logic::ucan_did;
+use verified_logic::ucan_revocation;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
 use verified_logic::ucan_token;
@@ -266,6 +267,19 @@ pub fn proof_link_is_valid(parent_audience_did: &str, child_issuer_did: &str) ->
     ucan_chain::check_chain_linked(&chain)
 }
 
+/// Check whether a proof-reference byte string is present in a finite revocation list.
+///
+/// This is the shell bridge to verified-logic's finite revocation-set lookup. It
+/// does not perform revocation-registry lookup, freshness checks, persistence, or
+/// proof-reference derivation.
+#[must_use]
+pub fn revocation_reference_is_listed(revoked_references: &[Vec<u8>], reference: &[u8]) -> bool {
+    let revocation_set = ucan_revocation::RevocationSet {
+        entries: revoked_references.to_vec(),
+    };
+    ucan_revocation::is_revoked(&revocation_set, &reference.to_vec())
+}
+
 /// Validate a UCAN envelope using verified-logic's checked pipeline.
 ///
 /// # Errors
@@ -470,6 +484,7 @@ mod tests {
     use super::derive_ed25519_public_key;
     use super::encode_ed25519_did_key;
     use super::proof_link_is_valid;
+    use super::revocation_reference_is_listed;
     use super::sign_ed25519;
     use super::token_needs_refresh;
     use super::token_time_valid;
@@ -607,6 +622,14 @@ mod tests {
 
         assert!(proof_link_is_valid(parent_audience, child_issuer));
         assert!(!proof_link_is_valid(parent_audience, wrong_child_issuer));
+    }
+
+    #[test]
+    fn revocation_reference_lookup_uses_verified_set_semantics() {
+        let revoked = vec![b"root-proof".to_vec(), b"leaf-proof".to_vec()];
+
+        assert!(revocation_reference_is_listed(&revoked, b"leaf-proof"));
+        assert!(!revocation_reference_is_listed(&revoked, b"other-proof"));
     }
 
     #[test]

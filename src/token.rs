@@ -23,6 +23,7 @@ use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::proof_link_is_valid;
+use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
 use crate::verified::validate_token_envelope;
 use crate::verified::verify_ed25519_signature;
@@ -1009,7 +1010,9 @@ impl RevocationList {
 
 impl RevocationChecker for RevocationList {
     fn is_revoked(&self, reference: &ProofReference) -> std::result::Result<bool, RevocationError> {
-        Ok(self.as_slice().iter().any(|candidate| candidate == reference))
+        let revoked_references =
+            self.as_slice().iter().map(|candidate| candidate.as_bytes().to_vec()).collect::<Vec<_>>();
+        Ok(revocation_reference_is_listed(&revoked_references, reference.as_bytes()))
     }
 }
 
