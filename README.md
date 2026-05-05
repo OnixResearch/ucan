@@ -72,13 +72,16 @@ cargo run --example failure_handling
 
 After `verify_compact_token` succeeds, use `VerifiedToken::authorize`,
 `VerifiedToken::authorize_request`, or `VerifiedToken::authorize_with_policies`
-to evaluate a concrete operation against the effective delegation only.
-Authorization decisions are structured: allowed decisions expose the matched
-effective capability, while denied decisions separate malformed requests (for
-example a requested ability containing a `*` segment), missing caveat policies,
-rejected caveats, and requests with no matching effective capability. Caveats are
-opaque domain/type/key/payload records preserved in `ucan-core` and evaluated in
-the shell through caller-supplied `CaveatPolicySet`; unknown caveats fail closed.
+to evaluate a concrete operation against the effective delegation only. Concrete
+request admission rejects wildcard request abilities through the same
+`VerifiedCapability` / `verified-logic` ability bridge used for delegation
+containment rather than a parallel shell-local ability parser. Authorization
+decisions are structured: allowed decisions expose the matched effective
+capability, while denied decisions separate malformed requests (for example a
+requested ability containing a `*` segment), missing caveat policies, rejected
+caveats, and requests with no matching effective capability. Caveats are opaque
+domain/type/key/payload records preserved in `ucan-core` and evaluated in the
+shell through caller-supplied `CaveatPolicySet`; unknown caveats fail closed.
 
 For invocation-shaped checks, `verify_invocation` first verifies the compact
 token, then authorizes the requested resource/ability with the supplied caveat

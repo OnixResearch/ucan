@@ -27,7 +27,10 @@ require_pattern 'use verified_logic::ucan_temporal|compose_time_window_chain' sr
 require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sign_ed25519' src
 require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
 require_pattern 'use verified_logic::ucan_did|encode_ed25519_did_key' src
+require_pattern '\.is_concrete\(\)' src/token.rs
+require_pattern '\.has_wildcard_segment\(\)' src/verified.rs
 
 reject_pattern 'fn .*attenuat.*\{|fn .*temporal.*\{|fn .*signature.*\{' crates/ucan-core/src
+reject_pattern 'fn ability_has_wildcard_segment|ABILITY_SEGMENT_SEPARATOR|WILDCARD_ABILITY_SEGMENT' src/token.rs
 reject_pattern 'OnceLock|lazy_static|thread_local!|std::env|reqwest|ureq|hyper|process-global|global resolver|global proof|default resolver|default proof store|filesystem fallback|network fallback' src
 "$repo_root/scripts/check-ucan-core-no-std.sh"

@@ -11,6 +11,7 @@ use verified_logic::ucan_token;
 use crate::shell::CapabilityDocument;
 
 const ABILITY_SEGMENT_SEPARATOR: char = '/';
+const WILDCARD_ABILITY_SEGMENT: &[u8] = b"*";
 const DEFAULT_CLOCK_SKEW_SECONDS: u64 = 60;
 
 pub type VerifiedResult<T> = std::result::Result<T, VerifiedPrimitiveError>;
@@ -153,6 +154,18 @@ impl VerifiedCapability {
         let resource_covers = scope::covers(self.resource().as_bytes(), child.resource().as_bytes());
         let ability_subsumes = ucan_ability::ability_subsumes(&self.verified_ability(), &child.verified_ability());
         resource_covers && ability_subsumes
+    }
+
+    /// Return whether the verified ability contains a wildcard segment.
+    #[must_use]
+    pub fn has_wildcard_segment(&self) -> bool {
+        self.ability_segments.iter().any(|segment| segment.as_slice() == WILDCARD_ABILITY_SEGMENT)
+    }
+
+    /// Return whether this capability can represent a concrete operation request.
+    #[must_use]
+    pub fn is_concrete(&self) -> bool {
+        !self.has_wildcard_segment()
     }
 
     /// Check whether this capability authorizes a concrete resource/ability.
@@ -475,6 +488,19 @@ mod tests {
             .expect("requested capability should validate");
 
         assert!(!authorized);
+    }
+
+    #[test]
+    fn verified_capability_reports_concrete_ability_admission() {
+        let wildcard = VerifiedCapability::new(VALID_RESOURCE.to_owned(), VALID_ABILITY_GLOB.to_owned())
+            .expect("wildcard delegated capability should validate");
+        let concrete = VerifiedCapability::new(VALID_RESOURCE_CHILD.to_owned(), VALID_ABILITY_CHILD.to_owned())
+            .expect("concrete requested capability should validate");
+
+        assert!(wildcard.has_wildcard_segment());
+        assert!(!wildcard.is_concrete());
+        assert!(!concrete.has_wildcard_segment());
+        assert!(concrete.is_concrete());
     }
 
     #[test]

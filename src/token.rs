@@ -36,8 +36,6 @@ const TOKEN_ALGORITHM_EDDSA: &str = "EdDSA";
 const REDACTED_SECRET_MATERIAL_DEBUG: &str = "<redacted>";
 const CAPABILITY_RESOURCE_FIELD: &str = "with";
 const CAPABILITY_ABILITY_FIELD: &str = "can";
-const ABILITY_SEGMENT_SEPARATOR: char = '/';
-const WILDCARD_ABILITY_SEGMENT: &str = "*";
 const PROOF_REFERENCE_DIGEST_LEN: usize = blake3::OUT_LEN;
 const DEFAULT_MAX_PROOF_DEPTH: usize = 16;
 const DEFAULT_MAX_PROOF_COUNT: usize = 64;
@@ -623,7 +621,11 @@ impl AuthorizationRequest {
             CapabilityDocument::new(resource.into(), ability.into()).map_err(|error| TokenError::Capability {
                 message: error.to_string(),
             })?;
-        if ability_has_wildcard_segment(capability.ability.as_str()) {
+        let verified_capability =
+            VerifiedCapability::from_document(capability.clone()).map_err(|error| TokenError::Capability {
+                message: error.to_string(),
+            })?;
+        if !verified_capability.is_concrete() {
             return Err(TokenError::Capability {
                 message: "authorization request ability must not contain wildcard segments".to_owned(),
             });
@@ -2648,10 +2650,6 @@ fn validate_compact_token_string(token: &str) -> TokenResult<()> {
         return Err(TokenError::CompactTokenMustBeTrimmed);
     }
     Ok(())
-}
-
-fn ability_has_wildcard_segment(ability: &str) -> bool {
-    ability.split(ABILITY_SEGMENT_SEPARATOR).any(|segment| segment == WILDCARD_ABILITY_SEGMENT)
 }
 
 fn validate_header(header: &DecodedHeader) -> TokenResult<()> {

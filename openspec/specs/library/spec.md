@@ -262,7 +262,7 @@ r[library.authorization-decisions.authorize-concrete-request.missing-effective-c
 
 ### Requirement: Authorization uses verified capability semantics
 
-Authorization matching MUST reuse the same verified-logic-backed resource and ability containment semantics used for proof-chain attenuation.
+Authorization matching and concrete request admission MUST reuse the same verified-logic-backed resource and ability containment semantics used for proof-chain attenuation.
 r[library.authorization-decisions.verified-matching]
 
 #### Scenario: Wildcard ability segment authorizes child ability
@@ -288,6 +288,7 @@ r[library.authorization-decisions.verified-matching.request-must-be-concrete]
 - WHEN the request is constructed or evaluated
 - THEN the library MUST reject the request with a structured validation error
 - AND wildcard abilities MUST remain valid only on delegated capabilities, not concrete requested operations
+- AND the wildcard check MUST be routed through the verified capability bridge rather than a parallel shell-local ability parser
 
 #### Scenario: Broader resource requests are denied
 r[library.authorization-decisions.verified-matching.broader-resource-request-denied]
