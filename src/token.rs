@@ -28,6 +28,8 @@ use crate::verified::VerifiedProofTraversalBudget;
 use crate::verified::VerifiedProofTraversalDagTranscript;
 use crate::verified::VerifiedProofTraversalEntry;
 use crate::verified::VerifiedProofTraversalTarget;
+use crate::verified::VerifiedWebOfTrustCaveat;
+use crate::verified::VerifiedWebOfTrustCaveatContext;
 use crate::verified::backend_transcript_accepts;
 use crate::verified::backend_transcript_first_failed_operation;
 use crate::verified::compact_token_envelope_is_valid;
@@ -40,6 +42,7 @@ use crate::verified::proof_link_is_valid;
 use crate::verified::proof_traversal_dag_transcript_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
+use crate::verified::typed_caveat_is_satisfied;
 use crate::verified::validate_token_envelope;
 use crate::verified::verify_ed25519_signature;
 
@@ -763,6 +766,150 @@ impl CaveatPolicySet for DenyUnknownCaveats {
     fn policy_for(&self, _caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy> {
         None
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypedCaveatContext {
+    now_seconds: u64,
+    count_in_window: u64,
+}
+
+impl TypedCaveatContext {
+    #[must_use]
+    pub const fn new(now_seconds: u64, count_in_window: u64) -> Self {
+        Self {
+            now_seconds,
+            count_in_window,
+        }
+    }
+
+    #[must_use]
+    pub const fn now_seconds(self) -> u64 {
+        self.now_seconds
+    }
+
+    #[must_use]
+    pub const fn count_in_window(self) -> u64 {
+        self.count_in_window
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedTypedCaveatPolicySet {
+    context: TypedCaveatContext,
+    time_bound_policy: VerifiedTypedCaveatPolicy,
+    rate_limit_policy: VerifiedTypedCaveatPolicy,
+}
+
+impl VerifiedTypedCaveatPolicySet {
+    #[must_use]
+    pub const fn new(context: TypedCaveatContext) -> Self {
+        Self {
+            context,
+            time_bound_policy: VerifiedTypedCaveatPolicy::time_bound(context),
+            rate_limit_policy: VerifiedTypedCaveatPolicy::rate_limit(context),
+        }
+    }
+
+    #[must_use]
+    pub const fn context(self) -> TypedCaveatContext {
+        self.context
+    }
+}
+
+impl CaveatPolicySet for VerifiedTypedCaveatPolicySet {
+    fn policy_for(&self, caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy> {
+        match (caveat.domain(), caveat.caveat_type(), caveat.key()) {
+            ("time", "before", "unix") => Some(&self.time_bound_policy),
+            ("rate", "limit", "window") => Some(&self.rate_limit_policy),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerifiedTypedCaveatKind {
+    TimeBound,
+    RateLimit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VerifiedTypedCaveatPolicy {
+    context: TypedCaveatContext,
+    kind: VerifiedTypedCaveatKind,
+}
+
+impl VerifiedTypedCaveatPolicy {
+    const fn time_bound(context: TypedCaveatContext) -> Self {
+        Self {
+            context,
+            kind: VerifiedTypedCaveatKind::TimeBound,
+        }
+    }
+
+    const fn rate_limit(context: TypedCaveatContext) -> Self {
+        Self {
+            context,
+            kind: VerifiedTypedCaveatKind::RateLimit,
+        }
+    }
+}
+
+impl CaveatPolicy for VerifiedTypedCaveatPolicy {
+    fn evaluate(&self, caveat: &CaveatDocument, _request: &AuthorizationRequest) -> CaveatDecision {
+        let parsed = match self.kind {
+            VerifiedTypedCaveatKind::TimeBound => parse_time_bound_caveat(caveat),
+            VerifiedTypedCaveatKind::RateLimit => parse_rate_limit_caveat(caveat),
+        };
+        let verified_caveat = match parsed {
+            Ok(caveat) => caveat,
+            Err(message) => return CaveatDecision::Rejected { message },
+        };
+        let context = VerifiedWebOfTrustCaveatContext {
+            now_seconds: self.context.now_seconds(),
+            count_in_window: self.context.count_in_window(),
+        };
+        if typed_caveat_is_satisfied(&verified_caveat, &context) {
+            CaveatDecision::Satisfied
+        } else {
+            CaveatDecision::Rejected {
+                message: "typed caveat rejected by verified caveat semantics".to_owned(),
+            }
+        }
+    }
+}
+
+fn parse_time_bound_caveat(caveat: &CaveatDocument) -> std::result::Result<VerifiedWebOfTrustCaveat, String> {
+    let not_after_seconds = parse_ascii_u64(caveat.payload.as_slice(), "time bound not_after_seconds")?;
+    Ok(VerifiedWebOfTrustCaveat::TimeBound { not_after_seconds })
+}
+
+fn parse_rate_limit_caveat(caveat: &CaveatDocument) -> std::result::Result<VerifiedWebOfTrustCaveat, String> {
+    let payload = std::str::from_utf8(caveat.payload.as_slice())
+        .map_err(|_| "rate-limit caveat payload must be UTF-8 ASCII decimal max_count:window_seconds".to_owned())?;
+    let Some((max_count, window_seconds)) = payload.split_once(':') else {
+        return Err("rate-limit caveat payload must be max_count:window_seconds".to_owned());
+    };
+    if window_seconds.contains(':') {
+        return Err("rate-limit caveat payload must contain exactly one ':' delimiter".to_owned());
+    }
+    let max_count = parse_ascii_u64(max_count.as_bytes(), "rate-limit max_count")?;
+    let window_seconds = parse_ascii_u64(window_seconds.as_bytes(), "rate-limit window_seconds")?;
+    Ok(VerifiedWebOfTrustCaveat::RateLimit {
+        max_count,
+        window_seconds,
+    })
+}
+
+fn parse_ascii_u64(payload: &[u8], name: &str) -> std::result::Result<u64, String> {
+    if payload.is_empty() {
+        return Err(format!("{name} payload must not be empty"));
+    }
+    if !payload.iter().all(u8::is_ascii_digit) {
+        return Err(format!("{name} payload must be ASCII decimal"));
+    }
+    let text = std::str::from_utf8(payload).map_err(|_| format!("{name} payload must be ASCII decimal"))?;
+    text.parse::<u64>().map_err(|_| format!("{name} payload must fit in u64"))
 }
 
 pub struct InvocationRequest<'a> {
@@ -3195,11 +3342,13 @@ mod tests {
     use super::TokenResult;
     use super::TokenSigner;
     use super::TokenTimeBounds;
+    use super::TypedCaveatContext;
     use super::VerificationContext;
     use super::VerificationLimitError;
     use super::VerificationLimits;
     use super::VerificationTime;
     use super::VerifiedToken;
+    use super::VerifiedTypedCaveatPolicySet;
     use super::issue_token;
     use super::issue_token_with_signer;
     use super::parse_compact_token;
@@ -3457,6 +3606,107 @@ mod tests {
 
         assert!(matches!(unknown.denial_reason(), Some(AuthorizationDenialReason::CaveatPolicyMissing { .. })));
         assert!(matches!(reject.denial_reason(), Some(AuthorizationDenialReason::CaveatRejected { .. })));
+    }
+
+    #[test]
+    fn verified_typed_caveat_policy_allows_time_and_rate_limit_caveats() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let capability =
+            CapabilityDocument::with_caveats("did:key:z6Mkresource".to_owned(), "store/*".to_owned(), vec![
+                caveat("time", "before", "unix", b"2000"),
+                caveat("rate", "limit", "window", b"5:60"),
+            ])
+            .expect("capability should validate");
+        let token = issue_token(&IssueRequest::new(
+            issuer_key.clone(),
+            AudienceDid::from(audience),
+            CapabilitySet::new(vec![capability]).expect("capability set should validate"),
+            ProofCollection::empty(),
+            token_time_bounds(),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+        let policies = VerifiedTypedCaveatPolicySet::new(TypedCaveatContext::new(1_500, 5));
+
+        let decision = verified.authorize_with_policies("did:key:z6Mkresource/photos", "store/add", &policies);
+
+        assert!(decision.is_allowed());
+        assert_eq!(policies.context().now_seconds(), 1_500);
+        assert_eq!(policies.context().count_in_window(), 5);
+    }
+
+    #[test]
+    fn verified_typed_caveat_policy_denies_unsatisfied_caveats() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            caveat("time", "before", "unix", b"2000"),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+        let policies = VerifiedTypedCaveatPolicySet::new(TypedCaveatContext::new(2_001, 0));
+
+        let decision = verified.authorize_with_policies("did:key:z6Mkresource/photos", "store/add", &policies);
+
+        assert!(matches!(
+            decision.denial_reason(),
+            Some(AuthorizationDenialReason::CaveatRejected { message, .. })
+                if message == "typed caveat rejected by verified caveat semantics"
+        ));
+    }
+
+    #[test]
+    fn verified_typed_caveat_policy_denies_malformed_payloads() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            caveat("rate", "limit", "window", b"bad"),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+        let policies = VerifiedTypedCaveatPolicySet::new(TypedCaveatContext::new(1_500, 0));
+
+        let decision = verified.authorize_with_policies("did:key:z6Mkresource/photos", "store/add", &policies);
+
+        assert!(matches!(
+            decision.denial_reason(),
+            Some(AuthorizationDenialReason::CaveatRejected { message, .. })
+                if message == "rate-limit caveat payload must be max_count:window_seconds"
+        ));
+    }
+
+    #[test]
+    fn verified_typed_caveat_policy_does_not_satisfy_unknown_caveats() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            caveat("custom", "review", "ticket", b"123"),
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+        let policies = VerifiedTypedCaveatPolicySet::new(TypedCaveatContext::new(1_500, 0));
+
+        let decision = verified.authorize_with_policies("did:key:z6Mkresource/photos", "store/add", &policies);
+
+        assert!(matches!(
+            decision.denial_reason(),
+            Some(AuthorizationDenialReason::CaveatPolicyMissing { caveat })
+                if caveat.domain() == "custom" && caveat.caveat_type() == "review" && caveat.key() == "ticket"
+        ));
     }
 
     #[test]
