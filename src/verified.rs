@@ -104,6 +104,16 @@ pub struct TokenEnvelopeInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedChainEntry {
+    pub issuer_did: String,
+    pub audience_did: String,
+    pub capabilities: Vec<CapabilityDocument>,
+    pub expires_at_seconds: u64,
+    pub not_before_seconds: u64,
+    pub signature_valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedCapability {
     document: CapabilityDocument,
     ability_segments: Vec<Vec<u8>>,
@@ -267,6 +277,28 @@ pub fn proof_link_is_valid(parent_audience_did: &str, child_issuer_did: &str) ->
         },
     ];
     ucan_chain::check_chain_linked(&chain)
+}
+
+/// Check structural validity for caller-supplied resolved UCAN chain entries.
+///
+/// This is the shell bridge to verified-logic's composed structural chain
+/// checker. It checks finite issuer/audience linkage, caller-provided
+/// signature-valid flags, exact attenuation narrowing, and temporal validity.
+/// It does not perform proof resolution, cryptographic signature verification,
+/// DID/key lookup, revocation checks, caveat policy evaluation, wildcard
+/// containment replacement, networking, persistence, or ambient clock reads.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidCapability`] when any supplied
+/// capability fails core capability validation.
+pub fn structural_chain_is_valid(
+    entries: &[VerifiedChainEntry],
+    now_seconds: u64,
+    tolerance_seconds: u64,
+) -> VerifiedResult<bool> {
+    let chain = entries.iter().map(to_verified_chain_entry).collect::<VerifiedResult<Vec<_>>>()?;
+    Ok(ucan_chain::check_chain_structural_valid(&chain, now_seconds, tolerance_seconds))
 }
 
 /// Check whether a proof-reference byte string is present in a finite revocation list.
@@ -472,6 +504,23 @@ fn build_token_capabilities(documents: &[CapabilityDocument]) -> VerifiedResult<
     documents.iter().map(build_token_capability).collect()
 }
 
+fn to_chain_capability(document: &CapabilityDocument) -> VerifiedResult<(Vec<u8>, Vec<u8>)> {
+    validate_capability_document(document)?;
+    Ok((document.resource.as_bytes().to_vec(), document.ability.as_bytes().to_vec()))
+}
+
+fn to_verified_chain_entry(entry: &VerifiedChainEntry) -> VerifiedResult<ucan_chain::ChainEntry> {
+    let att = entry.capabilities.iter().map(to_chain_capability).collect::<VerifiedResult<Vec<_>>>()?;
+    Ok(ucan_chain::ChainEntry {
+        iss: entry.issuer_did.as_bytes().to_vec(),
+        aud: entry.audience_did.as_bytes().to_vec(),
+        att,
+        exp: entry.expires_at_seconds,
+        nbf: entry.not_before_seconds,
+        sig_valid: entry.signature_valid,
+    })
+}
+
 fn build_token_payload(envelope: &TokenEnvelopeInput) -> VerifiedResult<ucan_token::UcanPayload> {
     let capabilities = build_token_capabilities(envelope.capabilities.as_slice())?;
     Ok(ucan_token::UcanPayload {
@@ -549,6 +598,7 @@ mod tests {
     use super::TokenTimeWindow;
     use super::TokenValidationFailure;
     use super::VerifiedCapability;
+    use super::VerifiedChainEntry;
     use super::VerifiedPrimitiveError;
     use super::attenuation_chain_is_valid;
     use super::compose_time_window_chain;
@@ -560,6 +610,7 @@ mod tests {
     use super::receipt_execution_is_valid;
     use super::revocation_reference_is_listed;
     use super::sign_ed25519;
+    use super::structural_chain_is_valid;
     use super::token_needs_refresh;
     use super::token_time_valid;
     use super::validate_token_envelope;
@@ -696,6 +747,61 @@ mod tests {
 
         assert!(proof_link_is_valid(parent_audience, child_issuer));
         assert!(!proof_link_is_valid(parent_audience, wrong_child_issuer));
+    }
+
+    #[test]
+    fn structural_chain_uses_verified_chain_composition() {
+        let parent = chain_entry(
+            "did:key:z6Mkissuer",
+            "did:key:z6Mkdelegate",
+            VALID_RESOURCE,
+            VALID_ABILITY_CHILD,
+            100,
+            400,
+            true,
+        );
+        let child = chain_entry(
+            "did:key:z6Mkdelegate",
+            "did:key:z6Mkleaf",
+            VALID_RESOURCE_CHILD,
+            VALID_ABILITY_CHILD,
+            150,
+            350,
+            true,
+        );
+        let valid = structural_chain_is_valid(&[parent.clone(), child.clone()], 200, 0)
+            .expect("structural chain inputs should validate");
+
+        assert!(valid);
+
+        let broken_link = chain_entry(
+            "did:key:z6Mkwrong",
+            "did:key:z6Mkleaf",
+            VALID_RESOURCE_CHILD,
+            VALID_ABILITY_CHILD,
+            150,
+            350,
+            true,
+        );
+        let valid = structural_chain_is_valid(&[parent.clone(), broken_link], 200, 0)
+            .expect("structural chain inputs should validate");
+        assert!(!valid);
+
+        let ability_escalation = chain_entry(
+            "did:key:z6Mkdelegate",
+            "did:key:z6Mkleaf",
+            VALID_RESOURCE_CHILD,
+            VALID_ABILITY_OTHER_NAMESPACE,
+            150,
+            350,
+            true,
+        );
+        let valid = structural_chain_is_valid(&[parent, ability_escalation], 200, 0)
+            .expect("structural chain inputs should validate");
+        assert!(!valid);
+
+        let valid = structural_chain_is_valid(&[child], 500, 0).expect("structural chain inputs should validate");
+        assert!(!valid);
     }
 
     #[test]
@@ -836,5 +942,24 @@ mod tests {
 
     fn valid_capability(resource: &str, ability: &str) -> CapabilityDocument {
         CapabilityDocument::new(resource.to_owned(), ability.to_owned()).expect("capability fixture should validate")
+    }
+
+    fn chain_entry(
+        issuer_did: &str,
+        audience_did: &str,
+        resource: &str,
+        ability: &str,
+        not_before_seconds: u64,
+        expires_at_seconds: u64,
+        signature_valid: bool,
+    ) -> VerifiedChainEntry {
+        VerifiedChainEntry {
+            issuer_did: issuer_did.to_owned(),
+            audience_did: audience_did.to_owned(),
+            capabilities: vec![valid_capability(resource, ability)],
+            expires_at_seconds,
+            not_before_seconds,
+            signature_valid,
+        }
     }
 }
