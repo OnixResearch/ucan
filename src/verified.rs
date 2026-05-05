@@ -137,6 +137,13 @@ pub struct VerifiedInvocationChainRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedDidKey {
+    pub public_key_bytes: Vec<u8>,
+    pub codec: u64,
+    pub encoded: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifiedWebOfTrustAuthorization {
     Authorized,
     Denied,
@@ -658,6 +665,26 @@ pub fn encode_ed25519_did_key(public_key_bytes: &[u8]) -> VerifiedResult<Vec<u8>
     Ok(did_key.encoded)
 }
 
+/// Decode a `did:key` byte string through the verified DID-key decoder.
+///
+/// Returns decoded public-key bytes, the multicodec value, and the original
+/// encoded bytes when the supplied bytes satisfy the vendored structural
+/// decoder. Malformed prefixes, base58btc payloads, or multicodec structures
+/// return `None`.
+///
+/// This helper is a deterministic structural decoder only. It does not perform
+/// remote DID resolution, key lookup, cryptographic signature verification,
+/// trust-chain checks, proof fetching, file or network lookup,
+/// persistence, or ambient clock reads.
+#[must_use]
+pub fn decode_did_key(encoded: &[u8]) -> Option<VerifiedDidKey> {
+    ucan_did::decode_did_key(&encoded.to_vec()).map(|did_key| VerifiedDidKey {
+        public_key_bytes: did_key.public_key_bytes,
+        codec: did_key.codec,
+        encoded: did_key.encoded,
+    })
+}
+
 /// Derive an Ed25519 public key from a secret key.
 ///
 /// # Errors
@@ -910,6 +937,7 @@ mod tests {
     use super::VerifiedWebOfTrustUcanAuthorizationRequest;
     use super::attenuation_chain_is_valid;
     use super::compose_time_window_chain;
+    use super::decode_did_key;
     use super::derive_ed25519_public_key;
     use super::encode_ed25519_did_key;
     use super::invocation_chain_is_authorized;
@@ -1425,6 +1453,26 @@ mod tests {
         let did_key = encode_ed25519_did_key(&public_key).expect("public key should encode");
 
         assert!(did_key.starts_with(b"did:key:z"));
+    }
+
+    #[test]
+    fn decodes_did_key_with_verified_logic() {
+        let public_key = derive_ed25519_public_key(&[SIGNING_KEY_BYTE; ucan_signature::SECRET_KEY_LEN])
+            .expect("secret key should derive a public key");
+        let encoded = encode_ed25519_did_key(&public_key).expect("public key should encode");
+
+        let decoded = decode_did_key(&encoded).expect("encoded DID key should decode");
+
+        assert_eq!(decoded.public_key_bytes, public_key);
+        assert_eq!(decoded.codec, verified_logic::ucan_did::CODEC_ED25519);
+        assert_eq!(decoded.encoded, encoded);
+    }
+
+    #[test]
+    fn did_key_decoder_rejects_malformed_inputs() {
+        assert_eq!(decode_did_key(b"did:web:example"), None);
+        assert_eq!(decode_did_key(b"did:key:z0"), None);
+        assert_eq!(decode_did_key(b"did:key:z"), None);
     }
 
     #[test]

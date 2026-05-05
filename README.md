@@ -4,7 +4,7 @@
 
 - `crates/ucan-core`: `#![no_std]` functional core. Keep parsing, structural validation, and other deterministic UCAN logic here.
 - `ucan` (repo root): `std` shell. Keep file I/O, process integration, networking, clocks, crypto, and other side effects here.
-- `vendor/verified-logic`: vendored snapshot of the verified library used by the `std` shell for UCAN ability subsumption, attenuation checks, proof-chain issuer/audience linkage, proof-depth budget admission, finite revocation-set membership, concrete invocation admission, deterministic receipt executor/timestamp checks, token-time validation, Ed25519 signing/verification, and `did:key` encoding.
+- `vendor/verified-logic`: vendored snapshot of the verified library used by the `std` shell for UCAN ability subsumption, attenuation checks, proof-chain issuer/audience linkage, proof-depth budget admission, finite revocation-set membership, concrete invocation admission, deterministic receipt executor/timestamp checks, token-time validation, Ed25519 signing/verification, and `did:key` encoding/decoding.
 
 The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`. When a primitive needs verified semantics, the shell bridges validated core values into `verified-logic` instead of reimplementing the logic locally.
 
@@ -110,7 +110,7 @@ The verified result exposes the issuer, audience, direct capability set, direct 
 ## Support limits
 
 - Production-oriented issuance should use `TokenSigner` / `issue_token_with_signer`; `IssueRequest` remains as a compatibility wrapper around the in-memory Ed25519 signer path.
-- Supported DID methods: `did:key` for Ed25519 public keys.
+- Supported DID methods: `did:key` for Ed25519 public keys; `decode_did_key` is a structural byte decoder only and does not resolve DIDs or verify signatures.
 - Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
 - Proof-loading model: caller-supplied proof tokens only; the library does not fetch proofs from storage or the network.
 - Revocation model: caller-supplied `RevocationChecker` values can deny the leaf token or any proof-chain token by `ProofReference`; revocation registries, credential formats, replay stores, persistence, and remote fetches remain application-owned.
