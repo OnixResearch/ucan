@@ -35,6 +35,9 @@ let context = VerificationContext::new(
 );
 let verified = verify_compact_token(&token, &context)?;
 assert_eq!(verified.capabilities().as_slice().len(), 1);
+assert!(verified.authorize("did:key:z6Mkresource", "store/add").is_allowed());
+assert!(!verified.authorize("did:key:z6Mkresource", "admin/delete").is_allowed());
+assert!(!verified.authorize("did:key:z6Mkresource", "store/*").is_allowed());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -43,6 +46,13 @@ Run the same happy path as a normal example:
 ```bash
 cargo run --example issue_and_verify
 ```
+
+After `verify_compact_token` succeeds, use `VerifiedToken::authorize` or
+`VerifiedToken::authorize_request` to evaluate a concrete operation against the
+effective delegation only. Authorization decisions are structured: allowed
+decisions expose the matched effective capability, while denied decisions
+separate malformed requests (for example a requested ability containing a `*`
+segment) from requests with no matching effective capability.
 
 ## Proof-chain delegation
 

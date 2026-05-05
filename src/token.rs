@@ -31,6 +31,8 @@ const TOKEN_ALGORITHM_EDDSA: &str = "EdDSA";
 const REDACTED_SECRET_MATERIAL_DEBUG: &str = "<redacted>";
 const CAPABILITY_RESOURCE_FIELD: &str = "with";
 const CAPABILITY_ABILITY_FIELD: &str = "can";
+const ABILITY_SEGMENT_SEPARATOR: char = '/';
+const WILDCARD_ABILITY_SEGMENT: &str = "*";
 const PROOF_REFERENCE_DIGEST_LEN: usize = blake3::OUT_LEN;
 pub const ED25519_SECRET_KEY_BYTES: usize = verified_logic::ucan_signature::SECRET_KEY_LEN;
 pub const ED25519_PUBLIC_KEY_BYTES: usize = verified_logic::ucan_signature::PUBLIC_KEY_LEN;
@@ -343,6 +345,84 @@ impl CapabilitySet {
     #[must_use]
     pub fn into_vec(self) -> Vec<CapabilityDocument> {
         self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizationRequest {
+    capability: CapabilityDocument,
+}
+
+impl AuthorizationRequest {
+    /// Build a concrete authorization request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenError`] when the requested resource or ability is not a
+    /// valid capability input, or when the requested ability contains a wildcard
+    /// segment. Wildcards are valid in delegated capabilities, but not in a
+    /// concrete operation request.
+    pub fn new(resource: impl Into<String>, ability: impl Into<String>) -> TokenResult<Self> {
+        let capability =
+            CapabilityDocument::new(resource.into(), ability.into()).map_err(|error| TokenError::Capability {
+                message: error.to_string(),
+            })?;
+        if ability_has_wildcard_segment(capability.ability.as_str()) {
+            return Err(TokenError::Capability {
+                message: "authorization request ability must not contain wildcard segments".to_owned(),
+            });
+        }
+        Ok(Self { capability })
+    }
+
+    #[must_use]
+    pub const fn resource(&self) -> &str {
+        self.capability.resource.as_str()
+    }
+
+    #[must_use]
+    pub const fn ability(&self) -> &str {
+        self.capability.ability.as_str()
+    }
+
+    #[must_use]
+    pub const fn capability(&self) -> &CapabilityDocument {
+        &self.capability
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthorizationDenialReason {
+    MalformedRequest { message: String },
+    NoMatchingCapability,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthorizationDecision {
+    Allowed { matched_capability: CapabilityDocument },
+    Denied { reason: AuthorizationDenialReason },
+}
+
+impl AuthorizationDecision {
+    #[must_use]
+    pub const fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed { .. })
+    }
+
+    #[must_use]
+    pub const fn matched_capability(&self) -> Option<&CapabilityDocument> {
+        match self {
+            Self::Allowed { matched_capability } => Some(matched_capability),
+            Self::Denied { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn denial_reason(&self) -> Option<&AuthorizationDenialReason> {
+        match self {
+            Self::Allowed { .. } => None,
+            Self::Denied { reason } => Some(reason),
+        }
     }
 }
 
@@ -860,6 +940,54 @@ impl VerifiedToken {
     #[must_use]
     pub const fn effective_delegation(&self) -> &EffectiveDelegation {
         &self.effective
+    }
+
+    /// Authorize a concrete resource/ability pair against this token's effective delegation.
+    #[must_use]
+    pub fn authorize(&self, resource: &str, ability: &str) -> AuthorizationDecision {
+        match AuthorizationRequest::new(resource.to_owned(), ability.to_owned()) {
+            Ok(request) => self.authorize_request(&request),
+            Err(error) => AuthorizationDecision::Denied {
+                reason: AuthorizationDenialReason::MalformedRequest {
+                    message: error.to_string(),
+                },
+            },
+        }
+    }
+
+    /// Authorize a prevalidated concrete request against this token's effective delegation.
+    #[must_use]
+    pub fn authorize_request(&self, request: &AuthorizationRequest) -> AuthorizationDecision {
+        for capability in self.effective_delegation().capabilities().as_slice() {
+            let parent = match VerifiedCapability::from_document(capability.clone()) {
+                Ok(parent) => parent,
+                Err(error) => {
+                    return AuthorizationDecision::Denied {
+                        reason: AuthorizationDenialReason::MalformedRequest {
+                            message: error.to_string(),
+                        },
+                    };
+                }
+            };
+            let requested = match VerifiedCapability::from_document(request.capability().clone()) {
+                Ok(requested) => requested,
+                Err(error) => {
+                    return AuthorizationDecision::Denied {
+                        reason: AuthorizationDenialReason::MalformedRequest {
+                            message: error.to_string(),
+                        },
+                    };
+                }
+            };
+            if parent.contains(&requested) {
+                return AuthorizationDecision::Allowed {
+                    matched_capability: capability.clone(),
+                };
+            }
+        }
+        AuthorizationDecision::Denied {
+            reason: AuthorizationDenialReason::NoMatchingCapability,
+        }
     }
 }
 
@@ -1389,6 +1517,10 @@ fn validate_compact_token_string(token: &str) -> TokenResult<()> {
     Ok(())
 }
 
+fn ability_has_wildcard_segment(ability: &str) -> bool {
+    ability.split(ABILITY_SEGMENT_SEPARATOR).any(|segment| segment == WILDCARD_ABILITY_SEGMENT)
+}
+
 fn validate_header(header: &DecodedHeader) -> TokenResult<()> {
     if header.alg == TOKEN_ALGORITHM_EDDSA && header.typ == TOKEN_TYPE_JWT {
         return Ok(());
@@ -1491,6 +1623,9 @@ mod tests {
     use serde_json::Value;
 
     use super::AudienceDid;
+    use super::AuthorizationDecision;
+    use super::AuthorizationDenialReason;
+    use super::AuthorizationRequest;
     use super::CapabilitySet;
     use super::CompactToken;
     use super::Ed25519InMemorySigner;
@@ -1551,6 +1686,61 @@ mod tests {
         assert_eq!(verified.capabilities().as_slice().len(), 1);
         assert!(verified.proofs().as_slice().is_empty());
         assert_eq!(verified.effective_delegation().time_bounds().not_before_seconds(), TOKEN_NOT_BEFORE_SECONDS);
+    }
+
+    #[test]
+    fn verified_token_authorizes_matching_concrete_request() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+        let request = AuthorizationRequest::new("did:key:z6Mkresource/photos", "store/add")
+            .expect("concrete request should validate");
+
+        let decision = verified.authorize_request(&request);
+
+        assert!(decision.is_allowed());
+        assert_eq!(
+            decision.matched_capability().expect("match should be exposed"),
+            &CapabilityDocument::new("did:key:z6Mkresource".to_owned(), "store/*".to_owned())
+                .expect("capability should validate")
+        );
+    }
+
+    #[test]
+    fn verified_token_denies_unmatched_concrete_request() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+
+        let decision = verified.authorize("did:key:z6Mkresource/photos", "admin/delete");
+
+        assert_eq!(decision.denial_reason(), Some(&AuthorizationDenialReason::NoMatchingCapability));
+    }
+
+    #[test]
+    fn authorization_request_rejects_wildcard_ability_segments() {
+        let error = AuthorizationRequest::new("did:key:z6Mkresource/photos", "store/*")
+            .expect_err("operation request must be concrete");
+
+        assert!(matches!(error, TokenError::Capability { .. }));
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+
+        let decision = verified.authorize("did:key:z6Mkresource/photos", "store/*");
+
+        assert!(matches!(decision, AuthorizationDecision::Denied {
+            reason: AuthorizationDenialReason::MalformedRequest { .. }
+        }));
     }
 
     #[test]
