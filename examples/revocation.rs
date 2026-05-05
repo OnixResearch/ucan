@@ -7,6 +7,9 @@ use ucan::Ed25519InMemorySigner;
 use ucan::KeyResolutionContext;
 use ucan::NoRevocations;
 use ucan::ProofCollection;
+use ucan::ProofReference;
+use ucan::RevocationChecker;
+use ucan::RevocationError;
 use ucan::RevocationList;
 use ucan::TokenError;
 use ucan::TokenSigner;
@@ -29,6 +32,17 @@ const ROOT_RESOURCE_DID: &str = "did:key:z6Mkresource";
 const CHILD_RESOURCE_DID: &str = "did:key:z6Mkresource/photos";
 const ROOT_ABILITY: &str = "store/*";
 const CHILD_ABILITY: &str = "store/add";
+
+struct UnavailableRevocationBackend;
+
+impl RevocationChecker for UnavailableRevocationBackend {
+    fn is_revoked(&self, reference: &ProofReference) -> Result<bool, RevocationError> {
+        Err(RevocationError::Backend {
+            reference: reference.clone(),
+            message: "revocation store unavailable".to_owned(),
+        })
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let root = Ed25519InMemorySigner::from_seed_bytes([ROOT_KEY_BYTE; ED25519_SECRET_KEY_BYTES]);
@@ -80,6 +94,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     match error {
         TokenError::Revoked { reference } if reference == parent_reference => {
             println!("revoked parent proof denied: {reference}");
+        }
+        other => return Err(format!("unexpected verification error: {other}").into()),
+    }
+
+    let error = verify_compact_token_with_resolvers_and_revocations(
+        &child_token,
+        verification_time,
+        &keys,
+        &proofs,
+        &UnavailableRevocationBackend,
+        VerificationLimits::default(),
+    )
+    .expect_err("unavailable revocation backend must fail closed");
+
+    match error {
+        TokenError::Revocation {
+            source: RevocationError::Backend { reference, message },
+        } => {
+            println!("revocation backend failed closed for {reference}: {message}");
         }
         other => return Err(format!("unexpected verification error: {other}").into()),
     }
