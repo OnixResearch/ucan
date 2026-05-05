@@ -851,3 +851,124 @@ The library MUST expose a deterministic, data-only Web-of-Trust principal digest
 - GIVEN raw digest bytes and no caller-supplied Web-of-Trust evidence
 - WHEN the caller checks the bytes through the public verified bridge
 - THEN the helper only validates fixed-width digest admission and MUST NOT resolve identities, fetch or validate trust records, validate attestations, check revocation freshness, authorize UCANs, access storage or network backends, sign, replay-protect, or read an ambient clock
+
+### Requirement: Verified WOT evidence helper bridges [r[library.verified-wot-evidence-helpers]]
+
+The library MUST expose deterministic, finite, data-only Web-of-Trust evidence helper bridges only when each helper routes through an exact vendored verified-logic attestation, revocation, or trust-threshold primitive.
+
+#### Scenario: Attestation evidence helper uses vendored semantics [r[library.verified-wot-evidence-helpers.scenario.attestation-vendored-semantics]]
+
+- GIVEN caller-supplied public WOT attestation evidence fields and explicit validation inputs
+- WHEN the caller invokes a public attestation evidence helper
+- THEN the helper MUST route through the corresponding vendored `web_of_trust_attestation` primitive
+- AND semantic denial or malformed public evidence MUST be returned as a structured false/error outcome without panicking
+
+#### Scenario: Revocation evidence helper uses vendored semantics [r[library.verified-wot-evidence-helpers.scenario.revocation-vendored-semantics]]
+
+- GIVEN caller-supplied public WOT revocation and attestation evidence fields plus explicit time inputs
+- WHEN the caller invokes a public revocation evidence helper
+- THEN the helper MUST route through the corresponding vendored `web_of_trust_revocation` primitive
+- AND non-matching, inactive, or invalid public evidence MUST be returned as a structured false/error outcome without panicking
+
+#### Scenario: Evidence helpers preserve shell boundaries [r[library.verified-wot-evidence-helpers.scenario.boundary-preserved]]
+
+- GIVEN public WOT evidence bytes and no caller-supplied resolver, store, registry, signer, or clock
+- WHEN the caller invokes any WOT evidence helper
+- THEN the helper MUST NOT resolve identities, fetch proofs, fetch trust records, perform hidden registry freshness checks, access storage or network backends, sign, persist state, replay-protect, or read an ambient clock
+
+### Requirement: Verified typed caveat helper bridges [r[library.verified-typed-caveat-helpers]]
+
+The library MUST expose opt-in deterministic typed caveat helper bridges only for caveat semantics that route through exact vendored `ucan_caveat` primitives, while preserving caller-supplied shell caveat policy as the production authorization boundary.
+
+#### Scenario: Typed caveat helper admits supported context [r[library.verified-typed-caveat-helpers.scenario.supported-context]]
+
+- GIVEN a supported typed caveat and explicit caller-supplied context values
+- WHEN the caller invokes the public typed caveat helper
+- THEN the helper MUST route through the corresponding vendored `ucan_caveat` primitive
+- AND the helper MUST return the vendored semantic allow/deny outcome without panicking
+
+#### Scenario: Shell policy remains caller supplied [r[library.verified-typed-caveat-helpers.scenario.shell-policy-remains-caller-supplied]]
+
+- GIVEN a token containing opaque caveat payloads
+- WHEN the production shell verifies authorization with a caller-supplied caveat policy set
+- THEN verification MUST continue to require explicit caller policy acceptance
+- AND the typed caveat helpers MUST NOT automatically allow unknown or unsupported caveats
+
+#### Scenario: Typed caveat helpers preserve runtime boundaries [r[library.verified-typed-caveat-helpers.scenario.boundary-preserved]]
+
+- GIVEN typed caveat inputs and no caller-supplied backend or clock
+- WHEN any typed caveat helper runs
+- THEN the helper MUST NOT access storage, network, process-global registries, sign data, persist state, replay-protect, or read an ambient clock
+
+### Requirement: Verified proof traversal model [r[library.verified-proof-traversal-model]]
+
+The library MUST preserve the existing caller-injected proof traversal behavior while defining any future verified traversal bridge over finite resolved proof data rather than hidden resolver, proof-store, network, filesystem, or cryptographic side effects.
+
+#### Scenario: Resolved traversal model preserves success semantics [r[library.verified-proof-traversal-model.scenario.success-semantics]]
+
+- GIVEN a finite resolved proof chain whose references, parent-child issuer/audience links, temporal bounds, capability attenuation, and traversal budgets are valid
+- WHEN the shell routes matching traversal admission through a verified traversal bridge
+- THEN verification MUST still succeed for the same chain
+- AND the resulting effective delegation MUST match the shell's existing semantics
+
+#### Scenario: Resolved traversal model rejects unsafe traversal states [r[library.verified-proof-traversal-model.scenario.rejects-unsafe-states]]
+
+- GIVEN a finite resolved proof chain with a cycle, broken link, exceeded depth/count/input budget, malformed proof reference, or over-broad delegation
+- WHEN traversal admission is checked through a verified traversal model or documented shell fallback
+- THEN verification MUST fail with a structured traversal, proof-chain, limit, or attenuation error
+- AND the token MUST NOT be treated as authorized
+
+#### Scenario: Backend boundaries remain shell owned [r[library.verified-proof-traversal-model.scenario.backend-boundaries]]
+
+- GIVEN resolver, proof-store, revocation, parsing, or cryptographic signature failures from caller-injected shell dependencies
+- WHEN proof traversal verification runs
+- THEN those failures MUST remain fail-closed shell errors
+- AND the verified traversal model MUST NOT fetch proofs, resolve keys, verify signatures, access storage or network backends, persist state, replay-protect, or read an ambient clock
+
+### Requirement: Verified compact-token codec boundary [r[library.verified-compact-token-codec-boundary]]
+
+The library MUST distinguish future structural compact-token admission verification from trusted runtime codec, hash, and cryptographic boundaries, and MUST NOT claim base64url, serde JSON, BLAKE3, or Ed25519 internals are formally verified unless exact verified primitives are added.
+
+#### Scenario: Structural compact-token admission is explicit [r[library.verified-compact-token-codec-boundary.scenario.structural-admission]]
+
+- GIVEN malformed compact token strings with missing parts, extra parts, empty components, invalid encodings, or invalid JSON claims
+- WHEN the shell parses or verifies those strings
+- THEN it MUST return structured errors without panicking
+- AND any future verified helper MUST document which structural admission facts it proves
+
+#### Scenario: Signing input stability remains deterministic [r[library.verified-compact-token-codec-boundary.scenario.signing-input-stability]]
+
+- GIVEN validated public header and claims data
+- WHEN the shell constructs signing input or proof-reference bytes
+- THEN the operation MUST be deterministic for the same inputs
+- AND tests or future verified helpers MUST avoid printing compact UCAN token values, bearer values, signing secrets, private keys, or credential-like logs
+
+#### Scenario: Runtime trust boundaries are not hidden [r[library.verified-compact-token-codec-boundary.scenario.trust-boundaries]]
+
+- GIVEN compact-token verification that uses runtime codec, hash, and cryptographic libraries
+- WHEN documentation or guard scripts describe verification coverage
+- THEN they MUST state that codec/hash/crypto internals remain trusted boundaries unless replaced by exact verified primitives
+
+### Requirement: Caveat-preserving attenuation invariant [r[library.verified-caveat-preserving-attenuation]]
+
+The library MUST preserve the invariant that a child capability is authorized by a parent capability only when the same parent both contains the child resource/ability and has every opaque parent caveat preserved by the child capability.
+
+#### Scenario: Same parent supplies containment and caveat preservation [r[library.verified-caveat-preserving-attenuation.scenario.same-parent-required]]
+
+- GIVEN multiple parent capabilities where one parent contains the child resource/ability and another parent has matching caveats
+- WHEN the shell computes effective delegation for the child capability
+- THEN authorization MUST fail unless a single parent capability satisfies both containment and caveat-preservation requirements
+
+#### Scenario: Missing parent caveat is rejected [r[library.verified-caveat-preserving-attenuation.scenario.missing-caveat-rejected]]
+
+- GIVEN a parent capability with opaque caveats and a child capability that omits one or more of those caveats
+- WHEN the shell verifies delegation attenuation
+- THEN verification MUST fail with a structured attenuation or caveat-preservation error
+- AND the child token MUST NOT be treated as authorized
+
+#### Scenario: Future verified bridge must be exact [r[library.verified-caveat-preserving-attenuation.scenario.verified-bridge-exactness]]
+
+- GIVEN an implementation that claims caveat-preserving attenuation is routed through vendored verified-logic
+- WHEN bridge guards and documentation are checked
+- THEN they MUST show that the bridge enforces same-parent resource/ability containment plus opaque caveat preservation
+- AND the implementation MUST NOT replace the shell check with a non-equivalent helper

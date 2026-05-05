@@ -21,6 +21,12 @@ These helpers remain public as supporting APIs for advanced callers and tests, b
 - `Ed25519InMemorySigner`, `TokenSigner`, `SignerSignature`, `SignerError`, and `SignerResult`: signer-bound issuance primitives for callers that need explicit key-custody boundaries.
 - `derive_ed25519_public_key`, `encode_ed25519_did_key`, `decode_did_key`, `sign_ed25519`, and `verify_ed25519_signature`: low-level Ed25519 / structural `did:key` primitives used by the token workflow. `decode_did_key` returns public decoded bytes and codec through the vendored verifier; it does not perform DID resolution, key lookup, signature verification, trust checks, proof fetching, persistence, networking, or ambient clock reads.
 - `TokenEnvelopeInput`, `validate_token_envelope`, `token_time_valid`, `token_time_valid_at`, and `token_needs_refresh`: lower-level verified envelope and temporal helpers.
+- `typed_caveat_is_satisfied` and `typed_caveat_set_is_satisfied`: opt-in finite typed caveat helpers for callers that explicitly use `VerifiedWebOfTrustCaveat` and explicit context. These do not interpret arbitrary opaque shell `CaveatDocument` payloads or change `CaveatPolicySet` fail-closed behavior.
+- `web_of_trust_attestation_payload_bytes`, `web_of_trust_attestation_signature_is_valid`, `web_of_trust_attestation_is_active_at`, `web_of_trust_revocation_payload_bytes`, `web_of_trust_revocation_signature_is_valid`, `web_of_trust_revocation_matches_attestation`, `web_of_trust_revocation_is_effective_at`, and `web_of_trust_threshold_accepts`: lower-level finite WOT evidence and policy helpers. They operate on caller-supplied public evidence and explicit time, below `web_of_trust_ucan_authorization`, and do not resolve identities, fetch evidence, consult registries, sign, persist state, or read ambient clocks.
+
+## Verified boundary notes
+
+`docs/verified-boundaries.md` records the current audit. Compact-token codec/serde/signing-input construction, proof-reference hashing, recursive proof traversal, caller-injected resolver/proof-store/revocation backends, and opaque caveat-preserving attenuation remain shell-local tested boundaries unless a future vendored primitive models the exact same predicate.
 
 ## Secret material surface checklist
 

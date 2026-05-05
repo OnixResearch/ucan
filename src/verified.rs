@@ -14,6 +14,7 @@ use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
 use verified_logic::ucan_token;
 use verified_logic::web_of_trust_attestation;
+use verified_logic::web_of_trust_policy;
 use verified_logic::web_of_trust_principal;
 use verified_logic::web_of_trust_revocation;
 use verified_logic::web_of_trust_ucan_authorizer;
@@ -542,6 +543,198 @@ pub fn web_of_trust_principal_digest_is_valid(digest: &[u8]) -> bool {
     web_of_trust_principal::principal_id_from_digest_bytes(digest.to_vec()).is_some()
 }
 
+/// Check whether one typed caveat is satisfied by explicit caller-supplied context.
+///
+/// This is an opt-in data-only bridge for callers that choose the vendored typed
+/// caveat semantics. It does not interpret opaque shell caveat payloads, install
+/// default caveat policies, access storage/network backends, or read an ambient
+/// clock.
+#[must_use]
+pub fn typed_caveat_is_satisfied(caveat: &VerifiedWebOfTrustCaveat, context: &VerifiedWebOfTrustCaveatContext) -> bool {
+    let caveat = to_web_of_trust_caveat(caveat);
+    let context = to_web_of_trust_caveat_context(context);
+    ucan_caveat::caveat_satisfied(&caveat, &context)
+}
+
+/// Check whether every supplied typed caveat is satisfied by explicit context.
+///
+/// This helper is an opt-in bridge to the vendored finite caveat-set predicate.
+/// It does not replace shell-owned [`crate::token::CaveatPolicy`] evaluation or
+/// allow unknown opaque caveats by default.
+#[must_use]
+pub fn typed_caveat_set_is_satisfied(
+    caveats: &[VerifiedWebOfTrustCaveat],
+    context: &VerifiedWebOfTrustCaveatContext,
+) -> bool {
+    let caveats = caveats.iter().map(to_web_of_trust_caveat).collect::<Vec<_>>();
+    let context = to_web_of_trust_caveat_context(context);
+    ucan_caveat::caveat_set_satisfied(&caveats, &context)
+}
+
+/// Return canonical payload bytes for caller-supplied public WOT attestation evidence.
+///
+/// This deterministic helper delegates to the vendored WOT attestation payload
+/// primitive. It constructs public payload bytes only; it does not sign, resolve
+/// identities, fetch evidence, persist state, or read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when a
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_attestation_payload_bytes(
+    attestation: &VerifiedWebOfTrustAttestation,
+) -> VerifiedResult<Option<Vec<u8>>> {
+    let attestation = to_web_of_trust_attestation(attestation)?;
+    Ok(web_of_trust_attestation::attestation_payload_bytes(&attestation))
+}
+
+/// Check the vendored signature-valid predicate for public WOT attestation evidence.
+///
+/// This checks the deterministic public evidence fields and provided signature
+/// bytes against the vendored facade. It does not derive keys, sign, fetch
+/// evidence, or replace aggregate WOT UCAN authorization.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when a
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_attestation_signature_is_valid(
+    attestation: &VerifiedWebOfTrustAttestation,
+) -> VerifiedResult<bool> {
+    let attestation = to_web_of_trust_attestation(attestation)?;
+    Ok(web_of_trust_attestation::attestation_signature_valid(&attestation))
+}
+
+/// Check whether public WOT attestation evidence is active at an explicit time.
+///
+/// This helper delegates to vendored WOT attestation semantics over finite
+/// caller-supplied revocations. It does not fetch revocations or read an ambient
+/// clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when any
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_attestation_is_active_at(
+    attestation: &VerifiedWebOfTrustAttestation,
+    revocations: &[VerifiedWebOfTrustRevocation],
+    time_seconds: u64,
+) -> VerifiedResult<bool> {
+    let attestation = to_web_of_trust_attestation(attestation)?;
+    let revocations = revocations.iter().map(to_web_of_trust_revocation).collect::<VerifiedResult<Vec<_>>>()?;
+    Ok(web_of_trust_attestation::attestation_active_at(&attestation, &revocations, time_seconds))
+}
+
+/// Return canonical payload bytes for caller-supplied public WOT revocation evidence.
+///
+/// This deterministic helper delegates to the vendored WOT revocation payload
+/// primitive. It constructs public payload bytes only; it does not sign, fetch
+/// evidence, persist state, or read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when a
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_revocation_payload_bytes(
+    revocation: &VerifiedWebOfTrustRevocation,
+) -> VerifiedResult<Option<Vec<u8>>> {
+    let revocation = to_web_of_trust_revocation(revocation)?;
+    Ok(web_of_trust_revocation::revocation_payload_bytes(&revocation))
+}
+
+/// Check the vendored signature-valid predicate for public WOT revocation evidence.
+///
+/// This checks deterministic public evidence fields and provided signature bytes
+/// only. It does not resolve identities, sign, fetch registries, or replace
+/// aggregate WOT UCAN authorization.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when a
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_revocation_signature_is_valid(revocation: &VerifiedWebOfTrustRevocation) -> VerifiedResult<bool> {
+    let revocation = to_web_of_trust_revocation(revocation)?;
+    Ok(web_of_trust_revocation::revocation_signature_valid(&revocation))
+}
+
+/// Check whether public WOT revocation evidence matches public attestation evidence.
+///
+/// This helper delegates to the vendored exact/family target matching predicate
+/// over finite caller-supplied evidence. It does not fetch evidence or check
+/// registry freshness.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when any
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_revocation_matches_attestation(
+    revocation: &VerifiedWebOfTrustRevocation,
+    attestation: &VerifiedWebOfTrustAttestation,
+) -> VerifiedResult<bool> {
+    let revocation = to_web_of_trust_revocation(revocation)?;
+    let attestation = to_web_of_trust_attestation(attestation)?;
+    Ok(web_of_trust_revocation::revocation_matches(&revocation, &attestation))
+}
+
+/// Check whether public WOT revocation evidence is effective for an attestation at an explicit
+/// time.
+///
+/// This helper delegates to the vendored composed revocation predicate over
+/// finite caller-supplied evidence. It does not fetch revocations, consult a
+/// registry, or read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when any
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_revocation_is_effective_at(
+    revocation: &VerifiedWebOfTrustRevocation,
+    attestation: &VerifiedWebOfTrustAttestation,
+    time_seconds: u64,
+) -> VerifiedResult<bool> {
+    let revocation = to_web_of_trust_revocation(revocation)?;
+    let attestation = to_web_of_trust_attestation(attestation)?;
+    Ok(web_of_trust_revocation::revocation_effective_at(&revocation, &attestation, time_seconds))
+}
+
+/// Check whether finite WOT evidence reaches a trust threshold for a subject.
+///
+/// This is an advanced data-only bridge to vendored WOT policy semantics. It
+/// consumes already-materialized public roots, attestations, revocations,
+/// subject digest, threshold, depth, and time. It does not resolve identities,
+/// fetch trust records, check registry freshness, or authorize a UCAN envelope.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when any
+/// supplied WOT principal digest is not full width.
+pub fn web_of_trust_threshold_accepts(
+    root_principal_digests: &[Vec<u8>],
+    attestations: &[VerifiedWebOfTrustAttestation],
+    revocations: &[VerifiedWebOfTrustRevocation],
+    subject_principal_digest: &[u8],
+    threshold: usize,
+    depth: usize,
+    time_seconds: u64,
+) -> VerifiedResult<bool> {
+    let roots = root_principal_digests
+        .iter()
+        .map(|digest| build_web_of_trust_principal(digest.as_slice()))
+        .collect::<VerifiedResult<Vec<_>>>()?;
+    let attestations = attestations.iter().map(to_web_of_trust_attestation).collect::<VerifiedResult<Vec<_>>>()?;
+    let revocations = revocations.iter().map(to_web_of_trust_revocation).collect::<VerifiedResult<Vec<_>>>()?;
+    let subject = build_web_of_trust_principal(subject_principal_digest)?;
+    Ok(web_of_trust_policy::threshold_accepts(
+        &roots,
+        &attestations,
+        &revocations,
+        &subject,
+        threshold,
+        depth,
+        time_seconds,
+    ))
+}
+
 /// Authorize a UCAN token envelope with caller-supplied Web-of-Trust evidence.
 ///
 /// This is the shell bridge to verified-logic's Web-of-Trust UCAN authorizer.
@@ -576,10 +769,7 @@ pub fn web_of_trust_ucan_authorization(
     let revocations = request.revocations.iter().map(to_web_of_trust_revocation).collect::<VerifiedResult<Vec<_>>>()?;
     let subject = build_web_of_trust_principal(request.subject_principal_digest.as_slice())?;
     let active_caveats = request.active_caveats.iter().map(to_web_of_trust_caveat).collect::<Vec<_>>();
-    let caveat_context = ucan_caveat::CaveatContext {
-        now: request.caveat_context.now_seconds,
-        count_in_window: request.caveat_context.count_in_window,
-    };
+    let caveat_context = to_web_of_trust_caveat_context(&request.caveat_context);
 
     let decision = web_of_trust_ucan_authorizer::web_of_trust_ucan_authorizer(
         &payload,
@@ -895,6 +1085,13 @@ const fn to_web_of_trust_caveat(caveat: &VerifiedWebOfTrustCaveat) -> ucan_cavea
     }
 }
 
+const fn to_web_of_trust_caveat_context(context: &VerifiedWebOfTrustCaveatContext) -> ucan_caveat::CaveatContext {
+    ucan_caveat::CaveatContext {
+        now: context.now_seconds,
+        count_in_window: context.count_in_window,
+    }
+}
+
 fn to_web_of_trust_attestation(
     attestation: &VerifiedWebOfTrustAttestation,
 ) -> VerifiedResult<web_of_trust_attestation::Attestation> {
@@ -1021,10 +1218,20 @@ mod tests {
     use super::structural_chain_not_revoked_is_valid;
     use super::token_needs_refresh;
     use super::token_time_valid;
+    use super::typed_caveat_is_satisfied;
+    use super::typed_caveat_set_is_satisfied;
     use super::validate_token_envelope;
     use super::verify_ed25519_signature;
+    use super::web_of_trust_attestation_is_active_at;
+    use super::web_of_trust_attestation_payload_bytes;
+    use super::web_of_trust_attestation_signature_is_valid;
     use super::web_of_trust_principal_digest;
     use super::web_of_trust_principal_digest_is_valid;
+    use super::web_of_trust_revocation_is_effective_at;
+    use super::web_of_trust_revocation_matches_attestation;
+    use super::web_of_trust_revocation_payload_bytes;
+    use super::web_of_trust_revocation_signature_is_valid;
+    use super::web_of_trust_threshold_accepts;
     use super::web_of_trust_ucan_authorization;
     use crate::shell::CapabilityDocument;
 
@@ -1414,6 +1621,98 @@ mod tests {
         assert!(web_of_trust_principal_digest_is_valid(&digest));
         assert!(!web_of_trust_principal_digest_is_valid(&short));
         assert!(!web_of_trust_principal_digest_is_valid(&long));
+    }
+
+    #[test]
+    fn typed_caveat_helpers_use_verified_caveat_semantics() {
+        let context = VerifiedWebOfTrustCaveatContext {
+            now_seconds: 5,
+            count_in_window: 2,
+        };
+        let active = VerifiedWebOfTrustCaveat::TimeBound { not_after_seconds: 10 };
+        let expired = VerifiedWebOfTrustCaveat::TimeBound { not_after_seconds: 4 };
+        let rate_limit = VerifiedWebOfTrustCaveat::RateLimit {
+            max_count: 3,
+            window_seconds: 60,
+        };
+        let exceeded_rate_limit = VerifiedWebOfTrustCaveat::RateLimit {
+            max_count: 1,
+            window_seconds: 60,
+        };
+
+        assert!(typed_caveat_is_satisfied(&active, &context));
+        assert!(!typed_caveat_is_satisfied(&expired, &context));
+        assert!(typed_caveat_set_is_satisfied(&[active, rate_limit], &context));
+        assert!(!typed_caveat_set_is_satisfied(&[exceeded_rate_limit], &context));
+    }
+
+    #[test]
+    fn web_of_trust_evidence_helpers_route_to_verified_primitives() {
+        let root_key = vec![1, 2, 3];
+        let subject_key = vec![7, 8, 9];
+        let attestation = signed_wot_attestation(root_key.clone(), subject_key.clone(), 1, 0, 20, 1);
+        let revocation = signed_wot_family_revocation(root_key.clone(), subject_key.clone(), 1, 5);
+
+        let attestation_payload = web_of_trust_attestation_payload_bytes(&attestation)
+            .expect("attestation input should validate")
+            .expect("valid attestation payload should encode");
+        assert!(!attestation_payload.is_empty());
+        assert_eq!(
+            web_of_trust_attestation_payload_bytes(&attestation)
+                .expect("attestation input should validate")
+                .expect("valid attestation payload should encode"),
+            attestation_payload
+        );
+        assert!(web_of_trust_attestation_signature_is_valid(&attestation).expect("attestation input should validate"));
+        assert!(
+            web_of_trust_attestation_is_active_at(&attestation, &[], 4).expect("attestation input should validate")
+        );
+        assert!(
+            !web_of_trust_attestation_is_active_at(&attestation, std::slice::from_ref(&revocation), 6)
+                .expect("revocation input should validate")
+        );
+
+        let revocation_payload = web_of_trust_revocation_payload_bytes(&revocation)
+            .expect("revocation input should validate")
+            .expect("valid revocation payload should encode");
+        assert!(!revocation_payload.is_empty());
+        assert_eq!(
+            web_of_trust_revocation_payload_bytes(&revocation)
+                .expect("revocation input should validate")
+                .expect("valid revocation payload should encode"),
+            revocation_payload
+        );
+        assert!(web_of_trust_revocation_signature_is_valid(&revocation).expect("revocation input should validate"));
+        assert!(
+            web_of_trust_revocation_matches_attestation(&revocation, &attestation)
+                .expect("evidence input should validate")
+        );
+        assert!(
+            web_of_trust_revocation_is_effective_at(&revocation, &attestation, 5)
+                .expect("evidence input should validate")
+        );
+        assert!(
+            !web_of_trust_revocation_is_effective_at(&revocation, &attestation, 4)
+                .expect("evidence input should validate")
+        );
+
+        let threshold = web_of_trust_threshold_accepts(
+            &[principal_digest(&root_key)],
+            std::slice::from_ref(&attestation),
+            &[],
+            &principal_digest(&subject_key),
+            1,
+            1,
+            4,
+        )
+        .expect("threshold evidence should validate");
+        assert!(threshold);
+
+        let mut invalid_digest = attestation;
+        invalid_digest.subject_digest = vec![1, 2, 3];
+        let error =
+            web_of_trust_attestation_signature_is_valid(&invalid_digest).expect_err("short digest should reject");
+        assert_eq!(error, VerifiedPrimitiveError::InvalidPrincipalDigestLength { actual: 3 });
     }
 
     #[test]

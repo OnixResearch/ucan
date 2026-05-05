@@ -3476,6 +3476,38 @@ mod tests {
     }
 
     #[test]
+    fn compact_codec_boundary_rejects_invalid_base64_and_json() {
+        let invalid_base64 =
+            CompactToken::new("not_base64.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
+        let base64_error = parse_compact_token(&invalid_base64).expect_err("header base64 should reject");
+        assert!(matches!(base64_error, TokenError::Base64Decode {
+            part: super::CompactPart::Header,
+            ..
+        }));
+
+        let invalid_json = CompactToken::new("bm90LWpzb24.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
+        let json_error = parse_compact_token(&invalid_json).expect_err("header JSON should reject");
+        assert!(matches!(json_error, TokenError::JsonDecode {
+            part: super::CompactPart::Header,
+            ..
+        }));
+    }
+
+    #[test]
+    fn compact_signing_input_and_proof_reference_are_stable_boundary_values() {
+        let header = "encoded-header";
+        let payload = "encoded-payload";
+        assert_eq!(super::signing_input(header, payload), "encoded-header.encoded-payload");
+
+        let token = CompactToken::new(super::join_compact_parts(header, payload, "encoded-signature"))
+            .expect("joined compact token should wrap");
+        let first_reference = super::proof_reference_for_token(&token);
+        let second_reference = super::proof_reference_for_token(&token);
+        assert_eq!(first_reference, second_reference);
+        assert_eq!(first_reference.as_bytes().len(), blake3::OUT_LEN);
+    }
+
+    #[test]
     fn missing_required_claim_returns_core_error() {
         let token = token_with_payload(r#"{"aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#);
         let decoded = parse_compact_token(&token).expect("token should decode");
@@ -3634,6 +3666,33 @@ mod tests {
 
         assert!(matches!(missing_error, TokenError::Attenuation { .. }));
         assert_eq!(verified.effective_delegation().capabilities().as_slice()[0].caveats.len(), 1);
+    }
+
+    #[test]
+    fn child_cannot_satisfy_parent_caveat_with_unrelated_caveat_payload() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let required_caveat = caveat("time", "before", "unix", b"2000");
+        let unrelated_caveat = caveat("time", "before", "unix", b"1999");
+        let parent = issue_token(&issue_request_with_caveat(
+            &parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+            required_caveat,
+        ))
+        .expect("parent should issue");
+        let child = issue_token(&child_request_with_caveat(&child_key, parent.clone(), unrelated_caveat))
+            .expect("child should issue");
+        let context = verification_context(
+            vec![&parent_key, &child_key],
+            ProofCollection::from_tokens(vec![parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+        let error = verify_compact_token(&child, &context)
+            .expect_err("child with unrelated caveat payload should fail attenuation");
+
+        assert!(matches!(error, TokenError::Attenuation { .. }));
     }
 
     #[test]

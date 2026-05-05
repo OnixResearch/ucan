@@ -4,7 +4,7 @@
 
 - `crates/ucan-core`: `#![no_std]` functional core. Keep parsing, structural validation, and other deterministic UCAN logic here.
 - `ucan` (repo root): `std` shell. Keep file I/O, process integration, networking, clocks, crypto, and other side effects here.
-- `vendor/verified-logic`: vendored snapshot of the verified library used by the `std` shell for UCAN ability subsumption, attenuation checks, exact finite capability-set authorization, proof-chain issuer/audience linkage, proof-depth budget admission, finite revocation-set membership, concrete invocation admission, deterministic receipt executor/timestamp checks, Web-of-Trust principal digest derivation/admission and authorization, token-time validation, Ed25519 signing/verification, and `did:key` encoding/decoding.
+- `vendor/verified-logic`: vendored snapshot of the verified library used by the `std` shell for UCAN ability subsumption, attenuation checks, exact finite capability-set authorization, proof-chain issuer/audience linkage, proof-depth budget admission, finite revocation-set membership, concrete invocation admission, deterministic receipt executor/timestamp checks, finite typed caveat helpers, Web-of-Trust principal digest derivation/admission, WOT evidence/policy helpers, WOT UCAN authorization, token-time validation, Ed25519 signing/verification, and `did:key` encoding/decoding.
 
 The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`. When a primitive needs verified semantics, the shell bridges validated core values into `verified-logic` instead of reimplementing the logic locally.
 
@@ -82,6 +82,10 @@ requested ability containing a `*` segment), missing caveat policies, rejected
 caveats, and requests with no matching effective capability. Caveats are opaque
 domain/type/key/payload records preserved in `ucan-core` and evaluated in the
 shell through caller-supplied `CaveatPolicySet`; unknown caveats fail closed.
+For callers that explicitly adopt the vendored typed WOT caveat vocabulary,
+`typed_caveat_is_satisfied` and `typed_caveat_set_is_satisfied` expose finite
+time-bound and rate/count-window predicates over caller-supplied context without
+installing default caveat policies or changing opaque shell caveat behavior.
 
 For invocation-shaped checks, `verify_invocation` first verifies the compact
 token, then authorizes the requested resource/ability with the supplied caveat
@@ -97,7 +101,7 @@ cargo run --example invocation
 
 Proof material is explicit. A child token carries BLAKE3 proof references in `prf`; callers may keep using `ProofCollection`, or inject their own synchronous `ProofStore` with `verify_compact_token_with_resolvers`. Verification checks each parent signature, proof-depth budget admission through `proof_depth_within_budget`, issuer/audience linkage through the `proof_link_is_valid` verified-chain bridge, temporal narrowing, capability attenuation, and self-delegation rejection before returning the effective delegation constraints. Advanced callers that already have resolved public chain fields can use `VerifiedChainEntry` plus `structural_chain_is_valid` to run the vendored structural chain composition checker over issuer/audience linkage, caller-provided signature-valid flags, exact attenuation narrowing, and temporal validity. If they also have aligned proof-reference bytes and finite revoked-reference bytes, `structural_chain_not_revoked_is_valid` runs the vendored composed non-revoked-chain checker over the same structural data plus reference-count alignment and finite revocation-set non-membership. For caller-owned finite capability sets, `capability_set_authorizes` runs the vendored capability-set authorizer with resource byte-prefix refinement and exact ability equality; it is not wildcard subsumption and does not replace shell token/effective-delegation authorization. For resolved concrete invocations, `VerifiedInvocationChainRequest` plus `invocation_chain_is_authorized` additionally checks explicit authorization-reference binding to the chain leaf, leaf capability index admission, invoker/audience equality, resource refinement, and ability equality through the vendored invocation-chain checker. For finite Web-of-Trust authorization data, `web_of_trust_principal_digest` derives fixed-width public principal bytes and `web_of_trust_principal_digest_is_valid` admits raw digest bytes through vendored verified-logic for caller-supplied WOT inputs; `VerifiedWebOfTrustUcanAuthorizationRequest` plus `web_of_trust_ucan_authorization` composes the vendored token, caveat, DID/CID link, threshold trust-chain, and revocation-aware Web-of-Trust UCAN authorizer into an explicit allow/deny decision over caller-supplied public facts. These are focused bridges, not proof resolution, compact-token verification, DID/CID decoding, cryptography, revocation backend/freshness checks, caveat policy evaluation, wildcard containment replacement, networking, persistence, replay checks, or ambient clock behavior.
 
-`KeyResolver`, `ProofStore`, and `RevocationChecker` are std-shell injection points only: the crate does not provide built-in HTTP, IPFS, database, filesystem, registry, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, `ProofCollection` implements `ProofStore`, and `RevocationList` implements `RevocationChecker` for deterministic in-memory verification; `RevocationList` denial membership and duplicate insertion admission use the verified revocation-set bridge over caller-provided proof-reference bytes. Use `verify_compact_token_with_resolvers_and_revocations` when the application has revocation state; it checks the leaf token and every recursively resolved proof token by `ProofReference` before verification can succeed, and `RevocationError` backend failures fail closed as `TokenError::Revocation`. `VerificationLimits::default()` bounds recursion with visible defaults for maximum proof depth, maximum resolved proof count, and maximum serialized compact-token byte length; use `VerificationContext::with_limits` or `verify_compact_token_with_resolvers` to override them. To reject oversized caller input before constructing a `CompactToken`, call `verify_compact_token_str`.
+`KeyResolver`, `ProofStore`, and `RevocationChecker` are std-shell injection points only: the crate does not provide built-in HTTP, IPFS, database, filesystem, registry, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, `ProofCollection` implements `ProofStore`, and `RevocationList` implements `RevocationChecker` for deterministic in-memory verification; `RevocationList` denial membership and duplicate insertion admission use the verified revocation-set bridge over caller-provided proof-reference bytes. Use `verify_compact_token_with_resolvers_and_revocations` when the application has revocation state; it checks the leaf token and every recursively resolved proof token by `ProofReference` before verification can succeed, and `RevocationError` backend failures fail closed as `TokenError::Revocation`. `VerificationLimits::default()` bounds recursion with visible defaults for maximum proof depth, maximum resolved proof count, and maximum serialized compact-token byte length; use `VerificationContext::with_limits` or `verify_compact_token_with_resolvers` to override them. To reject oversized caller input before constructing a `CompactToken`, call `verify_compact_token_str`. Recursive proof traversal, compact-token codec/serde/signing-input construction, BLAKE3 proof-reference derivation, and opaque caveat-preserving attenuation remain shell-local tested boundaries unless a future vendored primitive models the exact runtime predicate; see `docs/verified-boundaries.md` for the audit record.
 
 ```bash
 cargo run --example proof_chain
@@ -106,6 +110,15 @@ cargo run --example revocation
 ```
 
 The verified result exposes the issuer, audience, direct capability set, direct proof list, and effective delegation window/capabilities so callers do not need to recompute chain constraints.
+
+Advanced WOT integrations can use `web_of_trust_attestation_payload_bytes`,
+`web_of_trust_attestation_signature_is_valid`, `web_of_trust_attestation_is_active_at`,
+`web_of_trust_revocation_payload_bytes`, `web_of_trust_revocation_signature_is_valid`,
+`web_of_trust_revocation_matches_attestation`, `web_of_trust_revocation_is_effective_at`,
+and `web_of_trust_threshold_accepts` for finite public evidence checks. These are
+lower-level building blocks beneath `web_of_trust_ucan_authorization`; they do not
+resolve identities, fetch evidence, sign records, consult registries, persist state,
+or read ambient clocks.
 
 ## Support limits
 
