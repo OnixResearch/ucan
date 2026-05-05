@@ -833,6 +833,8 @@ pub mod type_lattice;
 pub mod type_unification;
 pub mod typed_state;
 pub mod ucan_ability;
+/// Verified UCAN backend operation transcript admission.
+pub mod ucan_backend_transcript;
 /// Verified UCAN capability merge from multiple delegation paths.
 pub mod ucan_capability_merge;
 pub mod ucan_caveat;

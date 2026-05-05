@@ -3,6 +3,7 @@ use core::fmt;
 use verified_logic::scope;
 use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
+use verified_logic::ucan_backend_transcript;
 use verified_logic::ucan_capability_merge;
 use verified_logic::ucan_caveat;
 use verified_logic::ucan_chain;
@@ -1022,6 +1023,64 @@ pub fn web_of_trust_ucan_authorization(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifiedBackendOperation {
+    KeyResolution,
+    ProofLoad,
+    Revocation,
+}
+
+impl VerifiedBackendOperation {
+    const fn as_verified_code(self) -> u8 {
+        match self {
+            Self::KeyResolution => ucan_backend_transcript::BACKEND_KEY_RESOLUTION,
+            Self::ProofLoad => ucan_backend_transcript::BACKEND_PROOF_LOAD,
+            Self::Revocation => ucan_backend_transcript::BACKEND_REVOCATION,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedBackendOperationFact {
+    pub operation: VerifiedBackendOperation,
+    pub succeeded: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedBackendTranscript {
+    pub operations: Vec<VerifiedBackendOperationFact>,
+}
+
+fn to_backend_transcript(transcript: &VerifiedBackendTranscript) -> ucan_backend_transcript::BackendTranscript {
+    ucan_backend_transcript::BackendTranscript {
+        operations: transcript
+            .operations
+            .iter()
+            .map(|operation| ucan_backend_transcript::BackendOperationFact {
+                operation: operation.operation.as_verified_code(),
+                succeeded: operation.succeeded,
+            })
+            .collect(),
+    }
+}
+
+#[must_use]
+pub fn backend_transcript_accepts(transcript: &VerifiedBackendTranscript) -> bool {
+    ucan_backend_transcript::backend_transcript_accepts(&to_backend_transcript(transcript))
+}
+
+#[must_use]
+pub fn backend_transcript_first_failed_operation(
+    transcript: &VerifiedBackendTranscript,
+) -> Option<VerifiedBackendOperation> {
+    match ucan_backend_transcript::first_failed_backend_operation(&to_backend_transcript(transcript)) {
+        ucan_backend_transcript::BACKEND_KEY_RESOLUTION => Some(VerifiedBackendOperation::KeyResolution),
+        ucan_backend_transcript::BACKEND_PROOF_LOAD => Some(VerifiedBackendOperation::ProofLoad),
+        ucan_backend_transcript::BACKEND_REVOCATION => Some(VerifiedBackendOperation::Revocation),
+        _ => None,
+    }
+}
+
 /// Check whether a proof-reference byte string is present in a finite revocation list.
 ///
 /// This is the shell bridge to verified-logic's finite revocation-set lookup. It
@@ -1483,6 +1542,9 @@ mod tests {
     use super::TokenEnvelopeInput;
     use super::TokenTimeWindow;
     use super::TokenValidationFailure;
+    use super::VerifiedBackendOperation;
+    use super::VerifiedBackendOperationFact;
+    use super::VerifiedBackendTranscript;
     use super::VerifiedCapability;
     use super::VerifiedChainEntry;
     use super::VerifiedCompactTokenEnvelope;
@@ -1503,6 +1565,8 @@ mod tests {
     use super::VerifiedWebOfTrustRevocation;
     use super::VerifiedWebOfTrustUcanAuthorizationRequest;
     use super::attenuation_chain_is_valid;
+    use super::backend_transcript_accepts;
+    use super::backend_transcript_first_failed_operation;
     use super::capability_set_authorizes;
     use super::compact_token_envelope_is_valid;
     use super::compose_time_window_chain;
@@ -1560,6 +1624,52 @@ mod tests {
     const INVALID_LENGTH_BYTES: usize = 1;
     const MESSAGE: &[u8] = b"ucan verified primitives";
     const WRONG_MESSAGE: &[u8] = b"wrong message";
+
+    #[test]
+    fn backend_transcript_accepts_successful_backend_operations() {
+        let transcript = VerifiedBackendTranscript {
+            operations: vec![
+                VerifiedBackendOperationFact {
+                    operation: VerifiedBackendOperation::Revocation,
+                    succeeded: true,
+                },
+                VerifiedBackendOperationFact {
+                    operation: VerifiedBackendOperation::KeyResolution,
+                    succeeded: true,
+                },
+                VerifiedBackendOperationFact {
+                    operation: VerifiedBackendOperation::ProofLoad,
+                    succeeded: true,
+                },
+            ],
+        };
+
+        assert!(backend_transcript_accepts(&transcript));
+        assert_eq!(backend_transcript_first_failed_operation(&transcript), None);
+    }
+
+    #[test]
+    fn backend_transcript_reports_first_failed_backend_operation() {
+        let transcript = VerifiedBackendTranscript {
+            operations: vec![
+                VerifiedBackendOperationFact {
+                    operation: VerifiedBackendOperation::Revocation,
+                    succeeded: true,
+                },
+                VerifiedBackendOperationFact {
+                    operation: VerifiedBackendOperation::ProofLoad,
+                    succeeded: false,
+                },
+                VerifiedBackendOperationFact {
+                    operation: VerifiedBackendOperation::KeyResolution,
+                    succeeded: false,
+                },
+            ],
+        };
+
+        assert!(!backend_transcript_accepts(&transcript));
+        assert_eq!(backend_transcript_first_failed_operation(&transcript), Some(VerifiedBackendOperation::ProofLoad));
+    }
 
     #[test]
     fn compact_token_envelope_uses_verified_framing() {

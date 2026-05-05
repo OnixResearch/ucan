@@ -17,6 +17,9 @@ use crate::shell::CaveatDocument;
 use crate::verified::TokenEnvelopeInput;
 use crate::verified::TokenTimeWindow;
 use crate::verified::TokenValidationFailure;
+use crate::verified::VerifiedBackendOperation;
+use crate::verified::VerifiedBackendOperationFact;
+use crate::verified::VerifiedBackendTranscript;
 use crate::verified::VerifiedCapability;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
@@ -25,6 +28,8 @@ use crate::verified::VerifiedProofTraversalBudget;
 use crate::verified::VerifiedProofTraversalDagTranscript;
 use crate::verified::VerifiedProofTraversalEntry;
 use crate::verified::VerifiedProofTraversalTarget;
+use crate::verified::backend_transcript_accepts;
+use crate::verified::backend_transcript_first_failed_operation;
 use crate::verified::compact_token_envelope_is_valid;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
@@ -169,6 +174,7 @@ pub enum TokenError {
     Temporal { message: String },
     SelfDelegation { did: String },
     ProofChain { message: String },
+    BackendTranscript { message: String },
     Attenuation { resource: String, ability: String },
     Signer { source: SignerError },
     VerifiedPrimitive { source: VerifiedPrimitiveError },
@@ -221,6 +227,7 @@ impl fmt::Display for TokenError {
             Self::Temporal { message } => write!(formatter, "temporal verification failed: {message}"),
             Self::SelfDelegation { did } => write!(formatter, "self-delegation rejected for {did}"),
             Self::ProofChain { message } => write!(formatter, "proof-chain verification failed: {message}"),
+            Self::BackendTranscript { message } => write!(formatter, "backend transcript rejected: {message}"),
             Self::Attenuation { resource, ability } => {
                 write!(formatter, "capability {resource} {ability} is not delegated by proofs")
             }
@@ -259,6 +266,7 @@ impl std::error::Error for TokenError {
             | Self::Temporal { .. }
             | Self::SelfDelegation { .. }
             | Self::ProofChain { .. }
+            | Self::BackendTranscript { .. }
             | Self::Attenuation { .. } => None,
         }
     }
@@ -2157,6 +2165,38 @@ where
     Ok(SignatureVerifiedToken { token })
 }
 
+fn verify_token_signature_with_traversal<R>(
+    token: StructurallyValidToken,
+    resolver: &R,
+    traversal: &mut VerificationTraversal,
+) -> TokenResult<SignatureVerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+{
+    let issuer = IssuerDid::new(token.claims.issuer_did().to_owned())?;
+    let public_key = match resolver.resolve_key(&issuer) {
+        Ok(public_key) => {
+            traversal.record_backend_operation(VerifiedBackendOperation::KeyResolution, true);
+            public_key
+        }
+        Err(source) => {
+            traversal.record_backend_operation(VerifiedBackendOperation::KeyResolution, false);
+            return Err(match source {
+                KeyResolverError::MissingKey { issuer } => TokenError::MissingVerificationKey { issuer },
+                source @ KeyResolverError::Backend { .. } => TokenError::KeyResolver { source },
+            });
+        }
+    };
+    let valid =
+        verify_ed25519_signature(public_key.as_bytes(), token.signing_input.as_slice(), token.signature.as_slice())?;
+    if !valid {
+        return Err(TokenError::Signature {
+            issuer: issuer.as_str().to_owned(),
+        });
+    }
+    Ok(SignatureVerifiedToken { token })
+}
+
 /// Verify a compact token from parse through authorization.
 ///
 /// # Errors
@@ -2220,7 +2260,18 @@ where
     V: RevocationChecker + ?Sized,
 {
     let mut traversal = VerificationTraversal::default();
-    verify_compact_token_with_traversal(token, time, key_resolver, proof_store, revocations, limits, &mut traversal, 0)
+    let verified = verify_compact_token_with_traversal(
+        token,
+        time,
+        key_resolver,
+        proof_store,
+        revocations,
+        limits,
+        &mut traversal,
+        0,
+    )?;
+    traversal.verify_backend_transcript_accepts()?;
+    Ok(verified)
 }
 
 fn verify_compact_token_with_traversal<R, S, V>(
@@ -2240,12 +2291,12 @@ where
 {
     enforce_proof_depth(depth, limits)?;
     enforce_compact_token_size(token.as_str(), limits)?;
-    reject_revoked_token(token, revocations)?;
+    reject_revoked_token(token, revocations, traversal)?;
     reject_cycle(token, traversal.trail.as_slice())?;
     traversal.trail.push(proof_reference_for_token(token));
     let decoded = parse_compact_token(token)?;
     let valid = validate_decoded_token(decoded)?;
-    let signed = verify_token_signature_with_resolver(valid, key_resolver)?;
+    let signed = verify_token_signature_with_traversal(valid, key_resolver, traversal)?;
     let verified =
         authorize_signed_token(signed, time, key_resolver, proof_store, revocations, limits, traversal, depth)?;
     let _removed = traversal.trail.pop();
@@ -2629,7 +2680,16 @@ where
     for reference in token.claims.proofs() {
         traversal.resolve_one_proof(limits)?;
         let reference = ProofReference::new(reference.as_bytes().to_vec());
-        let proof = proof_store.resolve_proof(&reference).map_err(|source| TokenError::ProofStore { source })?;
+        let proof = match proof_store.resolve_proof(&reference) {
+            Ok(proof) => {
+                traversal.record_backend_operation(VerifiedBackendOperation::ProofLoad, true);
+                proof
+            }
+            Err(source) => {
+                traversal.record_backend_operation(VerifiedBackendOperation::ProofLoad, false);
+                return Err(TokenError::ProofStore { source });
+            }
+        };
         enforce_compact_token_size(proof.as_str(), limits)?;
         proofs.push(proof);
     }
@@ -2712,9 +2772,32 @@ const fn claims_time_bounds(claims: &ucan_core::token::Claims) -> TokenResult<To
 struct VerificationTraversal {
     trail: Vec<ProofReference>,
     resolved_proofs: usize,
+    backend_operations: Vec<VerifiedBackendOperationFact>,
 }
 
 impl VerificationTraversal {
+    fn record_backend_operation(&mut self, operation: VerifiedBackendOperation, succeeded: bool) {
+        self.backend_operations.push(VerifiedBackendOperationFact { operation, succeeded });
+    }
+
+    fn verify_backend_transcript_accepts(&self) -> TokenResult<()> {
+        if self.backend_operations.is_empty() {
+            return Ok(());
+        }
+        let transcript = VerifiedBackendTranscript {
+            operations: self.backend_operations.clone(),
+        };
+        if !backend_transcript_accepts(&transcript) {
+            return Err(TokenError::BackendTranscript {
+                message: format!(
+                    "first failed operation: {:?}",
+                    backend_transcript_first_failed_operation(&transcript)
+                ),
+            });
+        }
+        Ok(())
+    }
+
     const fn resolve_one_proof(&mut self, limits: VerificationLimits) -> TokenResult<()> {
         let next_count = self.resolved_proofs.saturating_add(1);
         if next_count > limits.max_proof_count() {
@@ -2755,10 +2838,26 @@ const fn enforce_compact_token_size(token: &str, limits: VerificationLimits) -> 
     Ok(())
 }
 
-fn reject_revoked_token<V>(token: &CompactToken, revocations: &V) -> TokenResult<()>
-where V: RevocationChecker + ?Sized {
+fn reject_revoked_token<V>(
+    token: &CompactToken,
+    revocations: &V,
+    traversal: &mut VerificationTraversal,
+) -> TokenResult<()>
+where
+    V: RevocationChecker + ?Sized,
+{
     let reference = proof_reference_for_token(token);
-    if revocations.is_revoked(&reference).map_err(|source| TokenError::Revocation { source })? {
+    let revoked = match revocations.is_revoked(&reference) {
+        Ok(revoked) => {
+            traversal.record_backend_operation(VerifiedBackendOperation::Revocation, true);
+            revoked
+        }
+        Err(source) => {
+            traversal.record_backend_operation(VerifiedBackendOperation::Revocation, false);
+            return Err(TokenError::Revocation { source });
+        }
+    };
+    if revoked {
         return Err(TokenError::Revoked { reference });
     }
     Ok(())
@@ -3107,6 +3206,7 @@ mod tests {
     use super::proof_reference;
     use super::validate_decoded_token;
     use super::verify_compact_token;
+    use super::verify_compact_token_with_resolvers_and_revocations;
     use crate::shell::CapabilityDocument;
     use crate::shell::CaveatDocument;
 
@@ -3914,6 +4014,80 @@ mod tests {
         assert_eq!(transcript.parent_indices, vec![Vec::<usize>::new(), Vec::new(), vec![0, 1]]);
         assert_eq!(transcript.leaf_indices, vec![2]);
         assert!(transcript.total_input_bytes > 0);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct FailingRevocationChecker;
+
+    impl RevocationChecker for FailingRevocationChecker {
+        fn is_revoked(&self, reference: &ProofReference) -> std::result::Result<bool, RevocationError> {
+            Err(RevocationError::Backend {
+                reference: reference.clone(),
+                message: "fixture revocation backend unavailable".to_owned(),
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct FailingProofStore;
+
+    impl ProofStore for FailingProofStore {
+        fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+            Err(ProofStoreError::Backend {
+                reference: reference.clone(),
+                message: "fixture proof backend unavailable".to_owned(),
+            })
+        }
+    }
+
+    #[test]
+    fn revocation_backend_failure_fails_closed_before_authorization() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let keys = KeyResolutionContext::new(vec![
+            Ed25519VerificationKey::from_signing_key(&issuer_key).expect("verification key should derive"),
+        ]);
+
+        let error = verify_compact_token_with_resolvers_and_revocations(
+            &token,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &ProofCollection::empty(),
+            &FailingRevocationChecker,
+            VerificationLimits::default(),
+        )
+        .expect_err("revocation backend failure must deny");
+
+        assert!(matches!(error, TokenError::Revocation { .. }));
+    }
+
+    #[test]
+    fn proof_store_backend_failure_fails_closed_after_successful_revocation_and_key_resolution() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent)).expect("child should issue");
+        let keys = KeyResolutionContext::new(vec![
+            Ed25519VerificationKey::from_signing_key(&parent_key).expect("parent verification key should derive"),
+            Ed25519VerificationKey::from_signing_key(&child_key).expect("child verification key should derive"),
+        ]);
+
+        let error = verify_compact_token_with_resolvers_and_revocations(
+            &child,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &FailingProofStore,
+            &NoRevocations,
+            VerificationLimits::default(),
+        )
+        .expect_err("proof store backend failure must deny");
+
+        assert!(matches!(error, TokenError::ProofStore { .. }));
     }
 
     #[test]
