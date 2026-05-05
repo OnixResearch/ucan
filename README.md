@@ -4,7 +4,7 @@
 
 - `crates/ucan-core`: `#![no_std]` functional core. Keep parsing, structural validation, and other deterministic UCAN logic here.
 - `ucan` (repo root): `std` shell. Keep file I/O, process integration, networking, clocks, crypto, and other side effects here.
-- `vendor/verified-logic`: vendored snapshot of the verified library used by the `std` shell for UCAN ability subsumption, attenuation checks, proof-chain issuer/audience linkage, finite revocation-set membership, concrete invocation admission, token-time validation, Ed25519 signing/verification, and `did:key` encoding.
+- `vendor/verified-logic`: vendored snapshot of the verified library used by the `std` shell for UCAN ability subsumption, attenuation checks, proof-chain issuer/audience linkage, finite revocation-set membership, concrete invocation admission, deterministic receipt executor/timestamp checks, token-time validation, Ed25519 signing/verification, and `did:key` encoding.
 
 The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`. When a primitive needs verified semantics, the shell bridges validated core values into `verified-logic` instead of reimplementing the logic locally.
 
@@ -87,7 +87,7 @@ For invocation-shaped checks, `verify_invocation` first verifies the compact
 token, then authorizes the requested resource/ability with the supplied caveat
 policies and returns either `InvocationAllowed` context or a structured denial.
 
-Invocation verification composes token/proof verification, caveat-aware authorization, and effective constraints. For concrete matched capabilities, the admitted request is cross-checked through the `invocation_request_is_authorized` verified invocation bridge; wildcard matched capabilities continue to use `VerifiedCapability` containment so wildcard delegation and caveat-denial semantics are not weakened. Allowed invocation results expose the token audience as the invoker exercising the delegated capability.
+Invocation verification composes token/proof verification, caveat-aware authorization, and effective constraints. For concrete matched capabilities, the admitted request is cross-checked through the `invocation_request_is_authorized` verified invocation bridge; wildcard matched capabilities continue to use `VerifiedCapability` containment so wildcard delegation and caveat-denial semantics are not weakened. Allowed invocation results expose the token audience as the invoker exercising the delegated capability. For caller-owned receipt records, `receipt_execution_is_valid` exposes the verified receipt executor/timestamp check without adding receipt storage, replay tracking, signing, networking, or ambient clock reads.
 
 ```bash
 cargo run --example invocation

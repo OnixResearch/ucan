@@ -28,7 +28,7 @@ require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sig
 require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
 require_pattern 'use verified_logic::ucan_chain|proof_link_is_valid' src
 require_pattern 'use verified_logic::ucan_revocation|revocation_reference_is_listed' src
-require_pattern 'use verified_logic::ucan_invocation|invocation_request_is_authorized' src
+require_pattern 'use verified_logic::ucan_invocation|invocation_request_is_authorized|receipt_execution_is_valid|check_receipt_valid' src
 require_pattern 'use verified_logic::ucan_did|encode_ed25519_did_key' src
 require_pattern '\.is_concrete\(\)' src/token.rs
 require_pattern '\.has_wildcard_segment\(\)' src/verified.rs

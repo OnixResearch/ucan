@@ -306,6 +306,35 @@ pub fn invocation_request_is_authorized(
     )
 }
 
+/// Check deterministic invocation receipt execution fields.
+///
+/// This is the shell bridge to verified-logic's receipt-validity primitive. It
+/// checks only that the receipt executor matches the invocation invoker and that
+/// the receipt timestamp is not earlier than the invocation timestamp. It does
+/// not perform receipt signing, persistence, replay protection, output/error
+/// serialization, or ambient clock reads.
+#[must_use]
+pub fn receipt_execution_is_valid(
+    invocation_invoker_did: &str,
+    receipt_executor_did: &str,
+    invocation_timestamp_seconds: u64,
+    receipt_timestamp_seconds: u64,
+) -> bool {
+    let receipt = ucan_invocation::Receipt {
+        invocation: ucan_invocation::Invocation {
+            auth_cid: Vec::new(),
+            invoker: invocation_invoker_did.as_bytes().to_vec(),
+            resource: Vec::new(),
+            ability: Vec::new(),
+            timestamp: invocation_timestamp_seconds,
+        },
+        ran_by: receipt_executor_did.as_bytes().to_vec(),
+        result: ucan_invocation::InvocationResult::Ok { output: Vec::new() },
+        receipt_timestamp: receipt_timestamp_seconds,
+    };
+    ucan_invocation::check_receipt_valid(&receipt)
+}
+
 /// Validate a UCAN envelope using verified-logic's checked pipeline.
 ///
 /// # Errors
@@ -511,6 +540,7 @@ mod tests {
     use super::encode_ed25519_did_key;
     use super::invocation_request_is_authorized;
     use super::proof_link_is_valid;
+    use super::receipt_execution_is_valid;
     use super::revocation_reference_is_listed;
     use super::sign_ed25519;
     use super::token_needs_refresh;
@@ -695,6 +725,16 @@ mod tests {
             "did:key:z6Mkresource",
             "store/add",
         ));
+    }
+
+    #[test]
+    fn receipt_execution_uses_verified_receipt_semantics() {
+        let invoker = "did:key:z6Mkaudience";
+
+        assert!(receipt_execution_is_valid(invoker, invoker, 1_000, 1_000));
+        assert!(receipt_execution_is_valid(invoker, invoker, 1_000, 1_001));
+        assert!(!receipt_execution_is_valid(invoker, "did:key:z6Mkwrong", 1_000, 1_001));
+        assert!(!receipt_execution_is_valid(invoker, invoker, 1_001, 1_000));
     }
 
     #[test]

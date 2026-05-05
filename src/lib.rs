@@ -96,6 +96,7 @@ pub use verified::derive_ed25519_public_key;
 pub use verified::encode_ed25519_did_key;
 pub use verified::invocation_request_is_authorized;
 pub use verified::proof_link_is_valid;
+pub use verified::receipt_execution_is_valid;
 pub use verified::revocation_reference_is_listed;
 pub use verified::sign_ed25519;
 pub use verified::token_needs_refresh;
