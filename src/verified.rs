@@ -1126,7 +1126,9 @@ fn to_proof_traversal_capability(
     validate_capability_document(document)?;
     Ok(ucan_proof_traversal::TraversalCapability {
         resource: document.resource.as_bytes().to_vec(),
-        ability: document.ability.as_bytes().to_vec(),
+        ability: ucan_ability::Ability {
+            segments: collect_ability_segments(document.ability.as_str())?,
+        },
     })
 }
 
@@ -1158,7 +1160,9 @@ fn to_proof_traversal_transcript(
         total_input_bytes: transcript.total_input_bytes,
         target: ucan_proof_traversal::TraversalAuthorizationTarget {
             resource: transcript.target.resource.as_bytes().to_vec(),
-            ability: transcript.target.ability.as_bytes().to_vec(),
+            ability: ucan_ability::Ability {
+                segments: collect_ability_segments(transcript.target.ability.as_str())?,
+            },
             now: transcript.target.now_seconds,
             tolerance: transcript.target.tolerance_seconds,
         },

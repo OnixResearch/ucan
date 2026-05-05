@@ -8,12 +8,14 @@
 
 use vstd::prelude::*;
 
+use crate::ucan_ability;
+
 verus! {
 
 /// Capability entry carried in a resolved traversal transcript.
 pub struct TraversalCapability {
     pub resource: Vec<u8>,
-    pub ability: Vec<u8>,
+    pub ability: ucan_ability::Ability,
 }
 
 /// A resolved proof traversal entry supplied by the shell.
@@ -39,7 +41,7 @@ pub struct TraversalBudget {
 /// Requested authorization target for the leaf of a traversal transcript.
 pub struct TraversalAuthorizationTarget {
     pub resource: Vec<u8>,
-    pub ability: Vec<u8>,
+    pub ability: ucan_ability::Ability,
     pub now: u64,
     pub tolerance: u64,
 }
@@ -56,21 +58,21 @@ pub open spec fn bytes_equal_spec(a: Seq<u8>, b: Seq<u8>) -> bool {
     a =~= b
 }
 
-pub open spec fn cap_view(c: &TraversalCapability) -> (Seq<u8>, Seq<u8>) {
-    (c.resource@, c.ability@)
+pub open spec fn cap_view(c: &TraversalCapability) -> (Seq<u8>, Seq<Seq<u8>>) {
+    (c.resource@, c.ability.segments@.map_values(|s: Vec<u8>| s@))
 }
 
 // r[impl ucan-proof-traversal.capability-containment]
 pub open spec fn capability_contains_spec(parent: &TraversalCapability, child: &TraversalCapability) -> bool {
     child.resource@.len() >= parent.resource@.len()
     && child.resource@.subrange(0, parent.resource@.len() as int) =~= parent.resource@
-    && child.ability@ =~= parent.ability@
+    && ucan_ability::ability_contains_spec2(parent.ability, child.ability)
 }
 
 pub open spec fn capability_authorizes_spec(cap: &TraversalCapability, target: &TraversalAuthorizationTarget) -> bool {
     target.resource@.len() >= cap.resource@.len()
     && target.resource@.subrange(0, cap.resource@.len() as int) =~= cap.resource@
-    && target.ability@ =~= cap.ability@
+    && ucan_ability::ability_contains_spec2(cap.ability, target.ability)
 }
 
 pub open spec fn capability_set_contains_child_spec(parent: Seq<TraversalCapability>, child: &TraversalCapability) -> bool {
@@ -224,7 +226,7 @@ pub fn capability_contains(parent: &TraversalCapability, child: &TraversalCapabi
     if !resource_has_prefix(&child.resource, &parent.resource) {
         return false;
     }
-    if !bytes_equal(&child.ability, &parent.ability) {
+    if !ucan_ability::ability_subsumes(&parent.ability, &child.ability) {
         return false;
     }
     true
@@ -237,7 +239,7 @@ pub fn capability_authorizes(cap: &TraversalCapability, target: &TraversalAuthor
     if !resource_has_prefix(&target.resource, &cap.resource) {
         return false;
     }
-    if !bytes_equal(&target.ability, &cap.ability) {
+    if !ucan_ability::ability_subsumes(&cap.ability, &target.ability) {
         return false;
     }
     true
@@ -565,7 +567,7 @@ pub proof fn capability_containment_sound(parent: TraversalCapability, child: Tr
     requires capability_contains_spec(&parent, &child),
     ensures
         child.resource@.len() >= parent.resource@.len(),
-        child.ability@ =~= parent.ability@,
+        ucan_ability::ability_contains_spec2(parent.ability, child.ability),
 {
 }
 
@@ -634,10 +636,16 @@ pub proof fn valid_transcript_composes_checks(t: TraversalTranscript, budget: Tr
 mod tests {
     use super::*;
 
-    fn cap(resource: &[u8], ability: &[u8]) -> TraversalCapability {
+    fn ability(path: &[u8]) -> ucan_ability::Ability {
+        ucan_ability::Ability {
+            segments: path.split(|byte| *byte == b'/').map(<[u8]>::to_vec).collect(),
+        }
+    }
+
+    fn cap(resource: &[u8], ability_path: &[u8]) -> TraversalCapability {
         TraversalCapability {
             resource: resource.to_vec(),
-            ability: ability.to_vec(),
+            ability: ability(ability_path),
         }
     }
 
@@ -666,7 +674,7 @@ mod tests {
             total_input_bytes: 64,
             target: TraversalAuthorizationTarget {
                 resource: b"store/docs/file".to_vec(),
-                ability: b"read".to_vec(),
+                ability: ability(b"read"),
                 now: 50,
                 tolerance: 0,
             },
@@ -682,6 +690,24 @@ mod tests {
             max_input_bytes: 1024,
         };
         assert!(traversal_transcript_valid(&t, &b));
+    }
+
+    #[test]
+    fn wildcard_ability_transcript_accepts_and_rejects_namespace_escape() {
+        let mut t = transcript();
+        t.entries[0].capabilities[0] = cap(b"store", b"store/*");
+        t.entries[1].capabilities[0] = cap(b"store/docs", b"store/read");
+        t.target.ability = ability(b"store/read");
+        let b = TraversalBudget {
+            max_depth: 4,
+            max_proofs: 8,
+            max_input_bytes: 1024,
+        };
+        assert!(traversal_transcript_valid(&t, &b));
+
+        t.entries[1].capabilities[0] = cap(b"store/docs", b"admin/read");
+        t.target.ability = ability(b"admin/read");
+        assert!(!traversal_transcript_valid(&t, &b));
     }
 
     #[test]

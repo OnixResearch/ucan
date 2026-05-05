@@ -2489,9 +2489,15 @@ fn linear_proof_edge_representable(
         && parent.not_before_seconds <= child.not_before_seconds
         && child.expires_at_seconds <= parent.expires_at_seconds
         && child.capabilities.iter().all(|child_capability| {
+            let Ok(child_verified) = VerifiedCapability::from_document(child_capability.clone()) else {
+                return false;
+            };
             parent.capabilities.iter().any(|parent_capability| {
-                child_capability.resource.starts_with(parent_capability.resource.as_str())
-                    && child_capability.ability == parent_capability.ability
+                let Ok(parent_verified) = VerifiedCapability::from_document(parent_capability.clone()) else {
+                    return false;
+                };
+                parent_verified.contains(&child_verified)
+                    && parent_caveats_are_preserved(parent_capability, child_capability)
             })
         })
 }
@@ -3837,10 +3843,13 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_linear_delegation_keeps_verified_transcript_boundary_explicit() {
+    fn wildcard_linear_delegation_emits_verified_proof_transcript() {
         let verified = verified_child_token();
 
-        assert!(verified.proof_transcript.is_none());
+        let transcript =
+            verified.proof_transcript.as_ref().expect("wildcard linear chains should be transcript-checked");
+        assert_eq!(transcript.entries.len(), 2);
+        assert!(transcript.total_input_bytes > 0);
     }
 
     #[test]
