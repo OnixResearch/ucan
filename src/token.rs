@@ -1,6 +1,10 @@
 #![allow(clippy::module_name_repetitions)]
 
 use core::fmt;
+use core::str::FromStr;
+use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -44,6 +48,42 @@ pub const ED25519_SIGNATURE_BYTES: usize = verified_logic::ucan_signature::SIGNA
 
 pub type SignerResult<T> = std::result::Result<T, SignerError>;
 pub type TokenResult<T> = std::result::Result<T, TokenError>;
+pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
+pub type TimeConversionResult<T> = std::result::Result<T, TimeConversionError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuilderError {
+    MissingField { field: &'static str },
+}
+
+impl fmt::Display for BuilderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingField { field } => write!(formatter, "missing required builder field {field}"),
+        }
+    }
+}
+
+impl std::error::Error for BuilderError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimeConversionError {
+    BeforeUnixEpoch,
+    DurationOverflow,
+    InvalidBounds { message: String },
+}
+
+impl fmt::Display for TimeConversionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BeforeUnixEpoch => formatter.write_str("system time precedes the Unix epoch"),
+            Self::DurationOverflow => formatter.write_str("time bounds overflow u64 Unix seconds"),
+            Self::InvalidBounds { message } => write!(formatter, "invalid time bounds: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for TimeConversionError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactPart {
@@ -316,6 +356,45 @@ impl fmt::Display for CompactToken {
     }
 }
 
+impl FromStr for CompactToken {
+    type Err = TokenError;
+
+    fn from_str(input: &str) -> TokenResult<Self> {
+        Self::new(input.to_owned())
+    }
+}
+
+impl TryFrom<&str> for CompactToken {
+    type Error = TokenError;
+
+    fn try_from(value: &str) -> TokenResult<Self> {
+        Self::new(value.to_owned())
+    }
+}
+
+impl TryFrom<String> for CompactToken {
+    type Error = TokenError;
+
+    fn try_from(value: String) -> TokenResult<Self> {
+        Self::new(value)
+    }
+}
+
+impl Serialize for CompactToken {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CompactToken {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where D: serde::Deserializer<'de> {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuerDid(String);
 
@@ -343,6 +422,45 @@ impl fmt::Display for IssuerDid {
     }
 }
 
+impl FromStr for IssuerDid {
+    type Err = TokenError;
+
+    fn from_str(input: &str) -> TokenResult<Self> {
+        Self::new(input.to_owned())
+    }
+}
+
+impl TryFrom<&str> for IssuerDid {
+    type Error = TokenError;
+
+    fn try_from(value: &str) -> TokenResult<Self> {
+        Self::new(value.to_owned())
+    }
+}
+
+impl TryFrom<String> for IssuerDid {
+    type Error = TokenError;
+
+    fn try_from(value: String) -> TokenResult<Self> {
+        Self::new(value)
+    }
+}
+
+impl Serialize for IssuerDid {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for IssuerDid {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where D: serde::Deserializer<'de> {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudienceDid(String);
 
@@ -367,6 +485,45 @@ impl AudienceDid {
 impl fmt::Display for AudienceDid {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AudienceDid {
+    type Err = TokenError;
+
+    fn from_str(input: &str) -> TokenResult<Self> {
+        Self::new(input.to_owned())
+    }
+}
+
+impl TryFrom<&str> for AudienceDid {
+    type Error = TokenError;
+
+    fn try_from(value: &str) -> TokenResult<Self> {
+        Self::new(value.to_owned())
+    }
+}
+
+impl TryFrom<String> for AudienceDid {
+    type Error = TokenError;
+
+    fn try_from(value: String) -> TokenResult<Self> {
+        Self::new(value)
+    }
+}
+
+impl Serialize for AudienceDid {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AudienceDid {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where D: serde::Deserializer<'de> {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -854,6 +1011,30 @@ impl TokenTimeBounds {
         self.expires_at_seconds
     }
 
+    /// Build token bounds from a deterministic start time and positive duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TimeConversionError`] when the duration overflows or yields invalid bounds.
+    pub fn from_unix_seconds_and_duration(not_before_seconds: u64, duration: Duration) -> TimeConversionResult<Self> {
+        let expires_at_seconds =
+            not_before_seconds.checked_add(duration.as_secs()).ok_or(TimeConversionError::DurationOverflow)?;
+        Self::new(not_before_seconds, expires_at_seconds).map_err(|error| TimeConversionError::InvalidBounds {
+            message: error.to_string(),
+        })
+    }
+
+    /// Build token bounds from a [`SystemTime`] start and positive duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TimeConversionError`] when the start time is before the Unix epoch,
+    /// the duration overflows, or the resulting bounds are invalid.
+    pub fn from_system_time_and_duration(start: SystemTime, duration: Duration) -> TimeConversionResult<Self> {
+        let not_before_seconds = unix_seconds_from_system_time(start)?;
+        Self::from_unix_seconds_and_duration(not_before_seconds, duration)
+    }
+
     const fn to_verified(self) -> TokenTimeWindow {
         TokenTimeWindow {
             not_before_seconds: self.not_before_seconds,
@@ -877,6 +1058,21 @@ impl VerificationTime {
     pub const fn as_unix_seconds(self) -> u64 {
         self.seconds
     }
+
+    /// Convert a [`SystemTime`] into deterministic Unix-second verification time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TimeConversionError::BeforeUnixEpoch`] when the supplied time is
+    /// earlier than the Unix epoch.
+    pub fn try_from_system_time(time: SystemTime) -> TimeConversionResult<Self> {
+        unix_seconds_from_system_time(time).map(Self::from_unix_seconds)
+    }
+}
+
+fn unix_seconds_from_system_time(time: SystemTime) -> TimeConversionResult<u64> {
+    let duration = time.duration_since(UNIX_EPOCH).map_err(|_| TimeConversionError::BeforeUnixEpoch)?;
+    Ok(duration.as_secs())
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -1201,6 +1397,78 @@ impl IssueRequest {
             time_bounds,
         }
     }
+
+    #[must_use]
+    pub const fn builder() -> IssueRequestBuilder {
+        IssueRequestBuilder::new()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueRequestBuilder {
+    signing_key: Option<Ed25519SigningKey>,
+    audience: Option<AudienceDid>,
+    capabilities: Option<CapabilitySet>,
+    proofs: Option<ProofCollection>,
+    time_bounds: Option<TokenTimeBounds>,
+}
+
+impl IssueRequestBuilder {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            signing_key: None,
+            audience: None,
+            capabilities: None,
+            proofs: None,
+            time_bounds: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn signing_key(mut self, signing_key: Ed25519SigningKey) -> Self {
+        self.signing_key = Some(signing_key);
+        self
+    }
+
+    #[must_use]
+    pub fn audience(mut self, audience: AudienceDid) -> Self {
+        self.audience = Some(audience);
+        self
+    }
+
+    #[must_use]
+    pub fn capabilities(mut self, capabilities: CapabilitySet) -> Self {
+        self.capabilities = Some(capabilities);
+        self
+    }
+
+    #[must_use]
+    pub fn proofs(mut self, proofs: ProofCollection) -> Self {
+        self.proofs = Some(proofs);
+        self
+    }
+
+    #[must_use]
+    pub const fn time_bounds(mut self, time_bounds: TokenTimeBounds) -> Self {
+        self.time_bounds = Some(time_bounds);
+        self
+    }
+
+    /// Finalize the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuilderError`] naming the first required field that is absent.
+    pub fn build(self) -> BuilderResult<IssueRequest> {
+        Ok(IssueRequest::new(
+            self.signing_key.ok_or(BuilderError::MissingField { field: "signing_key" })?,
+            self.audience.ok_or(BuilderError::MissingField { field: "audience" })?,
+            self.capabilities.ok_or(BuilderError::MissingField { field: "capabilities" })?,
+            self.proofs.ok_or(BuilderError::MissingField { field: "proofs" })?,
+            self.time_bounds.ok_or(BuilderError::MissingField { field: "time_bounds" })?,
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1235,6 +1503,69 @@ impl VerificationContext {
     #[must_use]
     pub const fn limits(&self) -> VerificationLimits {
         self.limits
+    }
+
+    #[must_use]
+    pub const fn builder() -> VerificationContextBuilder {
+        VerificationContextBuilder::new()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VerificationContextBuilder {
+    time: Option<VerificationTime>,
+    keys: Option<KeyResolutionContext>,
+    proofs: Option<ProofCollection>,
+    limits: Option<VerificationLimits>,
+}
+
+impl VerificationContextBuilder {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            time: None,
+            keys: None,
+            proofs: None,
+            limits: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn time(mut self, time: VerificationTime) -> Self {
+        self.time = Some(time);
+        self
+    }
+
+    #[must_use]
+    pub fn keys(mut self, keys: KeyResolutionContext) -> Self {
+        self.keys = Some(keys);
+        self
+    }
+
+    #[must_use]
+    pub fn proofs(mut self, proofs: ProofCollection) -> Self {
+        self.proofs = Some(proofs);
+        self
+    }
+
+    #[must_use]
+    pub const fn limits(mut self, limits: VerificationLimits) -> Self {
+        self.limits = Some(limits);
+        self
+    }
+
+    /// Finalize the verification context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuilderError`] naming the first required field that is absent.
+    pub fn build(self) -> BuilderResult<VerificationContext> {
+        Ok(VerificationContext::with_limits(
+            self.time.ok_or(BuilderError::MissingField { field: "time" })?,
+            self.keys.ok_or(BuilderError::MissingField { field: "keys" })?,
+            self.proofs.ok_or(BuilderError::MissingField { field: "proofs" })?,
+            self.limits.unwrap_or_default(),
+        ))
     }
 }
 
@@ -2325,6 +2656,7 @@ mod tests {
     use super::AuthorizationDecision;
     use super::AuthorizationDenialReason;
     use super::AuthorizationRequest;
+    use super::BuilderError;
     use super::CapabilitySet;
     use super::CaveatDecision;
     use super::CaveatIdentifier;
@@ -2351,6 +2683,7 @@ mod tests {
     use super::SignerError;
     use super::SignerResult;
     use super::SignerSignature;
+    use super::TimeConversionError;
     use super::TokenError;
     use super::TokenResult;
     use super::TokenSigner;
@@ -2402,6 +2735,133 @@ mod tests {
         assert_eq!(verified.capabilities().as_slice().len(), 1);
         assert!(verified.proofs().as_slice().is_empty());
         assert_eq!(verified.effective_delegation().time_bounds().not_before_seconds(), TOKEN_NOT_BEFORE_SECONDS);
+    }
+
+    #[test]
+    fn public_string_wrappers_parse_display_and_serde_round_trip() {
+        let issuer = signing_key(ISSUER_SECRET_BYTE).issuer().expect("issuer should derive");
+        let audience = AudienceDid::from(issuer.clone());
+        let token = CompactToken::new("header.payload.signature").expect("compact wrapper accepts trimmed strings");
+
+        assert_eq!(issuer.to_string().parse::<IssuerDid>().expect("issuer FromStr"), issuer);
+        assert_eq!(IssuerDid::try_from(issuer.as_str()).expect("issuer TryFrom<&str>"), issuer);
+        assert_eq!(IssuerDid::try_from(issuer.as_str().to_owned()).expect("issuer TryFrom<String>"), issuer);
+        assert_eq!(audience.to_string().parse::<AudienceDid>().expect("audience FromStr"), audience);
+        assert_eq!(AudienceDid::try_from(audience.as_str()).expect("audience TryFrom<&str>"), audience);
+        assert_eq!(AudienceDid::try_from(audience.as_str().to_owned()).expect("audience TryFrom<String>"), audience);
+        assert_eq!(token.to_string().parse::<CompactToken>().expect("compact FromStr"), token);
+        assert_eq!(CompactToken::try_from(token.as_str()).expect("compact TryFrom<&str>"), token);
+        assert_eq!(CompactToken::try_from(token.as_str().to_owned()).expect("compact TryFrom<String>"), token);
+
+        let serialized_issuer = serde_json::to_string(&issuer).expect("issuer serializes");
+        let serialized_audience = serde_json::to_string(&audience).expect("audience serializes");
+        let serialized_token = serde_json::to_string(&token).expect("token serializes");
+        assert_eq!(serialized_issuer, format!("\"{}\"", issuer.as_str()));
+        assert_eq!(serialized_audience, format!("\"{}\"", audience.as_str()));
+        assert_eq!(serialized_token, "\"header.payload.signature\"");
+        assert_eq!(serde_json::from_str::<IssuerDid>(&serialized_issuer).expect("issuer deserializes"), issuer);
+        assert_eq!(serde_json::from_str::<AudienceDid>(&serialized_audience).expect("audience deserializes"), audience);
+        assert_eq!(serde_json::from_str::<CompactToken>(&serialized_token).expect("token deserializes"), token);
+    }
+
+    #[test]
+    fn public_string_wrappers_reject_malformed_parse_and_serde_inputs() {
+        assert!(matches!("".parse::<CompactToken>(), Err(TokenError::EmptyCompactToken)));
+        assert!(matches!(" token ".parse::<CompactToken>(), Err(TokenError::CompactTokenMustBeTrimmed)));
+        assert!(matches!(IssuerDid::try_from(""), Err(TokenError::CoreClaims { .. })));
+        assert!(matches!(AudienceDid::try_from(" did:key:z6Mkaudience "), Err(TokenError::CoreClaims { .. })));
+        assert!(serde_json::from_str::<IssuerDid>("123").is_err());
+        assert!(serde_json::from_str::<AudienceDid>("\"\"").is_err());
+        assert!(serde_json::from_str::<CompactToken>("\" token \"").is_err());
+    }
+
+    #[test]
+    fn builders_match_positional_constructors_and_report_missing_fields() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience =
+            AudienceDid::from(signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive"));
+        let capabilities = capabilities("did:key:z6Mkresource", "store/*");
+        let proofs = ProofCollection::empty();
+        let bounds = token_time_bounds();
+        let positional_issue =
+            IssueRequest::new(issuer_key.clone(), audience.clone(), capabilities.clone(), proofs.clone(), bounds);
+        let built_issue = IssueRequest::builder()
+            .signing_key(issuer_key.clone())
+            .audience(audience)
+            .capabilities(capabilities)
+            .proofs(proofs.clone())
+            .time_bounds(bounds)
+            .build()
+            .expect("issue builder should complete");
+        assert_eq!(built_issue, positional_issue);
+        assert_eq!(IssueRequest::builder().build(), Err(BuilderError::MissingField { field: "signing_key" }));
+
+        let keys = KeyResolutionContext::new(vec![
+            Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
+        ]);
+        let time = VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS);
+        let limits = VerificationLimits::new(2, 3, 4_096);
+        let positional_context = VerificationContext::with_limits(time, keys.clone(), proofs.clone(), limits);
+        let built_context = VerificationContext::builder()
+            .time(time)
+            .keys(keys)
+            .proofs(proofs)
+            .limits(limits)
+            .build()
+            .expect("verification builder should complete");
+        assert_eq!(built_context, positional_context);
+        assert_eq!(VerificationContext::builder().build(), Err(BuilderError::MissingField { field: "time" }));
+    }
+
+    #[test]
+    fn system_time_and_duration_helpers_are_deterministic_and_structured() {
+        let start = std::time::UNIX_EPOCH + std::time::Duration::from_secs(TOKEN_NOT_BEFORE_SECONDS);
+        let verification_time = VerificationTime::try_from_system_time(start).expect("system time should convert");
+        let bounds = TokenTimeBounds::from_system_time_and_duration(start, std::time::Duration::from_secs(1_000))
+            .expect("duration bounds should convert");
+        let direct_bounds = TokenTimeBounds::from_unix_seconds_and_duration(
+            TOKEN_NOT_BEFORE_SECONDS,
+            std::time::Duration::from_secs(1_000),
+        )
+        .expect("unix duration bounds should convert");
+
+        assert_eq!(verification_time.as_unix_seconds(), TOKEN_NOT_BEFORE_SECONDS);
+        assert_eq!(bounds.not_before_seconds(), TOKEN_NOT_BEFORE_SECONDS);
+        assert_eq!(bounds.expires_at_seconds(), TOKEN_NOT_BEFORE_SECONDS + 1_000);
+        assert_eq!(direct_bounds, bounds);
+
+        let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::from_secs(1);
+        assert_eq!(VerificationTime::try_from_system_time(before_epoch), Err(TimeConversionError::BeforeUnixEpoch));
+        assert_eq!(
+            TokenTimeBounds::from_unix_seconds_and_duration(u64::MAX, std::time::Duration::from_secs(1)),
+            Err(TimeConversionError::DurationOverflow)
+        );
+        assert!(matches!(
+            TokenTimeBounds::from_unix_seconds_and_duration(TOKEN_NOT_BEFORE_SECONDS, std::time::Duration::ZERO),
+            Err(TimeConversionError::InvalidBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn ergonomics_work_does_not_add_cleartext_secret_exports() {
+        let source = include_str!("token.rs");
+        let forbidden = [
+            format!("{}{}", "impl fmt::Display for ", "Ed25519SigningKey"),
+            format!("{}{}", "impl Serialize for ", "Ed25519SigningKey"),
+            format!("{}{}", "impl<'de> Deserialize<'de> for ", "Ed25519SigningKey"),
+            format!("{}{}", "impl fmt::Display for ", "Ed25519InMemorySigner"),
+            format!("{}{}", "impl Serialize for ", "Ed25519InMemorySigner"),
+            format!("{}{}", "impl<'de> Deserialize<'de> for ", "Ed25519InMemorySigner"),
+        ];
+        for forbidden_impl in forbidden {
+            assert!(
+                !source.contains(forbidden_impl.as_str()),
+                "forbidden cleartext trait implementation appeared: {forbidden_impl}"
+            );
+        }
+        let key = signing_key(REDACTION_TEST_SECRET_BYTE);
+        assert_secret_material_is_absent(format!("{key:?}").as_str());
+        assert_secret_material_is_absent(format!("{:?}", Ed25519InMemorySigner::from_signing_key(key)).as_str());
     }
 
     #[test]

@@ -66,7 +66,24 @@ EOF
   cargo check --manifest-path "$tmp/Cargo.toml" --lib --no-default-features
 }
 
+check_dependency_purity() {
+  local forbidden_tree_pattern='(^|[[:space:]])(serde|serde_json|base64|blake3|snafu|ed25519-dalek|rand|std|tokio|reqwest|ureq|hyper|ipfs|rusqlite|sled|rocksdb) v'
+  if cargo tree -p ucan-core --no-default-features --edges normal,build | grep -E "$forbidden_tree_pattern"; then
+    echo "ucan-core dependency tree contains shell-only std/codec/crypto/runtime/storage concerns" >&2
+    return 1
+  fi
+}
+
+check_no_ambient_clock_reads() {
+  if grep -RInE 'SystemTime::now|Instant::now' "$repo_root/src" "$core_dir/src"; then
+    echo "ucan verification paths must receive deterministic times instead of reading ambient clocks" >&2
+    return 1
+  fi
+}
+
 cd "$repo_root"
 run_cargo_check
 check_source_purity
+check_dependency_purity
+check_no_ambient_clock_reads
 check_no_std_smoke

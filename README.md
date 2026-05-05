@@ -41,10 +41,33 @@ assert!(!verified.authorize("did:key:z6Mkresource", "store/*").is_allowed());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+For integration code with many inputs, prefer the named builders and boundary-only
+time conversion helpers over positional constructors:
+
+```rust
+# use std::time::{Duration, UNIX_EPOCH};
+# use ucan::{CapabilitySet, ED25519_SECRET_KEY_BYTES, Ed25519SigningKey, IssueRequest, ProofCollection, TokenTimeBounds};
+# let signing_key = Ed25519SigningKey::from_bytes([7; ED25519_SECRET_KEY_BYTES]);
+# let audience = ucan::AudienceDid::from(signing_key.issuer()?);
+let request = IssueRequest::builder()
+    .signing_key(signing_key)
+    .audience(audience)
+    .capabilities(CapabilitySet::single("did:key:z6Mkresource", "store/add")?)
+    .proofs(ProofCollection::empty())
+    .time_bounds(TokenTimeBounds::from_system_time_and_duration(
+        UNIX_EPOCH + Duration::from_secs(1_000),
+        Duration::from_secs(1_000),
+    )?)
+    .build()?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 Run the same happy path as a normal example:
 
 ```bash
 cargo run --example issue_and_verify
+cargo run --example http_bearer
+cargo run --example failure_handling
 ```
 
 After `verify_compact_token` succeeds, use `VerifiedToken::authorize`,
