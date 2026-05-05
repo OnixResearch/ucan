@@ -151,6 +151,8 @@ pub enum TokenError {
     MissingVerificationKey { issuer: String },
     KeyResolver { source: KeyResolverError },
     ProofStore { source: ProofStoreError },
+    Revocation { source: RevocationError },
+    Revoked { reference: ProofReference },
     LimitExceeded { source: VerificationLimitError },
     Signature { issuer: String },
     Temporal { message: String },
@@ -198,6 +200,8 @@ impl fmt::Display for TokenError {
             }
             Self::KeyResolver { source } => write!(formatter, "key resolver failed: {source}"),
             Self::ProofStore { source } => write!(formatter, "proof store failed: {source}"),
+            Self::Revocation { source } => write!(formatter, "revocation check failed: {source}"),
+            Self::Revoked { reference } => write!(formatter, "token reference {reference} is revoked"),
             Self::LimitExceeded { source } => write!(formatter, "verification limit exceeded: {source}"),
             Self::Signature { issuer } => write!(formatter, "signature failed for issuer {issuer}"),
             Self::Temporal { message } => write!(formatter, "temporal verification failed: {message}"),
@@ -219,6 +223,7 @@ impl std::error::Error for TokenError {
             Self::Signer { source } => Some(source),
             Self::KeyResolver { source } => Some(source),
             Self::ProofStore { source } => Some(source),
+            Self::Revocation { source } => Some(source),
             Self::LimitExceeded { source } => Some(source),
             Self::VerifiedPrimitive { source } => Some(source),
             Self::EmptyCompactToken
@@ -234,6 +239,7 @@ impl std::error::Error for TokenError {
             | Self::InvalidPublicKeyLength { .. }
             | Self::DidEncodingUtf8
             | Self::MissingVerificationKey { .. }
+            | Self::Revoked { .. }
             | Self::Signature { .. }
             | Self::Temporal { .. }
             | Self::SelfDelegation { .. }
@@ -298,6 +304,23 @@ impl fmt::Display for ProofStoreError {
 }
 
 impl std::error::Error for ProofStoreError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevocationError {
+    Backend { reference: ProofReference, message: String },
+}
+
+impl fmt::Display for RevocationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backend { reference, message } => {
+                write!(formatter, "backend failed checking revocation for {reference}: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RevocationError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerificationLimitError {
@@ -936,6 +959,57 @@ impl ProofStore for ProofCollection {
     }
 }
 
+/// Synchronous shell-owned revocation checker used by verification.
+pub trait RevocationChecker {
+    /// Return true when the compact-token proof reference has been revoked.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RevocationError`] when the revocation backend cannot answer.
+    fn is_revoked(&self, reference: &ProofReference) -> std::result::Result<bool, RevocationError>;
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoRevocations;
+
+impl RevocationChecker for NoRevocations {
+    fn is_revoked(&self, _reference: &ProofReference) -> std::result::Result<bool, RevocationError> {
+        Ok(false)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RevocationList(Vec<ProofReference>);
+
+impl RevocationList {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    #[must_use]
+    pub const fn from_references(references: Vec<ProofReference>) -> Self {
+        Self(references)
+    }
+
+    #[must_use]
+    pub const fn as_slice(&self) -> &[ProofReference] {
+        self.0.as_slice()
+    }
+
+    pub fn revoke(&mut self, reference: ProofReference) {
+        if !self.0.iter().any(|existing| existing == &reference) {
+            self.0.push(reference);
+        }
+    }
+}
+
+impl RevocationChecker for RevocationList {
+    fn is_revoked(&self, reference: &ProofReference) -> std::result::Result<bool, RevocationError> {
+        Ok(self.as_slice().iter().any(|candidate| candidate == reference))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::struct_field_names)]
 pub struct VerificationLimits {
@@ -1501,6 +1575,21 @@ impl VerificationContext {
     }
 
     #[must_use]
+    pub const fn time(&self) -> VerificationTime {
+        self.time
+    }
+
+    #[must_use]
+    pub const fn keys(&self) -> &KeyResolutionContext {
+        &self.keys
+    }
+
+    #[must_use]
+    pub const fn proofs(&self) -> &ProofCollection {
+        &self.proofs
+    }
+
+    #[must_use]
     pub const fn limits(&self) -> VerificationLimits {
         self.limits
     }
@@ -2020,15 +2109,38 @@ where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
 {
-    let mut traversal = VerificationTraversal::default();
-    verify_compact_token_with_traversal(token, time, key_resolver, proof_store, limits, &mut traversal, 0)
+    verify_compact_token_with_resolvers_and_revocations(token, time, key_resolver, proof_store, &NoRevocations, limits)
 }
 
-fn verify_compact_token_with_traversal<R, S>(
+/// Verify a compact token with explicit resolver, proof-store, and revocation checker abstractions.
+///
+/// # Errors
+///
+/// Returns [`TokenError`] when revocation, size limits, parsing, structural validation,
+/// signature validation, proof-store lookup, or proof-chain validation fails.
+pub fn verify_compact_token_with_resolvers_and_revocations<R, S, V>(
     token: &CompactToken,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
+    revocations: &V,
+    limits: VerificationLimits,
+) -> TokenResult<VerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+    V: RevocationChecker + ?Sized,
+{
+    let mut traversal = VerificationTraversal::default();
+    verify_compact_token_with_traversal(token, time, key_resolver, proof_store, revocations, limits, &mut traversal, 0)
+}
+
+fn verify_compact_token_with_traversal<R, S, V>(
+    token: &CompactToken,
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    revocations: &V,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -2036,24 +2148,28 @@ fn verify_compact_token_with_traversal<R, S>(
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
+    V: RevocationChecker + ?Sized,
 {
     enforce_proof_depth(depth, limits)?;
     enforce_compact_token_size(token.as_str(), limits)?;
+    reject_revoked_token(token, revocations)?;
     reject_cycle(token, traversal.trail.as_slice())?;
     traversal.trail.push(proof_reference_for_token(token));
     let decoded = parse_compact_token(token)?;
     let valid = validate_decoded_token(decoded)?;
     let signed = verify_token_signature_with_resolver(valid, key_resolver)?;
-    let verified = authorize_signed_token(signed, time, key_resolver, proof_store, limits, traversal, depth)?;
+    let verified =
+        authorize_signed_token(signed, time, key_resolver, proof_store, revocations, limits, traversal, depth)?;
     let _removed = traversal.trail.pop();
     Ok(verified)
 }
 
-fn authorize_signed_token<R, S>(
+fn authorize_signed_token<R, S, V>(
     signed: SignatureVerifiedToken,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
+    revocations: &V,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -2061,6 +2177,7 @@ fn authorize_signed_token<R, S>(
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
+    V: RevocationChecker + ?Sized,
 {
     let token = signed.token;
     validate_envelope_for_token(&token, time)?;
@@ -2077,6 +2194,7 @@ where
         time,
         key_resolver,
         proof_store,
+        revocations,
         limits,
         traversal,
         depth,
@@ -2090,7 +2208,8 @@ where
     })
 }
 
-fn effective_delegation<R, S>(
+#[allow(clippy::too_many_arguments)]
+fn effective_delegation<R, S, V>(
     child_issuer: &IssuerDid,
     capabilities: &CapabilitySet,
     time_bounds: TokenTimeBounds,
@@ -2098,6 +2217,7 @@ fn effective_delegation<R, S>(
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
+    revocations: &V,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -2105,6 +2225,7 @@ fn effective_delegation<R, S>(
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
+    V: RevocationChecker + ?Sized,
 {
     if proofs.as_slice().is_empty() {
         return Ok(EffectiveDelegation {
@@ -2112,7 +2233,8 @@ where
             time_bounds,
         });
     }
-    let parent_tokens = verify_parent_tokens(proofs, time, key_resolver, proof_store, limits, traversal, depth + 1)?;
+    let parent_tokens =
+        verify_parent_tokens(proofs, time, key_resolver, proof_store, revocations, limits, traversal, depth + 1)?;
     verify_child_is_linked_to_parent_audience(child_issuer, &parent_tokens)?;
     let effective_time = verify_temporal_attenuation(time_bounds, parent_tokens.as_slice())?;
     let effective_capabilities = verify_capability_attenuation(capabilities, parent_tokens.as_slice())?;
@@ -2122,11 +2244,12 @@ where
     })
 }
 
-fn verify_parent_tokens<R, S>(
+fn verify_parent_tokens<R, S, V>(
     proofs: &ProofCollection,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
+    revocations: &V,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -2134,11 +2257,20 @@ fn verify_parent_tokens<R, S>(
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
+    V: RevocationChecker + ?Sized,
 {
     let mut parents = Vec::with_capacity(proofs.as_slice().len());
     for proof in proofs.as_slice() {
-        let parent =
-            verify_compact_token_with_traversal(proof, time, key_resolver, proof_store, limits, traversal, depth)?;
+        let parent = verify_compact_token_with_traversal(
+            proof,
+            time,
+            key_resolver,
+            proof_store,
+            revocations,
+            limits,
+            traversal,
+            depth,
+        )?;
         parents.push(parent);
     }
     Ok(parents)
@@ -2352,6 +2484,15 @@ const fn enforce_compact_token_size(token: &str, limits: VerificationLimits) -> 
                 max_byte_len: limits.max_compact_token_bytes(),
             },
         });
+    }
+    Ok(())
+}
+
+fn reject_revoked_token<V>(token: &CompactToken, revocations: &V) -> TokenResult<()>
+where V: RevocationChecker + ?Sized {
+    let reference = proof_reference_for_token(token);
+    if revocations.is_revoked(&reference).map_err(|source| TokenError::Revocation { source })? {
+        return Err(TokenError::Revoked { reference });
     }
     Ok(())
 }
@@ -2676,10 +2817,14 @@ mod tests {
     use super::KeyResolutionContext;
     use super::KeyResolver;
     use super::KeyResolverError;
+    use super::NoRevocations;
     use super::ProofCollection;
     use super::ProofReference;
     use super::ProofStore;
     use super::ProofStoreError;
+    use super::RevocationChecker;
+    use super::RevocationError;
+    use super::RevocationList;
     use super::SignerError;
     use super::SignerResult;
     use super::SignerSignature;
@@ -2696,6 +2841,7 @@ mod tests {
     use super::issue_token;
     use super::issue_token_with_signer;
     use super::parse_compact_token;
+    use super::proof_reference;
     use super::validate_decoded_token;
     use super::verify_compact_token;
     use crate::shell::CapabilityDocument;
@@ -3594,6 +3740,111 @@ mod tests {
     }
 
     #[test]
+    fn no_revocations_preserves_delegation_verification() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
+        let context = verification_context(
+            vec![&parent_key, &child_key],
+            ProofCollection::from_tokens(vec![parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+
+        let baseline = verify_compact_token(&child, &context).expect("baseline should verify");
+        let checked = super::verify_compact_token_with_resolvers_and_revocations(
+            &child,
+            context.time(),
+            context.keys(),
+            context.proofs(),
+            &NoRevocations,
+            context.limits(),
+        )
+        .expect("no-op revocation checker should preserve verification");
+
+        assert_eq!(baseline.issuer(), checked.issuer());
+        assert_eq!(baseline.audience(), checked.audience());
+        assert_eq!(baseline.proofs(), checked.proofs());
+        assert_eq!(baseline.effective_delegation(), checked.effective_delegation());
+    }
+
+    #[test]
+    fn revoked_leaf_token_is_rejected() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let revoked = RevocationList::from_references(vec![proof_reference(&token)]);
+
+        let error = super::verify_compact_token_with_resolvers_and_revocations(
+            &token,
+            context.time(),
+            context.keys(),
+            context.proofs(),
+            &revoked,
+            context.limits(),
+        )
+        .expect_err("revoked leaf should fail");
+
+        assert!(matches!(error, TokenError::Revoked { reference } if reference == proof_reference(&token)));
+    }
+
+    #[test]
+    fn revoked_parent_token_rejects_delegated_child() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
+        let context = verification_context(
+            vec![&parent_key, &child_key],
+            ProofCollection::from_tokens(vec![parent.clone()]),
+            VERIFICATION_TIME_SECONDS,
+        );
+        let revoked = RevocationList::from_references(vec![proof_reference(&parent)]);
+
+        let error = super::verify_compact_token_with_resolvers_and_revocations(
+            &child,
+            context.time(),
+            context.keys(),
+            context.proofs(),
+            &revoked,
+            context.limits(),
+        )
+        .expect_err("revoked parent should fail child verification");
+
+        assert!(matches!(error, TokenError::Revoked { reference } if reference == proof_reference(&parent)));
+    }
+
+    #[test]
+    fn revocation_backend_errors_fail_closed() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let error = super::verify_compact_token_with_resolvers_and_revocations(
+            &token,
+            context.time(),
+            context.keys(),
+            context.proofs(),
+            &BackendFailingRevocationChecker,
+            context.limits(),
+        )
+        .expect_err("revocation backend failure should fail closed");
+
+        assert!(matches!(error, TokenError::Revocation {
+            source: RevocationError::Backend { reference, message }
+        } if reference == proof_reference(&token) && message == BACKEND_FAILURE_MESSAGE));
+    }
+
+    #[test]
     fn verification_limits_reject_oversized_input_before_parse() {
         let context = VerificationContext::with_limits(
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
@@ -3756,6 +4007,18 @@ mod tests {
     }
 
     #[derive(Default)]
+
+    struct BackendFailingRevocationChecker;
+
+    impl RevocationChecker for BackendFailingRevocationChecker {
+        fn is_revoked(&self, reference: &ProofReference) -> std::result::Result<bool, RevocationError> {
+            Err(RevocationError::Backend {
+                reference: reference.clone(),
+                message: BACKEND_FAILURE_MESSAGE.to_owned(),
+            })
+        }
+    }
+
     struct CountingProofStore;
 
     impl ProofStore for CountingProofStore {

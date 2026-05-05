@@ -92,7 +92,7 @@ cargo run --example invocation
 
 Proof material is explicit. A child token carries BLAKE3 proof references in `prf`; callers may keep using `ProofCollection`, or inject their own synchronous `ProofStore` with `verify_compact_token_with_resolvers`. Verification checks each parent signature, issuer/audience linkage, temporal narrowing, capability attenuation, and self-delegation rejection before returning the effective delegation constraints.
 
-`KeyResolver` and `ProofStore` are std-shell injection points only: the crate does not provide built-in HTTP, IPFS, database, filesystem, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, and `ProofCollection` implements `ProofStore` for deterministic in-memory verification. `VerificationLimits::default()` bounds recursion with visible defaults for maximum proof depth, maximum resolved proof count, and maximum serialized compact-token byte length; use `VerificationContext::with_limits` or `verify_compact_token_with_resolvers` to override them. To reject oversized caller input before constructing a `CompactToken`, call `verify_compact_token_str`.
+`KeyResolver`, `ProofStore`, and `RevocationChecker` are std-shell injection points only: the crate does not provide built-in HTTP, IPFS, database, filesystem, registry, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, `ProofCollection` implements `ProofStore`, and `RevocationList` implements `RevocationChecker` for deterministic in-memory verification. Use `verify_compact_token_with_resolvers_and_revocations` when the application has revocation state; it checks the leaf token and every recursively resolved proof token by `ProofReference` before verification can succeed. `VerificationLimits::default()` bounds recursion with visible defaults for maximum proof depth, maximum resolved proof count, and maximum serialized compact-token byte length; use `VerificationContext::with_limits` or `verify_compact_token_with_resolvers` to override them. To reject oversized caller input before constructing a `CompactToken`, call `verify_compact_token_str`.
 
 ```bash
 cargo run --example proof_chain
@@ -107,7 +107,8 @@ The verified result exposes the issuer, audience, direct capability set, direct 
 - Supported DID methods: `did:key` for Ed25519 public keys.
 - Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
 - Proof-loading model: caller-supplied proof tokens only; the library does not fetch proofs from storage or the network.
-- Out-of-scope UCAN features in this release: revocation registries, remote DID resolution, network proof fetching, storage layers, caveat-specific attenuation rules beyond caller policy evaluation, and non-Ed25519 key types.
+- Revocation model: caller-supplied `RevocationChecker` values can deny the leaf token or any proof-chain token by `ProofReference`; revocation registries, credential formats, replay stores, persistence, and remote fetches remain application-owned.
+- Out-of-scope UCAN features in this release: remote DID resolution, network proof fetching, storage layers, caveat-specific attenuation rules beyond caller policy evaluation, registry-backed revocation, replay stores, and non-Ed25519 key types.
 
 ## Development
 

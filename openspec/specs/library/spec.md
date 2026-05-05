@@ -128,7 +128,7 @@ r[library.core-no-std.core-compiles-without-std]
 
 ### Requirement: Consumer onboarding is part of the library surface
 
-The repository MUST document the supported issuance and verification flow with runnable examples that match the public API.
+The repository MUST document the supported issuance and verification flow with runnable examples that match the public API, including explicit revocation-checker support where relevant.
 r[library.consumer-onboarding]
 
 #### Scenario: Fresh consumer follows the documented flow
@@ -144,7 +144,14 @@ r[library.consumer-onboarding.docs-state-current-support-limits]
 
 - GIVEN the initial usable-library release
 - WHEN a consumer reads the documentation
-- THEN it MUST clearly state the supported DID methods, signing algorithms, proof-loading model, and notable out-of-scope UCAN features
+- THEN it MUST clearly state the supported DID methods, signing algorithms, proof-loading model, explicit revocation model, and notable out-of-scope UCAN features
+
+#### Scenario: Support limits name revocation model
+r[library.consumer-onboarding.revocation-model-documented]
+
+- GIVEN a consumer reads the support-limits documentation
+- WHEN they look for revocation support
+- THEN the documentation MUST state that explicit caller-supplied revocation checks are supported and registry/network/storage semantics remain out of scope
 
 ### Requirement: Secret key material is redacted from formatting
 
@@ -598,3 +605,29 @@ r[library.ergonomics.integration-examples.failure-handling-maps-errors]
 - GIVEN malformed, expired, missing-proof, and missing-key token cases
 - WHEN the example evaluates them
 - THEN it MUST show stable application-level handling for parse and verification failures
+
+### Requirement: Verification accepts explicit revocation checkers [r[library.revocation.explicit-checker]]
+The library MUST let callers inject revocation state through explicit checker objects without process-global registries, implicit network fetches, persistence layers, or ambient default stores.
+
+#### Scenario: No-op checker preserves current verification [r[library.revocation.explicit-checker.noop-preserves-behavior]]
+- GIVEN a compact token and proof chain that verifies successfully with the existing verification API
+- WHEN the same token is verified with the no-op revocation checker
+- THEN verification MUST produce the same verified issuer, audience, proof list, and effective delegation constraints
+
+#### Scenario: Revocation backend errors fail closed [r[library.revocation.explicit-checker.backend-error-fails-closed]]
+- GIVEN a revocation checker that returns a backend error for a token reference
+- WHEN verification reaches that reference
+- THEN verification MUST fail with a structured revocation backend error instead of allowing the token
+
+### Requirement: Revocation covers the full proof chain [r[library.revocation.chain-denial]]
+The library MUST reject a token when the leaf token or any recursively resolved proof-chain token is revoked by the caller-supplied checker.
+
+#### Scenario: Leaf token is revoked [r[library.revocation.chain-denial.leaf-revoked]]
+- GIVEN a valid compact token whose proof reference is present in the caller-supplied revocation list
+- WHEN revocation-aware verification is run
+- THEN verification MUST fail before returning a verified token
+
+#### Scenario: Parent proof token is revoked [r[library.revocation.chain-denial.parent-revoked]]
+- GIVEN a child token whose parent proof token is otherwise valid but whose proof reference is revoked
+- WHEN revocation-aware verification walks the delegation chain
+- THEN verification MUST fail and MUST NOT authorize the child through the revoked parent
