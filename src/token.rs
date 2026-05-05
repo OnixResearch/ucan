@@ -1041,7 +1041,9 @@ impl RevocationList {
     }
 
     pub fn revoke(&mut self, reference: ProofReference) {
-        if !self.0.iter().any(|existing| existing == &reference) {
+        let revoked_references =
+            self.as_slice().iter().map(|existing| existing.as_bytes().to_vec()).collect::<Vec<_>>();
+        if !revocation_reference_is_listed(&revoked_references, reference.as_bytes()) {
             self.0.push(reference);
         }
     }
@@ -3840,6 +3842,17 @@ mod tests {
         assert_eq!(baseline.audience(), checked.audience());
         assert_eq!(baseline.proofs(), checked.proofs());
         assert_eq!(baseline.effective_delegation(), checked.effective_delegation());
+    }
+
+    #[test]
+    fn revocation_list_revoke_is_idempotent_through_verified_set_membership() {
+        let reference = ProofReference::new(b"proof-a".to_vec());
+        let mut revocations = RevocationList::empty();
+
+        revocations.revoke(reference.clone());
+        revocations.revoke(reference.clone());
+
+        assert_eq!(revocations.as_slice(), &[reference]);
     }
 
     #[test]
