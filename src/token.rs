@@ -1632,6 +1632,7 @@ mod tests {
     use super::Ed25519PublicKey;
     use super::Ed25519SigningKey;
     use super::Ed25519VerificationKey;
+    use super::EffectiveDelegation;
     use super::IssueRequest;
     use super::IssuerDid;
     use super::KeyResolutionContext;
@@ -1645,6 +1646,7 @@ mod tests {
     use super::TokenTimeBounds;
     use super::VerificationContext;
     use super::VerificationTime;
+    use super::VerifiedToken;
     use super::issue_token;
     use super::issue_token_with_signer;
     use super::parse_compact_token;
@@ -1689,7 +1691,29 @@ mod tests {
     }
 
     #[test]
-    fn verified_token_authorizes_matching_concrete_request() {
+    fn verified_token_authorizes_exact_concrete_request() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_capability(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            "did:key:z6Mkresource/photos",
+            "store/add",
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let verified = verify_compact_token(&token, &context).expect("issued token should verify");
+        let request = AuthorizationRequest::new("did:key:z6Mkresource/photos", "store/add")
+            .expect("concrete request should validate");
+
+        let decision = verified.authorize_request(&request);
+
+        assert_allowed_capability(&decision, "did:key:z6Mkresource/photos", "store/add");
+    }
+
+    #[test]
+    fn verified_token_authorizes_delegated_wildcard_and_narrower_resource() {
         let issuer_key = signing_key(ISSUER_SECRET_BYTE);
         let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
         let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
@@ -1701,12 +1725,7 @@ mod tests {
 
         let decision = verified.authorize_request(&request);
 
-        assert!(decision.is_allowed());
-        assert_eq!(
-            decision.matched_capability().expect("match should be exposed"),
-            &CapabilityDocument::new("did:key:z6Mkresource".to_owned(), "store/*".to_owned())
-                .expect("capability should validate")
-        );
+        assert_allowed_capability(&decision, "did:key:z6Mkresource", "store/*");
     }
 
     #[test]
@@ -1724,11 +1743,15 @@ mod tests {
     }
 
     #[test]
-    fn authorization_request_rejects_wildcard_ability_segments() {
-        let error = AuthorizationRequest::new("did:key:z6Mkresource/photos", "store/*")
+    fn authorization_request_rejects_malformed_ability_wildcards() {
+        let embedded_error = AuthorizationRequest::new("did:key:z6Mkresource/photos", "store/a*d")
+            .expect_err("embedded wildcard segment should fail core ability validation");
+        let full_segment_error = AuthorizationRequest::new("did:key:z6Mkresource/photos", "store/*")
             .expect_err("operation request must be concrete");
 
-        assert!(matches!(error, TokenError::Capability { .. }));
+        assert!(matches!(embedded_error, TokenError::Capability { .. }));
+        assert!(matches!(full_segment_error, TokenError::Capability { .. }));
+
         let issuer_key = signing_key(ISSUER_SECRET_BYTE);
         let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
         let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
@@ -1736,11 +1759,58 @@ mod tests {
         let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
         let verified = verify_compact_token(&token, &context).expect("issued token should verify");
 
-        let decision = verified.authorize("did:key:z6Mkresource/photos", "store/*");
+        let embedded_decision = verified.authorize("did:key:z6Mkresource/photos", "store/a*d");
+        let full_segment_decision = verified.authorize("did:key:z6Mkresource/photos", "store/*");
 
-        assert!(matches!(decision, AuthorizationDecision::Denied {
-            reason: AuthorizationDenialReason::MalformedRequest { .. }
-        }));
+        assert_malformed_denial(&embedded_decision);
+        assert_malformed_denial(&full_segment_decision);
+    }
+
+    #[test]
+    fn verified_token_denies_broader_resource_than_child_delegation() {
+        let verified = verified_child_token();
+
+        let decision = verified.authorize("did:key:z6Mkresource", "store/add");
+
+        assert_eq!(decision.denial_reason(), Some(&AuthorizationDenialReason::NoMatchingCapability));
+    }
+
+    #[test]
+    fn authorization_uses_effective_child_delegation_not_broader_proof_capability() {
+        let verified = verified_child_token();
+        assert_allowed_capability(
+            &verified.authorize("did:key:z6Mkresource/photos", "store/add"),
+            "did:key:z6Mkresource/photos",
+            "store/add",
+        );
+
+        let decision = verified.authorize("did:key:z6Mkresource", "store/add");
+
+        assert_eq!(decision.denial_reason(), Some(&AuthorizationDenialReason::NoMatchingCapability));
+    }
+
+    #[test]
+    fn authorization_uses_effective_delegation_not_direct_capability_claims() {
+        let verified = VerifiedToken {
+            issuer: IssuerDid::new("did:key:z6Mkissuer").expect("issuer should validate"),
+            audience: AudienceDid::new("did:key:z6Mkaudience").expect("audience should validate"),
+            capabilities: capabilities("did:key:z6Mkresource", "store/*"),
+            proofs: ProofCollection::empty(),
+            effective: EffectiveDelegation {
+                capabilities: capabilities("did:key:z6Mkresource/photos", "store/add"),
+                time_bounds: token_time_bounds(),
+            },
+        };
+        assert_eq!(verified.capabilities().as_slice(), capabilities("did:key:z6Mkresource", "store/*").as_slice());
+
+        let decision = verified.authorize("did:key:z6Mkresource", "store/add");
+
+        assert_eq!(decision.denial_reason(), Some(&AuthorizationDenialReason::NoMatchingCapability));
+        assert_allowed_capability(
+            &verified.authorize("did:key:z6Mkresource/photos", "store/add"),
+            "did:key:z6Mkresource/photos",
+            "store/add",
+        );
     }
 
     #[test]
@@ -2297,10 +2367,20 @@ mod tests {
     }
 
     fn issue_request(issuer_key: &Ed25519SigningKey, audience: AudienceDid, proofs: ProofCollection) -> IssueRequest {
+        issue_request_with_capability(issuer_key, audience, proofs, "did:key:z6Mkresource", "store/*")
+    }
+
+    fn issue_request_with_capability(
+        issuer_key: &Ed25519SigningKey,
+        audience: AudienceDid,
+        proofs: ProofCollection,
+        resource: &str,
+        ability: &str,
+    ) -> IssueRequest {
         IssueRequest::new(
             issuer_key.clone(),
             audience,
-            capabilities("did:key:z6Mkresource", "store/*"),
+            capabilities(resource, ability),
             proofs,
             TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
@@ -2346,6 +2426,36 @@ mod tests {
             CapabilityDocument::new(resource.to_owned(), ability.to_owned()).expect("capability should validate"),
         ])
         .expect("capability set should validate")
+    }
+
+    fn verified_child_token() -> VerifiedToken {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
+        let context = verification_context(
+            vec![&parent_key, &child_key],
+            ProofCollection::from_tokens(vec![parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+        verify_compact_token(&child, &context).expect("delegation chain should verify")
+    }
+
+    fn assert_allowed_capability(decision: &AuthorizationDecision, resource: &str, ability: &str) {
+        assert!(decision.is_allowed());
+        assert_eq!(
+            decision.matched_capability().expect("match should be exposed"),
+            &CapabilityDocument::new(resource.to_owned(), ability.to_owned()).expect("capability should validate")
+        );
+    }
+
+    fn assert_malformed_denial(decision: &AuthorizationDecision) {
+        assert!(matches!(decision, AuthorizationDecision::Denied {
+            reason: AuthorizationDenialReason::MalformedRequest { .. }
+        }));
     }
 
     fn verification_context(
