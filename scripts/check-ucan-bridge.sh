@@ -27,6 +27,7 @@ require_pattern 'use verified_logic::ucan_temporal|compose_time_window_chain' sr
 require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sign_ed25519' src
 require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
 require_pattern 'use verified_logic::ucan_chain|proof_link_is_valid' src
+require_pattern 'use verified_logic::ucan_delegation_depth|proof_depth_within_budget' src
 require_pattern 'use verified_logic::ucan_revocation|revocation_reference_is_listed' src
 require_pattern 'use verified_logic::ucan_invocation|invocation_request_is_authorized|receipt_execution_is_valid|check_receipt_valid' src
 require_pattern 'use verified_logic::ucan_did|encode_ed25519_did_key' src
@@ -38,5 +39,6 @@ reject_pattern 'fn ability_has_wildcard_segment|ABILITY_SEGMENT_SEPARATOR|WILDCA
 reject_pattern 'parent\.audience\(\)\.as_str\(\) *!= *child_issuer\.as_str\(\)|child_issuer\.as_str\(\) *!= *parent\.audience\(\)\.as_str\(\)' src/token.rs
 reject_pattern 'self\.as_slice\(\)\.iter\(\)\.any\(\|candidate\| candidate == reference\)|candidate == reference\)\)|iter\(\)\.any\(\|existing\| existing == &reference\)' src/token.rs
 reject_pattern 'invoker: verified\.issuer\(\)\.clone\(\)' src/token.rs
+reject_pattern 'if depth > limits\.max_proof_depth\(\)|depth > limits\.max_proof_depth\(\)|chain_len - 1 <= max_depth' src/token.rs
 reject_pattern 'OnceLock|lazy_static|thread_local!|std::env|reqwest|ureq|hyper|process-global|global resolver|global proof|default resolver|default proof store|filesystem fallback|network fallback' src
 "$repo_root/scripts/check-ucan-core-no-std.sh"

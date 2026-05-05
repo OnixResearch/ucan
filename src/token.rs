@@ -23,6 +23,7 @@ use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
+use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
@@ -2510,8 +2511,8 @@ impl VerificationTraversal {
     }
 }
 
-const fn enforce_proof_depth(depth: usize, limits: VerificationLimits) -> TokenResult<()> {
-    if depth > limits.max_proof_depth() {
+fn enforce_proof_depth(depth: usize, limits: VerificationLimits) -> TokenResult<()> {
+    if !proof_depth_within_budget(depth, limits.max_proof_depth()) {
         return Err(TokenError::LimitExceeded {
             source: VerificationLimitError::ProofDepthExceeded {
                 depth,

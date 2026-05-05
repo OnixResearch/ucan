@@ -4,6 +4,7 @@ use verified_logic::scope;
 use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
 use verified_logic::ucan_chain;
+use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
 use verified_logic::ucan_invocation;
 use verified_logic::ucan_revocation;
@@ -306,6 +307,21 @@ pub fn invocation_request_is_authorized(
     )
 }
 
+/// Check a proof traversal depth against a maximum delegation-depth budget.
+///
+/// The shell's `depth` value is the number of proof hops from the leaf token.
+/// The verified primitive models a chain length where a leaf-only chain has
+/// length one and depth zero, so this bridge translates `depth` to
+/// `chain_len = depth + 1` before checking the budget. Overflow cannot be a
+/// valid finite chain length and is rejected.
+#[must_use]
+pub fn proof_depth_within_budget(depth: usize, max_depth: usize) -> bool {
+    let Some(chain_len) = depth.checked_add(1) else {
+        return false;
+    };
+    ucan_delegation_depth::check_depth_budget(chain_len, max_depth)
+}
+
 /// Check deterministic invocation receipt execution fields.
 ///
 /// This is the shell bridge to verified-logic's receipt-validity primitive. It
@@ -539,6 +555,7 @@ mod tests {
     use super::derive_ed25519_public_key;
     use super::encode_ed25519_did_key;
     use super::invocation_request_is_authorized;
+    use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
     use super::receipt_execution_is_valid;
     use super::revocation_reference_is_listed;
@@ -725,6 +742,14 @@ mod tests {
             "did:key:z6Mkresource",
             "store/add",
         ));
+    }
+
+    #[test]
+    fn proof_depth_budget_uses_verified_delegation_depth_semantics() {
+        assert!(proof_depth_within_budget(0, 0));
+        assert!(proof_depth_within_budget(3, 3));
+        assert!(!proof_depth_within_budget(4, 3));
+        assert!(!proof_depth_within_budget(usize::MAX, usize::MAX));
     }
 
     #[test]

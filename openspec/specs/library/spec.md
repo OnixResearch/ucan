@@ -361,8 +361,7 @@ r[library.resolver-proof-store.proof-store.missing-proof-is-structured]
 - AND the verifier MUST NOT silently ignore the missing proof
 
 ### Requirement: Recursive verification has deterministic limits
-
-Proof-chain verification MUST enforce explicit limits for traversal depth, proof count, and serialized compact-token byte size. The token-size limit MUST apply to the input token and to each resolved proof token before parsing.
+Proof-chain verification MUST enforce explicit limits for traversal depth, proof count, and serialized compact-token byte size. The token-size limit MUST apply to the input token and to each resolved proof token before parsing. Proof-depth budget admission MUST route through the vendored verified delegation-depth bridge so the shell does not maintain a parallel depth predicate.
 r[library.resolver-proof-store.verification-limits]
 
 #### Scenario: Serialized token size limit rejects oversized input
@@ -395,6 +394,13 @@ r[library.resolver-proof-store.verification-limits.cycle-detection-with-proof-st
 - GIVEN proof tokens that form a reference cycle through the proof store
 - WHEN verification traverses the chain
 - THEN verification MUST reject the cycle with a structured proof-chain error
+
+#### Scenario: Proof-depth budget uses verified delegation-depth semantics [r[library.resolver-proof-store.verification-limits.depth-budget-uses-verified-logic]]
+
+- GIVEN a verification traversal depth and a configured maximum proof depth
+- WHEN the verifier decides whether recursion may continue
+- THEN it MUST evaluate the depth budget through the verified delegation-depth bridge
+- AND it MUST preserve the existing structured limit-exceeded error when the bridge rejects the depth
 
 ### Requirement: Resolver/store abstractions preserve the core/shell boundary
 
