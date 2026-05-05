@@ -1168,7 +1168,7 @@ mod tests {
     #[test]
     fn test_base58btc_alphabet_validator_rejects_forbidden_chars() {
         assert!(base58btc_chars_valid(&b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".to_vec()));
-        for forbidden in [b'0', b'O', b'I', b'l', b'+'] {
+        for forbidden in *b"0OIl+" {
             assert!(!base58btc_chars_valid(&vec![forbidden]));
         }
     }

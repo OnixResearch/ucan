@@ -9,6 +9,7 @@ use verified_logic::ucan_chain;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
 use verified_logic::ucan_invocation;
+use verified_logic::ucan_proof_traversal;
 use verified_logic::ucan_revocation;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
@@ -136,6 +137,42 @@ pub struct VerifiedInvocationChainRequest {
     pub resource: String,
     pub ability: String,
     pub leaf_capability_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedProofTraversalEntry {
+    pub proof_reference: Vec<u8>,
+    pub issuer_did: String,
+    pub audience_did: String,
+    pub capabilities: Vec<CapabilityDocument>,
+    pub caveat_ids: Vec<Vec<u8>>,
+    pub expires_at_seconds: u64,
+    pub not_before_seconds: u64,
+    pub signature_valid: bool,
+    pub revoked: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedProofTraversalBudget {
+    pub max_depth: u64,
+    pub max_proofs: u64,
+    pub max_input_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedProofTraversalTarget {
+    pub resource: String,
+    pub ability: String,
+    pub now_seconds: u64,
+    pub tolerance_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedProofTraversalTranscript {
+    pub entries: Vec<VerifiedProofTraversalEntry>,
+    pub visited_references: Vec<Vec<u8>>,
+    pub total_input_bytes: u64,
+    pub target: VerifiedProofTraversalTarget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -516,6 +553,37 @@ pub fn invocation_chain_is_authorized(
         now_seconds,
         tolerance_seconds,
     ))
+}
+
+/// Check a finite proof traversal transcript produced by the shell.
+///
+/// This is the shell bridge to verified-logic's traversal-transcript model. It
+/// checks caller-supplied resolved entries, visited-reference alignment,
+/// duplicate-reference/cycle rejection, depth/proof/input-byte budgets,
+/// issuer/audience linkage, attenuation narrowing, ordered caveat-id
+/// preservation, leaf authorization, evaluation-time validity, and supplied
+/// revocation-denial facts.
+///
+/// It does not resolve proofs, parse compact UCANs, verify signatures from
+/// bytes, derive proof references, query revocation backends, evaluate opaque
+/// caveat policies, access storage/network backends, persist state, sign,
+/// replay-protect, or read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidCapability`] when any supplied
+/// traversal capability fails core capability validation.
+pub fn proof_traversal_transcript_is_valid(
+    transcript: &VerifiedProofTraversalTranscript,
+    budget: &VerifiedProofTraversalBudget,
+) -> VerifiedResult<bool> {
+    let transcript = to_proof_traversal_transcript(transcript)?;
+    let budget = ucan_proof_traversal::TraversalBudget {
+        max_depth: budget.max_depth,
+        max_proofs: budget.max_proofs,
+        max_input_bytes: budget.max_input_bytes,
+    };
+    Ok(ucan_proof_traversal::traversal_transcript_valid(&transcript, &budget))
 }
 
 /// Derive a Web-of-Trust principal digest from public key bytes.
@@ -1052,6 +1120,51 @@ fn to_verified_chain_entry(entry: &VerifiedChainEntry) -> VerifiedResult<ucan_ch
     })
 }
 
+fn to_proof_traversal_capability(
+    document: &CapabilityDocument,
+) -> VerifiedResult<ucan_proof_traversal::TraversalCapability> {
+    validate_capability_document(document)?;
+    Ok(ucan_proof_traversal::TraversalCapability {
+        resource: document.resource.as_bytes().to_vec(),
+        ability: document.ability.as_bytes().to_vec(),
+    })
+}
+
+fn to_proof_traversal_entry(
+    entry: &VerifiedProofTraversalEntry,
+) -> VerifiedResult<ucan_proof_traversal::TraversalEntry> {
+    let capabilities =
+        entry.capabilities.iter().map(to_proof_traversal_capability).collect::<VerifiedResult<Vec<_>>>()?;
+    Ok(ucan_proof_traversal::TraversalEntry {
+        proof_ref: entry.proof_reference.clone(),
+        issuer: entry.issuer_did.as_bytes().to_vec(),
+        audience: entry.audience_did.as_bytes().to_vec(),
+        capabilities,
+        caveat_ids: entry.caveat_ids.clone(),
+        nbf: entry.not_before_seconds,
+        exp: entry.expires_at_seconds,
+        signature_valid: entry.signature_valid,
+        revoked: entry.revoked,
+    })
+}
+
+fn to_proof_traversal_transcript(
+    transcript: &VerifiedProofTraversalTranscript,
+) -> VerifiedResult<ucan_proof_traversal::TraversalTranscript> {
+    let entries = transcript.entries.iter().map(to_proof_traversal_entry).collect::<VerifiedResult<Vec<_>>>()?;
+    Ok(ucan_proof_traversal::TraversalTranscript {
+        entries,
+        visited_refs: transcript.visited_references.clone(),
+        total_input_bytes: transcript.total_input_bytes,
+        target: ucan_proof_traversal::TraversalAuthorizationTarget {
+            resource: transcript.target.resource.as_bytes().to_vec(),
+            ability: transcript.target.ability.as_bytes().to_vec(),
+            now: transcript.target.now_seconds,
+            tolerance: transcript.target.tolerance_seconds,
+        },
+    })
+}
+
 fn build_token_payload(envelope: &TokenEnvelopeInput) -> VerifiedResult<ucan_token::UcanPayload> {
     let capabilities = build_token_capabilities(envelope.capabilities.as_slice())?;
     Ok(ucan_token::UcanPayload {
@@ -1195,6 +1308,10 @@ mod tests {
     use super::VerifiedChainEntry;
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedPrimitiveError;
+    use super::VerifiedProofTraversalBudget;
+    use super::VerifiedProofTraversalEntry;
+    use super::VerifiedProofTraversalTarget;
+    use super::VerifiedProofTraversalTranscript;
     use super::VerifiedWebOfTrustAttestation;
     use super::VerifiedWebOfTrustAuthorization;
     use super::VerifiedWebOfTrustCaveat;
@@ -1211,6 +1328,7 @@ mod tests {
     use super::invocation_request_is_authorized;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
+    use super::proof_traversal_transcript_is_valid;
     use super::receipt_execution_is_valid;
     use super::revocation_reference_is_listed;
     use super::sign_ed25519;
@@ -1919,6 +2037,97 @@ mod tests {
     }
 
     #[test]
+    fn proof_traversal_transcript_uses_verified_finite_traversal_model() {
+        let transcript = proof_traversal_transcript();
+        let budget = VerifiedProofTraversalBudget {
+            max_depth: 4,
+            max_proofs: 8,
+            max_input_bytes: 1024,
+        };
+
+        let valid =
+            proof_traversal_transcript_is_valid(&transcript, &budget).expect("proof traversal inputs should validate");
+        assert!(valid);
+
+        let mut duplicate_reference = transcript.clone();
+        duplicate_reference.visited_references[1] = duplicate_reference.visited_references[0].clone();
+        let valid = proof_traversal_transcript_is_valid(&duplicate_reference, &budget)
+            .expect("proof traversal inputs should validate");
+        assert!(!valid);
+
+        let mut revoked = transcript;
+        revoked.entries[0].revoked = true;
+        let valid =
+            proof_traversal_transcript_is_valid(&revoked, &budget).expect("proof traversal inputs should validate");
+        assert!(!valid);
+    }
+
+    #[test]
+    fn proof_traversal_transcript_rejects_link_budget_and_caveat_failures() {
+        let transcript = proof_traversal_transcript();
+        let budget = VerifiedProofTraversalBudget {
+            max_depth: 4,
+            max_proofs: 8,
+            max_input_bytes: 1024,
+        };
+
+        let mut broken_link = transcript.clone();
+        broken_link.entries[1].issuer_did = "did:key:zMallory".to_owned();
+        let valid =
+            proof_traversal_transcript_is_valid(&broken_link, &budget).expect("proof traversal inputs should validate");
+        assert!(!valid);
+
+        let tight_depth = VerifiedProofTraversalBudget { max_depth: 0, ..budget };
+        let valid = proof_traversal_transcript_is_valid(&transcript, &tight_depth)
+            .expect("proof traversal inputs should validate");
+        assert!(!valid);
+
+        let tight_count = VerifiedProofTraversalBudget {
+            max_proofs: 1,
+            ..budget
+        };
+        let valid = proof_traversal_transcript_is_valid(&transcript, &tight_count)
+            .expect("proof traversal inputs should validate");
+        assert!(!valid);
+
+        let tight_input = VerifiedProofTraversalBudget {
+            max_input_bytes: 128,
+            ..budget
+        };
+        let valid = proof_traversal_transcript_is_valid(&transcript, &tight_input)
+            .expect("proof traversal inputs should validate");
+        assert!(!valid);
+
+        let mut missing_caveat = transcript;
+        missing_caveat.entries[1].caveat_ids.clear();
+        let valid = proof_traversal_transcript_is_valid(&missing_caveat, &budget)
+            .expect("proof traversal inputs should validate");
+        assert!(!valid);
+    }
+
+    #[test]
+    fn proof_traversal_transcript_rejects_overbroad_or_mismatched_targets() {
+        let transcript = proof_traversal_transcript();
+        let budget = VerifiedProofTraversalBudget {
+            max_depth: 4,
+            max_proofs: 8,
+            max_input_bytes: 1024,
+        };
+
+        let mut overbroad_child = transcript.clone();
+        overbroad_child.entries[1].capabilities[0] = valid_capability("did:key:zOther", "store/add");
+        let valid = proof_traversal_transcript_is_valid(&overbroad_child, &budget)
+            .expect("proof traversal inputs should validate");
+        assert!(!valid);
+
+        let mut mismatched_target = transcript;
+        mismatched_target.target.ability = "store/remove".to_owned();
+        let valid = proof_traversal_transcript_is_valid(&mismatched_target, &budget)
+            .expect("proof traversal inputs should validate");
+        assert!(!valid);
+    }
+
+    #[test]
     fn ed25519_verification_rejects_wrong_message() {
         let secret_key = [SIGNING_KEY_BYTE; ucan_signature::SECRET_KEY_LEN];
         let public_key = derive_ed25519_public_key(&secret_key).expect("public key derivation should succeed");
@@ -1946,6 +2155,48 @@ mod tests {
             resource: resource.to_owned(),
             ability: ability.to_owned(),
             leaf_capability_index,
+        }
+    }
+
+    fn proof_traversal_entry(
+        proof_reference: &[u8],
+        issuer_did: &str,
+        audience_did: &str,
+        resource: &str,
+        caveat_ids: Vec<Vec<u8>>,
+    ) -> VerifiedProofTraversalEntry {
+        VerifiedProofTraversalEntry {
+            proof_reference: proof_reference.to_vec(),
+            issuer_did: issuer_did.to_owned(),
+            audience_did: audience_did.to_owned(),
+            capabilities: vec![valid_capability(resource, "store/add")],
+            caveat_ids,
+            expires_at_seconds: EXPIRES_AT_SECONDS,
+            not_before_seconds: ISSUED_AT_SECONDS,
+            signature_valid: true,
+            revoked: false,
+        }
+    }
+
+    fn proof_traversal_transcript() -> VerifiedProofTraversalTranscript {
+        let parent = proof_traversal_entry(b"root-proof", "did:key:zRoot", "did:key:zLeaf", VALID_RESOURCE, vec![
+            b"geo".to_vec(),
+        ]);
+        let child =
+            proof_traversal_entry(b"leaf-proof", "did:key:zLeaf", "did:key:zInvoker", VALID_RESOURCE_CHILD, vec![
+                b"geo".to_vec(),
+                b"rate".to_vec(),
+            ]);
+        VerifiedProofTraversalTranscript {
+            entries: vec![parent, child],
+            visited_references: vec![b"root-proof".to_vec(), b"leaf-proof".to_vec()],
+            total_input_bytes: 256,
+            target: VerifiedProofTraversalTarget {
+                resource: VALID_RESOURCE_CHILD.to_owned(),
+                ability: "store/add".to_owned(),
+                now_seconds: NOW_SECONDS,
+                tolerance_seconds: 0,
+            },
         }
     }
 
