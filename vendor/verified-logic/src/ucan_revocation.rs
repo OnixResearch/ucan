@@ -9,6 +9,9 @@
 
 use vstd::prelude::*;
 
+use crate::ucan_chain::ChainEntry;
+use crate::ucan_chain::check_chain_structural_valid;
+
 verus! {
 
 /// A revocation set: CID bytes that have been revoked.
@@ -51,6 +54,30 @@ pub open spec fn revset_superset_spec(a: Seq<Seq<u8>>, b: Seq<Seq<u8>>) -> bool 
     forall|i: int| #![trigger a[i]]
         0 <= i < a.len() ==>
         exists|j: int| 0 <= j < b.len() && #[trigger] b[j] =~= a[i]
+}
+
+/// Exec-facing revocation-free predicate over caller-provided CID bytes.
+// r[impl ucan-revocation.chain-integration]
+pub open spec fn chain_not_revoked_entries_spec(
+    revset: Seq<Seq<u8>>,
+    chain_cids: Seq<Vec<u8>>,
+) -> bool {
+    forall|i: int| #![trigger chain_cids[i]]
+        0 <= i < chain_cids.len() ==> !is_revoked_spec(revset, chain_cids[i]@)
+}
+
+/// Structural chain validation plus CID revocation admission.
+// r[impl ucan-revocation.chain-integration]
+pub open spec fn chain_structural_revocation_valid_spec(
+    revset: Seq<Seq<u8>>,
+    chain: Seq<ChainEntry>,
+    chain_cids: Seq<Vec<u8>>,
+    now: u64,
+    tolerance: u64,
+) -> bool {
+    chain_cids.len() == chain.len()
+    && crate::ucan_chain::chain_structural_valid_entries_spec(chain, now, tolerance)
+    && chain_not_revoked_entries_spec(revset, chain_cids)
 }
 
 // --- Exec: revocation check ---
@@ -108,9 +135,7 @@ pub fn is_revoked(revset: &RevocationSet, cid: &Vec<u8>) -> (result: bool)
 // r[impl ucan-revocation.chain-integration]
 pub fn check_chain_not_revoked(revset: &RevocationSet, chain_cids: &Vec<Vec<u8>>) -> (result: bool)
     ensures
-        result ==> forall|k: int| #![trigger chain_cids@[k]]
-            0 <= k < chain_cids@.len() ==>
-            !is_revoked_spec(revset_view(revset), chain_cids@[k]@),
+        result ==> chain_not_revoked_entries_spec(revset_view(revset), chain_cids@),
         !result ==> exists|k: int| #![trigger chain_cids@[k]]
             0 <= k < chain_cids@.len()
             && is_revoked_spec(revset_view(revset), chain_cids@[k]@),
@@ -128,6 +153,41 @@ pub fn check_chain_not_revoked(revset: &RevocationSet, chain_cids: &Vec<Vec<u8>>
             return false;
         }
         i = i + 1;
+    }
+    true
+}
+
+/// Check structural chain validity and CID revocation admission together.
+///
+/// This composes the finite structural chain checker with a caller-provided list
+/// of resolved proof CIDs. The checker rejects if the CID vector does not align
+/// one-to-one with the chain entries or if any CID is present in the revocation
+/// set. It does not claim revocation-list freshness or external registry
+/// correctness.
+// r[impl ucan-revocation.chain-integration]
+pub fn check_chain_structural_valid_not_revoked(
+    revset: &RevocationSet,
+    chain: &Vec<ChainEntry>,
+    chain_cids: &Vec<Vec<u8>>,
+    now: u64,
+    tolerance: u64,
+) -> (result: bool)
+    ensures result == chain_structural_revocation_valid_spec(
+        revset_view(revset),
+        chain@,
+        chain_cids@,
+        now,
+        tolerance,
+    ),
+{
+    if chain_cids.len() != chain.len() {
+        return false;
+    }
+    if !check_chain_structural_valid(chain, now, tolerance) {
+        return false;
+    }
+    if !check_chain_not_revoked(revset, chain_cids) {
+        return false;
     }
     true
 }
@@ -253,5 +313,57 @@ mod tests {
         assert!(is_revoked(&rs2, &b"cid2".to_vec()));
         // cid1 still revoked
         assert!(is_revoked(&rs2, &b"cid1".to_vec()));
+    }
+
+    fn entry(iss: &[u8], aud: &[u8], resource: &[u8], ability: &[u8]) -> ChainEntry {
+        ChainEntry {
+            iss: iss.to_vec(),
+            aud: aud.to_vec(),
+            att: vec![(resource.to_vec(), ability.to_vec())],
+            exp: 200,
+            nbf: 0,
+            sig_valid: true,
+        }
+    }
+
+    #[test]
+    fn test_structural_chain_not_revoked_accepts_valid_clear_chain() {
+        let rs = make_revset(&[b"revoked"]);
+        let chain = vec![
+            entry(b"root", b"alice", b"store://", b"read"),
+            entry(b"alice", b"bob", b"store://bucket", b"read"),
+        ];
+        let cids = vec![b"root-cid".to_vec(), b"leaf-cid".to_vec()];
+        assert!(check_chain_structural_valid_not_revoked(&rs, &chain, &cids, 100, 0));
+    }
+
+    #[test]
+    fn test_structural_chain_not_revoked_rejects_revoked_cid() {
+        let rs = make_revset(&[b"leaf-cid"]);
+        let chain = vec![
+            entry(b"root", b"alice", b"store://", b"read"),
+            entry(b"alice", b"bob", b"store://bucket", b"read"),
+        ];
+        let cids = vec![b"root-cid".to_vec(), b"leaf-cid".to_vec()];
+        assert!(!check_chain_structural_valid_not_revoked(&rs, &chain, &cids, 100, 0));
+    }
+
+    #[test]
+    fn test_structural_chain_not_revoked_rejects_cid_length_mismatch() {
+        let rs = make_revset(&[]);
+        let chain = vec![entry(b"root", b"alice", b"store://", b"read")];
+        let cids = vec![];
+        assert!(!check_chain_structural_valid_not_revoked(&rs, &chain, &cids, 100, 0));
+    }
+
+    #[test]
+    fn test_structural_chain_not_revoked_rejects_invalid_chain() {
+        let rs = make_revset(&[]);
+        let chain = vec![
+            entry(b"root", b"alice", b"store://", b"read"),
+            entry(b"mallory", b"bob", b"store://bucket", b"read"),
+        ];
+        let cids = vec![b"root-cid".to_vec(), b"leaf-cid".to_vec()];
+        assert!(!check_chain_structural_valid_not_revoked(&rs, &chain, &cids, 100, 0));
     }
 }

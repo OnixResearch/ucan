@@ -14,28 +14,19 @@ verus! {
 
 /// Extract the raw public key bytes from a DID-key encoded byte sequence.
 /// Returns None if the DID doesn't start with the expected prefix.
-/// This is a spec-level model that mirrors ucan_did::decode_did_key_spec.
+/// This is a spec-level projection of ucan_did::decode_did_key_spec.
 // r[impl ucan-principal-link.did-to-key]
 pub open spec fn extract_key_from_did_spec(did_bytes: Seq<u8>) -> Option<Seq<u8>> {
-    extract_key_inner_spec(did_bytes)
-}
-
-/// Uninterpreted DID key extraction (full pipeline).
-pub uninterp spec fn extract_key_inner_spec(did_bytes: Seq<u8>) -> Option<Seq<u8>>;
-
-/// Axiom: encoding then extracting yields the original key.
-// r[verify ucan-principal-link.did-to-key]
-#[verifier::external_body]
-pub proof fn axiom_did_encode_extract_round_trip(key: Seq<u8>, codec: u64)
-    ensures ({
-        let encoded = encode_did_key_for_link_spec(key, codec);
-        extract_key_inner_spec(encoded) == Some(key)
-    }),
-{
+    match crate::ucan_did::decode_did_key_spec(did_bytes) {
+        Some((key, _codec)) => Some(key),
+        None => None,
+    }
 }
 
 /// Spec-level DID encoding (mirrors ucan_did::encode_did_key_spec).
-pub uninterp spec fn encode_did_key_for_link_spec(key: Seq<u8>, codec: u64) -> Seq<u8>;
+pub open spec fn encode_did_key_for_link_spec(key: Seq<u8>, codec: u64) -> Seq<u8> {
+    crate::ucan_did::encode_did_key_spec(key, codec)
+}
 
 /// Principal ID from raw key bytes (mirrors web_of_trust_principal).
 pub uninterp spec fn blake3_digest_for_link_spec(input: Seq<u8>) -> Seq<u8>;
@@ -63,6 +54,17 @@ pub open spec fn same_key_same_principal_spec(key1: Seq<u8>, key2: Seq<u8>) -> b
 
 // --- Proofs ---
 
+/// Encoding then extracting yields the original key.
+// r[verify ucan-principal-link.did-to-key]
+pub proof fn did_encode_extract_round_trip(key: Seq<u8>, codec: u64)
+    ensures ({
+        let encoded = encode_did_key_for_link_spec(key, codec);
+        extract_key_from_did_spec(encoded) == Some(key)
+    }),
+{
+    crate::ucan_did::did_key_round_trip(key, codec);
+}
+
 /// Same key bytes always produce the same principal fingerprint.
 // r[verify ucan-principal-link.key-to-principal]
 pub proof fn same_key_same_principal(key: Seq<u8>)
@@ -79,8 +81,8 @@ pub proof fn did_round_trip_same_principal(key: Seq<u8>, codec: u64)
     }),
 {
     let did = encode_did_key_for_link_spec(key, codec);
-    axiom_did_encode_extract_round_trip(key, codec);
-    assert(extract_key_inner_spec(did) == Some(key));
+    did_encode_extract_round_trip(key, codec);
+    assert(extract_key_from_did_spec(did) == Some(key));
 }
 
 /// If two DIDs encode the same key (same codec), they yield the same principal.
@@ -93,7 +95,7 @@ pub proof fn two_dids_same_key_same_principal(key: Seq<u8>, codec: u64)
     }),
 {
     let did = encode_did_key_for_link_spec(key, codec);
-    axiom_did_encode_extract_round_trip(key, codec);
+    did_encode_extract_round_trip(key, codec);
 }
 
 /// If DID extraction fails, no principal can be derived.

@@ -263,52 +263,82 @@ mod tests {
     #[test]
     fn test_time_bound_satisfied() {
         let c = Caveat::TimeBound { not_after: 1000 };
-        let ctx = CaveatContext { now: 500, count_in_window: 0 };
+        let ctx = CaveatContext {
+            now: 500,
+            count_in_window: 0,
+        };
         assert!(caveat_satisfied(&c, &ctx));
     }
 
     #[test]
     fn test_time_bound_expired() {
         let c = Caveat::TimeBound { not_after: 1000 };
-        let ctx = CaveatContext { now: 1500, count_in_window: 0 };
+        let ctx = CaveatContext {
+            now: 1500,
+            count_in_window: 0,
+        };
         assert!(!caveat_satisfied(&c, &ctx));
     }
 
     #[test]
     fn test_rate_limit_satisfied() {
-        let c = Caveat::RateLimit { max_count: 100, window_secs: 3600 };
-        let ctx = CaveatContext { now: 0, count_in_window: 50 };
+        let c = Caveat::RateLimit {
+            max_count: 100,
+            window_secs: 3600,
+        };
+        let ctx = CaveatContext {
+            now: 0,
+            count_in_window: 50,
+        };
         assert!(caveat_satisfied(&c, &ctx));
     }
 
     #[test]
     fn test_rate_limit_exceeded() {
-        let c = Caveat::RateLimit { max_count: 100, window_secs: 3600 };
-        let ctx = CaveatContext { now: 0, count_in_window: 150 };
+        let c = Caveat::RateLimit {
+            max_count: 100,
+            window_secs: 3600,
+        };
+        let ctx = CaveatContext {
+            now: 0,
+            count_in_window: 150,
+        };
         assert!(!caveat_satisfied(&c, &ctx));
     }
 
     #[test]
     fn test_set_conjunction() {
-        let set = vec![
-            Caveat::TimeBound { not_after: 2000 },
-            Caveat::RateLimit { max_count: 100, window_secs: 3600 },
-        ];
+        let set = vec![Caveat::TimeBound { not_after: 2000 }, Caveat::RateLimit {
+            max_count: 100,
+            window_secs: 3600,
+        }];
         // Both satisfied
-        let ctx1 = CaveatContext { now: 1000, count_in_window: 50 };
+        let ctx1 = CaveatContext {
+            now: 1000,
+            count_in_window: 50,
+        };
         assert!(caveat_set_satisfied(&set, &ctx1));
         // Time bound failed
-        let ctx2 = CaveatContext { now: 3000, count_in_window: 50 };
+        let ctx2 = CaveatContext {
+            now: 3000,
+            count_in_window: 50,
+        };
         assert!(!caveat_set_satisfied(&set, &ctx2));
         // Rate limit failed
-        let ctx3 = CaveatContext { now: 1000, count_in_window: 200 };
+        let ctx3 = CaveatContext {
+            now: 1000,
+            count_in_window: 200,
+        };
         assert!(!caveat_set_satisfied(&set, &ctx3));
     }
 
     #[test]
     fn test_intersection() {
         let a = vec![Caveat::TimeBound { not_after: 2000 }];
-        let b = vec![Caveat::RateLimit { max_count: 50, window_secs: 3600 }];
+        let b = vec![Caveat::RateLimit {
+            max_count: 50,
+            window_secs: 3600,
+        }];
         let combined = caveat_intersect(&a, &b);
         assert_eq!(combined.len(), 2);
     }

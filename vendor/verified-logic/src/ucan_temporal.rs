@@ -246,10 +246,7 @@ mod tests {
 
     #[test]
     fn test_two_overlapping() {
-        let w = vec![
-            TimeWindow { nbf: 100, exp: 300 },
-            TimeWindow { nbf: 200, exp: 400 },
-        ];
+        let w = vec![TimeWindow { nbf: 100, exp: 300 }, TimeWindow { nbf: 200, exp: 400 }];
         let c = compose_chain(&w);
         assert_eq!(c.nbf, 200);
         assert_eq!(c.exp, 300);
@@ -269,10 +266,7 @@ mod tests {
 
     #[test]
     fn test_non_overlapping_empty() {
-        let w = vec![
-            TimeWindow { nbf: 100, exp: 200 },
-            TimeWindow { nbf: 300, exp: 400 },
-        ];
+        let w = vec![TimeWindow { nbf: 100, exp: 200 }, TimeWindow { nbf: 300, exp: 400 }];
         let c = compose_chain(&w);
         // nbf=300, exp=200 -> empty window
         assert!(c.nbf > c.exp);
@@ -280,10 +274,7 @@ mod tests {
 
     #[test]
     fn test_subset_window() {
-        let w = vec![
-            TimeWindow { nbf: 0, exp: 1000 },
-            TimeWindow { nbf: 100, exp: 200 },
-        ];
+        let w = vec![TimeWindow { nbf: 0, exp: 1000 }, TimeWindow { nbf: 100, exp: 200 }];
         let c = compose_chain(&w);
         assert_eq!(c.nbf, 100);
         assert_eq!(c.exp, 200);

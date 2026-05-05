@@ -6,9 +6,10 @@
 
 use vstd::prelude::*;
 
+use crate::sel4_tcb::Tcb;
+use crate::sel4_tcb::TcbState;
 #[cfg(verus_keep_ghost)]
 use crate::sel4_tcb::runnable_state_spec;
-use crate::sel4_tcb::{Tcb, TcbState};
 
 verus! {
 
@@ -570,15 +571,11 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::sel4_tcb::{new_tcb, Tcb};
+    use crate::sel4_tcb::Tcb;
+    use crate::sel4_tcb::new_tcb;
 
     fn sample_tcbs() -> Vec<Tcb> {
-        vec![
-            new_tcb(10, 1),
-            new_tcb(11, 3),
-            new_tcb(12, 2),
-            new_tcb(13, 3),
-        ]
+        vec![new_tcb(10, 1), new_tcb(11, 3), new_tcb(12, 2), new_tcb(13, 3)]
     }
 
     // r[verify sel4-ready-queue.consistency]

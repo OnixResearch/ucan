@@ -3,18 +3,23 @@
 //! Models a parent-indexed key forest plus a keystore of currently present
 //! keys. Data are represented only by their bound leaf key.
 
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
+#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 
 use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
-use vstd::set::{
-    axiom_set_contains_len, axiom_set_empty_finite, axiom_set_empty_len, axiom_set_insert_finite,
-    axiom_set_insert_len, axiom_set_remove_finite, axiom_set_remove_len,
-};
+use vstd::set::axiom_set_contains_len;
+#[cfg(verus_keep_ghost)]
+use vstd::set::axiom_set_empty_finite;
+#[cfg(verus_keep_ghost)]
+use vstd::set::axiom_set_empty_len;
+#[cfg(verus_keep_ghost)]
+use vstd::set::axiom_set_insert_finite;
+#[cfg(verus_keep_ghost)]
+use vstd::set::axiom_set_insert_len;
+#[cfg(verus_keep_ghost)]
+use vstd::set::axiom_set_remove_finite;
+#[cfg(verus_keep_ghost)]
+use vstd::set::axiom_set_remove_len;
 
 verus! {
 
@@ -1301,8 +1306,9 @@ pub proof fn rotate_new_parent_shed_breaks_recoverability(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use proptest::prelude::*;
+
+    use super::*;
 
     fn canonical_tree(raw: &[usize]) -> KeyTree {
         let mut parents: Vec<Option<u64>> = Vec::with_capacity(raw.len());
@@ -1328,7 +1334,9 @@ mod tests {
     }
 
     fn full_keystore(len: usize) -> Keystore {
-        Keystore { present: vec![true; len] }
+        Keystore {
+            present: vec![true; len],
+        }
     }
 
     fn valid_rotation_targets(tree: &KeyTree, leaf: usize) -> Vec<usize> {
@@ -1348,27 +1356,35 @@ mod tests {
     // r[verify cryptoshedding.tree-well-formedness]
     #[test]
     fn well_formed_accepts_valid_forest() {
-        let tree = KeyTree { parents: vec![None, Some(0), None, Some(2), Some(3)] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), None, Some(2), Some(3)],
+        };
         assert!(well_formed(&tree));
     }
 
     // r[verify cryptoshedding.tree-well-formedness]
     #[test]
     fn well_formed_rejects_out_of_bounds_parent() {
-        let tree = KeyTree { parents: vec![None, Some(7)] };
+        let tree = KeyTree {
+            parents: vec![None, Some(7)],
+        };
         assert!(!well_formed(&tree));
     }
 
     // r[verify cryptoshedding.tree-well-formedness]
     #[test]
     fn well_formed_rejects_cycle() {
-        let tree = KeyTree { parents: vec![Some(1), Some(0)] };
+        let tree = KeyTree {
+            parents: vec![Some(1), Some(0)],
+        };
         assert!(!well_formed(&tree));
     }
 
     #[test]
     fn on_chain_linear_chain() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(1), Some(2)] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(1), Some(2)],
+        };
         assert!(on_chain(&tree, 3, 2));
         assert!(on_chain(&tree, 3, 1));
         assert!(on_chain(&tree, 3, 0));
@@ -1378,7 +1394,9 @@ mod tests {
 
     #[test]
     fn on_chain_branching_forest() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(0), None, Some(3)] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(0), None, Some(3)],
+        };
         assert!(on_chain(&tree, 2, 0));
         assert!(on_chain(&tree, 4, 3));
         assert!(!on_chain(&tree, 4, 0));
@@ -1388,24 +1406,36 @@ mod tests {
     // r[verify cryptoshedding.chain-recoverability]
     #[test]
     fn recoverable_full_chain_present() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(1)] };
-        let keystore = Keystore { present: vec![true, true, true] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(1)],
+        };
+        let keystore = Keystore {
+            present: vec![true, true, true],
+        };
         assert!(is_recoverable(&tree, &keystore, 2));
     }
 
     // r[verify cryptoshedding.chain-recoverability]
     #[test]
     fn recoverable_intermediate_missing() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(1)] };
-        let keystore = Keystore { present: vec![true, false, true] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(1)],
+        };
+        let keystore = Keystore {
+            present: vec![true, false, true],
+        };
         assert!(!is_recoverable(&tree, &keystore, 2));
     }
 
     // r[verify cryptoshedding.chain-recoverability]
     #[test]
     fn recoverable_leaf_missing() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(1)] };
-        let keystore = Keystore { present: vec![true, true, false] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(1)],
+        };
+        let keystore = Keystore {
+            present: vec![true, true, false],
+        };
         assert!(!is_recoverable(&tree, &keystore, 2));
     }
 
@@ -1413,7 +1443,9 @@ mod tests {
     // r[verify cryptoshedding.idempotent-destruction]
     #[test]
     fn shed_clears_key() {
-        let keystore = Keystore { present: vec![true, true, true] };
+        let keystore = Keystore {
+            present: vec![true, true, true],
+        };
         let shed_once = shed(&keystore, 1);
         assert_eq!(shed_once.present, vec![true, false, true]);
         let shed_twice = shed(&shed_once, 1);
@@ -1423,8 +1455,12 @@ mod tests {
     // r[verify cryptoshedding.shed-isolation]
     #[test]
     fn shed_isolation_sibling_unaffected() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(1), Some(0)] };
-        let keystore = Keystore { present: vec![true, true, true, true] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(1), Some(0)],
+        };
+        let keystore = Keystore {
+            present: vec![true, true, true, true],
+        };
         let shed_i = shed(&keystore, 1);
         assert!(!is_recoverable(&tree, &shed_i, 2));
         assert!(is_recoverable(&tree, &shed_i, 3));
@@ -1434,7 +1470,9 @@ mod tests {
     // r[verify cryptoshedding.idempotent-destruction]
     #[test]
     fn shed_multiple_keys_and_repeat_is_stable() {
-        let keystore = Keystore { present: vec![true, true, true, true] };
+        let keystore = Keystore {
+            present: vec![true, true, true, true],
+        };
         let once = shed(&keystore, 1);
         let twice = shed(&once, 3);
         let thrice = shed(&twice, 1);
@@ -1446,8 +1484,12 @@ mod tests {
     // r[verify cryptoshedding.subtree-shedding]
     #[test]
     fn subtree_shedding_internal_key_breaks_descendants() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(1), Some(1), Some(0)] };
-        let keystore = Keystore { present: vec![true, true, true, true, true] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(1), Some(1), Some(0)],
+        };
+        let keystore = Keystore {
+            present: vec![true, true, true, true, true],
+        };
         let shed_i = shed(&keystore, 1);
         assert!(!is_recoverable(&tree, &shed_i, 2));
         assert!(!is_recoverable(&tree, &shed_i, 3));
@@ -1457,15 +1499,21 @@ mod tests {
     // r[verify cryptoshedding.subtree-shedding]
     #[test]
     fn subtree_shedding_deep_chain_breaks_tail_leaf() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(1), Some(2), Some(3)] };
-        let keystore = Keystore { present: vec![true, true, true, true, true] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(1), Some(2), Some(3)],
+        };
+        let keystore = Keystore {
+            present: vec![true, true, true, true, true],
+        };
         let shed_mid = shed(&keystore, 2);
         assert!(!is_recoverable(&tree, &shed_mid, 4));
     }
 
     #[test]
     fn rotate_reparents_leaf() {
-        let tree = KeyTree { parents: vec![None, None, Some(0)] };
+        let tree = KeyTree {
+            parents: vec![None, None, Some(0)],
+        };
         let rotated = rotate(&tree, 2, 1);
         assert_eq!(rotated.parents, vec![None, None, Some(1)]);
     }
@@ -1473,18 +1521,30 @@ mod tests {
     // r[verify cryptoshedding.rotation-correctness]
     #[test]
     fn rotate_cross_tree_reparents_leaf() {
-        let tree = KeyTree { parents: vec![None, Some(0), None, Some(2), Some(1)] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), None, Some(2), Some(1)],
+        };
         let rotated = rotate(&tree, 4, 3);
         assert_eq!(rotated.parents, vec![None, Some(0), None, Some(2), Some(3)]);
-        assert!(is_recoverable(&rotated, &Keystore { present: vec![true, true, true, true, true] }, 4));
+        assert!(is_recoverable(
+            &rotated,
+            &Keystore {
+                present: vec![true, true, true, true, true]
+            },
+            4
+        ));
     }
 
     // r[verify cryptoshedding.rotation-correctness]
     #[test]
     fn rotate_old_parent_shed_preserves_recoverability() {
-        let tree = KeyTree { parents: vec![None, Some(0), Some(0), Some(1)] };
+        let tree = KeyTree {
+            parents: vec![None, Some(0), Some(0), Some(1)],
+        };
         let rotated = rotate(&tree, 3, 2);
-        let keystore = Keystore { present: vec![true, true, true, true] };
+        let keystore = Keystore {
+            present: vec![true, true, true, true],
+        };
         let shed_old = shed(&keystore, 1);
         assert!(is_recoverable(&rotated, &shed_old, 3));
     }
@@ -1492,9 +1552,13 @@ mod tests {
     // r[verify cryptoshedding.rotation-correctness]
     #[test]
     fn rotate_new_parent_shed_breaks_recoverability() {
-        let tree = KeyTree { parents: vec![None, None, Some(0)] };
+        let tree = KeyTree {
+            parents: vec![None, None, Some(0)],
+        };
         let rotated = rotate(&tree, 2, 1);
-        let keystore = Keystore { present: vec![true, true, true] };
+        let keystore = Keystore {
+            present: vec![true, true, true],
+        };
         assert!(is_recoverable(&rotated, &keystore, 2));
         let shed_new = shed(&keystore, 1);
         assert!(!is_recoverable(&rotated, &shed_new, 2));

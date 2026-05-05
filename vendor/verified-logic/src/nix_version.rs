@@ -203,8 +203,6 @@ proof fn comp_end_bounds(s: Seq<u8>, i: int, numeric: bool)
 // --- Main proofs ---
 
 /// cv_fuel antisymmetry: cv_fuel(a,b) == -cv_fuel(b,a).
-/// @verified-logic:permanent-z3-limit — 8+ levels of nested let+if/else exceed rlimit
-#[verifier::external_body]
 proof fn cv_fuel_antisymmetric(
     a: Seq<u8>, ai: int, b: Seq<u8>, bi: int, fuel: nat,
 )
@@ -229,27 +227,56 @@ proof fn cv_fuel_antisymmetric(
             comp_end_bounds(b, bi2, b_dig);
             let a_end = comp_end(a, ai2, a_dig);
             let b_end = comp_end(b, bi2, b_dig);
-            if a_end > ai2 && b_end > bi2 && a_dig == b_dig {
-                if a_dig {
-                    if parse_num_from(a, ai2, a_end) == parse_num_from(b, bi2, b_end) {
-                        cv_fuel_antisymmetric(a, a_end, b, b_end, (fuel - 1) as nat);
-                    }
-                } else {
-                    lex_cmp_antisymmetric(a, ai2, a_end, b, bi2, b_end);
-                    if lex_cmp(a, ai2, a_end, b, bi2, b_end) == 0 {
-                        cv_fuel_antisymmetric(a, a_end, b, b_end, (fuel - 1) as nat);
-                    }
+            if a_end == ai2 && b_end != bi2 {
+                assert(cv_fuel(a, ai, b, bi, fuel) == -1);
+                assert(cv_fuel(b, bi, a, ai, fuel) == 1);
+            } else if a_end != ai2 && b_end == bi2 {
+                assert(cv_fuel(a, ai, b, bi, fuel) == 1);
+                assert(cv_fuel(b, bi, a, ai, fuel) == -1);
+            } else if a_dig && !b_dig {
+                assert(cv_fuel(a, ai, b, bi, fuel) == 1);
+                assert(cv_fuel(b, bi, a, ai, fuel) == -1);
+            } else if !a_dig && b_dig {
+                assert(cv_fuel(a, ai, b, bi, fuel) == -1);
+                assert(cv_fuel(b, bi, a, ai, fuel) == 1);
+            } else if a_dig {
+                if parse_num_from(a, ai2, a_end) == parse_num_from(b, bi2, b_end) {
+                    cv_fuel_antisymmetric(a, a_end, b, b_end, (fuel - 1) as nat);
+                }
+            } else {
+                lex_cmp_antisymmetric(a, ai2, a_end, b, bi2, b_end);
+                if lex_cmp(a, ai2, a_end, b, bi2, b_end) == 0 {
+                    cv_fuel_antisymmetric(a, a_end, b, b_end, (fuel - 1) as nat);
                 }
             }
         } else if ai2 < a.len() {
             let a_dig = is_digit_byte(a[ai2]);
             comp_end_bounds(a, ai2, a_dig);
+            let a_end = comp_end(a, ai2, a_dig);
             assert(comp_end(b, bi2, false) == bi2);
+            if a_end == ai2 && !a_dig {
+                lex_cmp_antisymmetric(a, ai2, a_end, b, bi2, bi2);
+                cv_fuel_antisymmetric(a, a_end, b, bi2, (fuel - 1) as nat);
+            } else {
+                assert(cv_fuel(a, ai, b, bi, fuel) == 1);
+                assert(cv_fuel(b, bi, a, ai, fuel) == -1);
+            }
         } else {
             let b_dig = is_digit_byte(b[bi2]);
             comp_end_bounds(b, bi2, b_dig);
+            let b_end = comp_end(b, bi2, b_dig);
             assert(comp_end(a, ai2, false) == ai2);
+            if b_end == bi2 && !b_dig {
+                lex_cmp_antisymmetric(a, ai2, ai2, b, bi2, b_end);
+                cv_fuel_antisymmetric(a, ai2, b, b_end, (fuel - 1) as nat);
+            } else {
+                assert(cv_fuel(a, ai, b, bi, fuel) == -1);
+                assert(cv_fuel(b, bi, a, ai, fuel) == 1);
+            }
         }
+    } else {
+        assert(cv_fuel(a, ai, b, bi, fuel) == 0);
+        assert(cv_fuel(b, bi, a, ai, fuel) == 0);
     }
 }
 
@@ -263,8 +290,6 @@ pub proof fn compare_versions_antisymmetric(a: Seq<u8>, b: Seq<u8>)
 }
 
 /// cv_fuel reflexivity: cv_fuel(a, a) == 0.
-/// @verified-logic:permanent-z3-limit — 8+ levels of nested let+if/else exceed rlimit
-#[verifier::external_body]
 proof fn cv_fuel_reflexive(a: Seq<u8>, ai: int, fuel: nat)
     requires 0 <= ai, ai <= a.len()
     ensures cv_fuel(a, ai, a, ai, fuel) == 0
@@ -282,6 +307,9 @@ proof fn cv_fuel_reflexive(a: Seq<u8>, ai: int, fuel: nat)
                     lex_cmp_reflexive(a, ai2, a_end);
                 }
                 cv_fuel_reflexive(a, a_end, (fuel - 1) as nat);
+            } else {
+                lex_cmp_reflexive(a, ai2, a_end);
+                cv_fuel_reflexive(a, ai2, (fuel - 1) as nat);
             }
         }
     }
@@ -296,8 +324,6 @@ pub proof fn compare_versions_reflexive(a: Seq<u8>)
 }
 
 /// cv_fuel range: result is in {-1, 0, 1}.
-/// @verified-logic:permanent-z3-limit — 8+ levels of nested let+if/else exceed rlimit
-#[verifier::external_body]
 proof fn cv_fuel_range(
     a: Seq<u8>, ai: int, b: Seq<u8>, bi: int, fuel: nat,
 )
@@ -319,29 +345,51 @@ proof fn cv_fuel_range(
             comp_end_bounds(b, bi2, b_dig);
             let a_end = comp_end(a, ai2, a_dig);
             let b_end = comp_end(b, bi2, b_dig);
-            if a_end > ai2 && b_end > bi2 && a_dig == b_dig {
-                if a_dig {
-                    if parse_num_from(a, ai2, a_end) == parse_num_from(b, bi2, b_end) {
-                        cv_fuel_range(a, a_end, b, b_end, (fuel - 1) as nat);
-                    }
-                } else {
-                    lex_cmp_range(a, ai2, a_end, b, bi2, b_end);
-                    if lex_cmp(a, ai2, a_end, b, bi2, b_end) == 0 {
-                        cv_fuel_range(a, a_end, b, b_end, (fuel - 1) as nat);
-                    }
+            if a_end == ai2 && b_end != bi2 {
+                assert(cv_fuel(a, ai, b, bi, fuel) == -1);
+            } else if a_end != ai2 && b_end == bi2 {
+                assert(cv_fuel(a, ai, b, bi, fuel) == 1);
+            } else if a_dig && !b_dig {
+                assert(cv_fuel(a, ai, b, bi, fuel) == 1);
+            } else if !a_dig && b_dig {
+                assert(cv_fuel(a, ai, b, bi, fuel) == -1);
+            } else if a_dig {
+                if parse_num_from(a, ai2, a_end) == parse_num_from(b, bi2, b_end) {
+                    cv_fuel_range(a, a_end, b, b_end, (fuel - 1) as nat);
+                }
+            } else {
+                lex_cmp_range(a, ai2, a_end, b, bi2, b_end);
+                if lex_cmp(a, ai2, a_end, b, bi2, b_end) == 0 {
+                    cv_fuel_range(a, a_end, b, b_end, (fuel - 1) as nat);
                 }
             }
         } else if ai2 < a.len() {
             let a_dig = is_digit_byte(a[ai2]);
             comp_end_bounds(a, ai2, a_dig);
+            let a_end = comp_end(a, ai2, a_dig);
             assert(comp_end(b, bi2, false) == bi2);
-            assert(comp_end(a, ai2, a_dig) >= ai2);
+            if a_end == ai2 && !a_dig {
+                lex_cmp_range(a, ai2, a_end, b, bi2, bi2);
+                cv_fuel_range(a, a_end, b, bi2, (fuel - 1) as nat);
+            } else {
+                assert(cv_fuel(a, ai, b, bi, fuel) == 1);
+            }
         } else if bi2 < b.len() {
             let b_dig = is_digit_byte(b[bi2]);
             comp_end_bounds(b, bi2, b_dig);
+            let b_end = comp_end(b, bi2, b_dig);
             assert(comp_end(a, ai2, false) == ai2);
-            assert(comp_end(b, bi2, b_dig) >= bi2);
+            if b_end == bi2 && !b_dig {
+                lex_cmp_range(a, ai2, ai2, b, bi2, b_end);
+                cv_fuel_range(a, ai2, b, b_end, (fuel - 1) as nat);
+            } else {
+                assert(cv_fuel(a, ai, b, bi, fuel) == -1);
+            }
+        } else {
+            assert(cv_fuel(a, ai, b, bi, fuel) == 0);
         }
+    } else {
+        assert(cv_fuel(a, ai, b, bi, fuel) == 0);
     }
 }
 

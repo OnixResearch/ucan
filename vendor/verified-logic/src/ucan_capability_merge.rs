@@ -93,6 +93,115 @@ pub fn merge_capsets(a: &Vec<CapEntry>, b: &Vec<CapEntry>) -> (result: Vec<CapEn
     result
 }
 
+
+/// Check byte-sequence equality.
+// r[impl ucan-capability-merge.authorization]
+pub fn bytes_equal(a: &Vec<u8>, b: &Vec<u8>) -> (result: bool)
+    ensures result == (a@ =~= b@),
+{
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            0 <= i <= a.len(),
+            a.len() == b.len(),
+            forall|k: int| 0 <= k < i ==> a@[k] == b@[k],
+        decreases a.len() - i,
+    {
+        if a[i] != b[i] {
+            assert(a@[i as int] != b@[i as int]);
+            assert(!(a@ =~= b@));
+            return false;
+        }
+        i = i + 1;
+    }
+    assert(a@ =~= b@);
+    true
+}
+
+/// Check whether `resource` has `prefix` as a byte prefix.
+// r[impl ucan-capability-merge.containment]
+pub fn resource_has_prefix(resource: &Vec<u8>, prefix: &Vec<u8>) -> (result: bool)
+    ensures result == (resource@.len() >= prefix@.len()
+        && resource@.subrange(0, prefix@.len() as int) =~= prefix@),
+{
+    if resource.len() < prefix.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < prefix.len()
+        invariant
+            0 <= i <= prefix.len(),
+            resource.len() >= prefix.len(),
+            forall|k: int| 0 <= k < i ==> resource@[k] == prefix@[k],
+        decreases prefix.len() - i,
+    {
+        if resource[i] != prefix[i] {
+            assert(resource@[i as int] != prefix@[i as int]);
+            assert(!(resource@.subrange(0, prefix@.len() as int) =~= prefix@));
+            return false;
+        }
+        i = i + 1;
+    }
+    assert(resource@.subrange(0, prefix@.len() as int) =~= prefix@);
+    true
+}
+
+/// Check whether a parent capability contains a requested child capability.
+// r[impl ucan-capability-merge.containment]
+pub fn check_cap_contains(parent: &CapEntry, resource: &Vec<u8>, ability: &Vec<u8>) -> (result: bool)
+    ensures result == cap_contained_spec(cap_view(parent), (resource@, ability@)),
+{
+    let resource_ok = resource_has_prefix(resource, &parent.resource);
+    if !resource_ok {
+        return false;
+    }
+    let ability_ok = bytes_equal(ability, &parent.ability);
+    if !ability_ok {
+        return false;
+    }
+    true
+}
+
+/// Check whether any capability in a set authorizes the requested capability.
+// r[impl ucan-capability-merge.authorization]
+pub fn check_authorized_by(capset: &Vec<CapEntry>, resource: &Vec<u8>, ability: &Vec<u8>) -> (result: bool)
+    ensures result == authorized_by_spec(capset_view(capset), (resource@, ability@)),
+{
+    let mut i: usize = 0;
+    while i < capset.len()
+        invariant
+            0 <= i <= capset.len(),
+            forall|k: int| 0 <= k < i ==> !cap_contained_spec(
+                (capset@[k].resource@, capset@[k].ability@),
+                (resource@, ability@),
+            ),
+        decreases capset.len() - i,
+    {
+        if check_cap_contains(&capset[i], resource, ability) {
+            assert(cap_contained_spec(
+                (capset@[i as int].resource@, capset@[i as int].ability@),
+                (resource@, ability@),
+            ));
+            assert(capset_view(capset)[i as int] === (capset@[i as int].resource@, capset@[i as int].ability@));
+            return true;
+        }
+        assert(!cap_contained_spec(
+            (capset@[i as int].resource@, capset@[i as int].ability@),
+            (resource@, ability@),
+        ));
+        i = i + 1;
+    }
+    assert forall|k: int| 0 <= k < capset_view(capset).len() implies
+        !cap_contained_spec(capset_view(capset)[k], (resource@, ability@)) by {
+        assert(capset_view(capset)[k] === (capset@[k].resource@, capset@[k].ability@));
+    }
+    assert(!authorized_by_spec(capset_view(capset), (resource@, ability@)));
+    false
+}
+
 // --- Proofs ---
 
 /// The union contains everything from the first set.
@@ -252,6 +361,22 @@ mod tests {
         let b: Vec<CapEntry> = vec![];
         let merged = merge_capsets(&a, &b);
         assert_eq!(merged.len(), 0);
+    }
+
+    #[test]
+    fn test_authorized_by_accepts_left_and_right_caps() {
+        let a = vec![cap(b"/photos", b"read")];
+        let b = vec![cap(b"/docs", b"write")];
+        let merged = merge_capsets(&a, &b);
+        assert!(check_authorized_by(&merged, &b"/photos/vacation".to_vec(), &b"read".to_vec()));
+        assert!(check_authorized_by(&merged, &b"/docs/spec".to_vec(), &b"write".to_vec()));
+    }
+
+    #[test]
+    fn test_authorized_by_rejects_resource_and_ability_escalation() {
+        let caps = vec![cap(b"/photos", b"read"), cap(b"/docs", b"write")];
+        assert!(!check_authorized_by(&caps, &b"/videos".to_vec(), &b"read".to_vec()));
+        assert!(!check_authorized_by(&caps, &b"/photos/vacation".to_vec(), &b"write".to_vec()));
     }
 
     #[test]

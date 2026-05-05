@@ -241,9 +241,7 @@ mod tests {
     }
 
     fn make_schedule(entries: Vec<(u64, u64)>) -> FaultSchedule {
-        let faults: Vec<FaultEntry> = entries.into_iter()
-            .map(|(t, o)| make_entry(t, o))
-            .collect();
+        let faults: Vec<FaultEntry> = entries.into_iter().map(|(t, o)| make_entry(t, o)).collect();
         FaultSchedule { faults, cursor: 0 }
     }
 

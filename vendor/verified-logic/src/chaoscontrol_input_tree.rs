@@ -200,10 +200,7 @@ pub fn choice_le(a: &ChoiceRecord, b: &ChoiceRecord) -> (result: bool)
 
 // r[impl chaoscontrol-input-tree.alternatives]
 /// Generate alternatives from a valid, sorted batch, truncated to budget.
-pub fn generate_alternatives(
-    batch: &[ChoiceRecord],
-    budget: usize,
-) -> Vec<Alternative> {
+pub fn generate_alternatives(batch: &[ChoiceRecord], budget: usize) -> Vec<Alternative> {
     let mut result = Vec::new();
     for choice in batch {
         if result.len() >= budget {
@@ -262,7 +259,12 @@ mod tests {
     use super::*;
 
     fn choice(vm: u32, seq: u64, opts: u32, orig: u64) -> ChoiceRecord {
-        ChoiceRecord { vm_id: vm, sequence_id: seq, n_options: opts, original_value: orig }
+        ChoiceRecord {
+            vm_id: vm,
+            sequence_id: seq,
+            n_options: opts,
+            original_value: orig,
+        }
     }
 
     #[test]

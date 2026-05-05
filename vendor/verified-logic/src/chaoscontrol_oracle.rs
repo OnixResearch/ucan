@@ -412,8 +412,11 @@ mod tests {
         // Broken boolean: hit_count != true + false
         let r = OracleRecord {
             kind: AssertionKind::Always,
-            hit_count: 5, true_count: 2, false_count: 2,
-            runs_hit: 1, runs_satisfied: 1,
+            hit_count: 5,
+            true_count: 2,
+            false_count: 2,
+            runs_hit: 1,
+            runs_satisfied: 1,
         };
         assert!(!valid_oracle_record(&r));
     }
@@ -423,8 +426,11 @@ mod tests {
         // Reachable with false_count > 0
         let r = OracleRecord {
             kind: AssertionKind::Reachable,
-            hit_count: 3, true_count: 2, false_count: 1,
-            runs_hit: 1, runs_satisfied: 1,
+            hit_count: 3,
+            true_count: 2,
+            false_count: 1,
+            runs_hit: 1,
+            runs_satisfied: 1,
         };
         assert!(!valid_oracle_record(&r));
     }
@@ -434,8 +440,11 @@ mod tests {
         // Unreachable hit but runs_satisfied > 0
         let r = OracleRecord {
             kind: AssertionKind::Unreachable,
-            hit_count: 1, true_count: 0, false_count: 1,
-            runs_hit: 1, runs_satisfied: 1,
+            hit_count: 1,
+            true_count: 0,
+            false_count: 1,
+            runs_hit: 1,
+            runs_satisfied: 1,
         };
         assert!(!valid_oracle_record(&r));
     }

@@ -410,9 +410,7 @@ impl RepoIndex {
 }
 
 fn schema_mismatch(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.to_string().starts_with("repo-index schema mismatch:"))
+    error.chain().any(|cause| cause.to_string().starts_with("repo-index schema mismatch:"))
 }
 
 fn path_key(generation: u64, path: &str) -> String {
@@ -769,10 +767,7 @@ mod tests {
 
         let openspec_requirement = index.query_requirement("demo.query")?;
         assert_eq!(openspec_requirement.definitions.len(), 1);
-        assert_eq!(
-            openspec_requirement.definitions[0].path,
-            "openspec/changes/demo/specs/repo-index/spec.md"
-        );
+        assert_eq!(openspec_requirement.definitions[0].path, "openspec/changes/demo/specs/repo-index/spec.md");
         assert_eq!(openspec_requirement.references.len(), 0);
         Ok(())
     }

@@ -10,7 +10,7 @@ are listed in `openspec/specs/verification-gaps/spec.md` so any weaker
 bridge stays explicit. Requirement coverage is tracked by
 [Tracey](https://tracey.bearcove.eu/).
 
-**8332 Verus proofs · 4116 tests · 1716 requirements · 370 modules · 19 trusted boundaries**
+**8730 Verus proofs · 4296 tests · 1772 requirements · 395 modules · 16 trusted/proof-gap boundaries**
 
 ## How it works
 
@@ -38,6 +38,36 @@ proof fn abs_diff_symmetric(a: u64, b: u64)
 ```
 
 ## Modules
+
+### Composite primitives
+
+The `compose-verified-primitives` OpenSpec change landed twenty thin composition
+facades. Each module has a public facade, paired spec predicates, proof bridge,
+and positive / negative runtime evidence. Headline counts above are from fresh
+validation commands captured in the change evidence.
+
+| Module | Composition purpose | Status |
+|---|---|---|
+| `durable_job_executor` | durable, idempotent, retry-aware job execution | verified |
+| `fenced_distributed_lock` | stale-holder-safe lease writes with fencing tokens | verified |
+| `linearizable_read_gate` | Raft read-index / lease-read admission | verified |
+| `safe_snapshot_replication` | complete, integrity-checked snapshot installation | verified |
+| `crash_safe_page_cache` | WAL-backed dirty-page recovery | verified |
+| `verified_lsm_ingest` | flush and compaction-safe LSM ingest | verified |
+| `serializable_txn_guard` | MVCC / dependency / 2PL commit admission | verified |
+| `web_of_trust_ucan_authorizer` | UCAN authorization plus rooted web-of-trust policy | verified |
+| `policy_decision_engine` | delegation, containment, scope, pattern, and trust allow/deny | verified |
+| `blocking_bounded_channel` | bounded queue capacity plus futex/backoff waiting | verified |
+| `safe_reclamation_domain` | RCU, epoch, hazard-pointer, and ref-count reclamation | verified |
+| `cache_coherent_memory_region` | coherence, prefetch, store-buffer, and write-policy invariants | verified |
+| `verified_compiler_pipeline` | raw-IR analysis and optimization preservation | verified |
+| `backend_frame_allocator` | register/spill stack allocation conflict freedom | verified |
+| `dependency_scheduler` | DAG-safe, fair, capacity-bounded job scheduling | verified |
+| `raft_membership_manager` | safe config changes, learner promotion, leadership transfer | verified |
+| `exactly_once_ledger_transfer` | replay-safe balanced transfer posting | verified |
+| `sel4_invocation_step` | bounded seL4 invocation transitions preserving invariants | verified |
+| `nix_eval_closure_policy` | Nix/Nickel merge plus reachable closure admission | verified |
+| `chaoscontrol_exploration_core` | deterministic, oracle-checked exploration steps | verified |
 
 ### Core arithmetic and data structures
 
@@ -195,6 +225,7 @@ proof fn abs_diff_symmetric(a: u64, b: u64)
 | `bounded_mpmc` | bounded MPMC ring buffer: head/tail, lap-based empty/full, occupancy |
 | `memory_order` | memory ordering lattice: Relaxed ⊏ Acquire/Release ⊏ AcqRel ⊏ SeqCst |
 | `cache_hierarchy` | inclusive/exclusive/non-inclusive L1/L2 invariants, back-invalidation, capacity, and snoop scope |
+| `directory_coherence` | single-line directory protocol with sharer bit-vectors, targeted invalidations, exclusive-owner grants, eviction notifications, and MESI-compatible embedding |
 | `cache_prefetch` | architecturally invisible prefetch hints with MESI-compatible cache effects and dirty-victim writeback |
 | `store_buffer` | fixed-capacity store queue with youngest-match forwarding, FIFO drain, and fence-empty semantics |
 | `tlb_shootdown` | page-local TLB shootdown: initiator self-invalidation, monotone acknowledgments, completion freshness, disjoint-page isolation, and range coverage |
@@ -309,7 +340,9 @@ proof fn abs_diff_symmetric(a: u64, b: u64)
 
 | Module | What it verifies |
 |---|---|
+| `register_allocation` | live-range overlap graphs, conflict-free register assignment, and deterministic spill fallback |
 | `stack_frame_layout` | aligned stack-slot placement, exact rounded frame sizing, and explicit safe-reuse checks over live ranges |
+| `wasm_primitives` | exact Wasm value tags, `i32.add` stack discipline, typed local access, and linear-memory bounds/grow semantics |
 
 ### Scheduling primitives
 
@@ -441,7 +474,7 @@ runtime cost from specs, proofs, requires, or ensures.
 ```bash
 nix develop                # enter devshell
 cargo check                # compile (ghost code erased)
-cargo test                 # 4106 tests (unit + property + doc)
+cargo test                 # 4165 tests (unit + property + doc)
 cargo clippy --all-targets -- -D warnings
 ```
 
@@ -449,7 +482,7 @@ cargo clippy --all-targets -- -D warnings
 
 ```bash
 ./scripts/verify.sh        # all gates: clippy → tests → verus → coverage
-./scripts/verus.sh         # verus only (8332 proofs)
+./scripts/verus.sh         # verus only (8451 proofs)
 ./scripts/check-coverage.sh   # every pub fn has r[impl] annotation
 ./scripts/check-ensures.sh    # every pub fn in verus! has ensures
 ```
@@ -457,9 +490,9 @@ cargo clippy --all-targets -- -D warnings
 ## Structure
 
 ```
-src/lib.rs              ← crate root, 370 module declarations
+src/lib.rs              ← crate root, 373 module declarations
 src/<module>.rs         ← spec fn + exec fn + proof fn + #[cfg(test)] tests
-docs/requirements.md    ← 1716 tracey requirements
+docs/requirements.md    ← 1734 tracey requirements
 scripts/verus.sh        ← verus wrapper with nix store paths
 scripts/verify.sh       ← full verification pipeline
 scripts/check-*.sh      ← annotation enforcement
@@ -473,34 +506,49 @@ Most modules follow the same pattern (tracked exceptions are listed in
 3. `proof fn` — properties of the spec with `r[verify]` annotation
 4. `#[cfg(test)]` — unit tests and proptest property tests
 
-## Trusted items
+## Trusted and proof-gap items
 
-`16` items are marked `#[verifier::external_body]` across `6` files.
-In addition, `src/ssa_construction.rs` currently carries `3`
-`assume_specification[...]` bridges from thin verified wrappers to plain-Rust
-runtime helpers.
+`16` items are marked `#[verifier::external_body]` across `6` files. The
+previous `src/instruction_selection.rs` runtime-only public API exemptions now
+have direct Tracey implementation and test coverage.
 
 **16 permanent** (architectural trust boundaries):
 
-- **6 cryptographic axioms / exec bridges** (`chain.rs`, `snapshot_integrity.rs`) —
-  BLAKE3-style hashing is modeled with uninterpreted specs plus trusted exec wrappers.
-- **4 version comparison bridges** (`nix_version.rs`) — the recursive `cv_fuel`
-  reasoning still exceeds solver budget.
-- **2 nix store-path hash bridges** (`nix_store_path.rs`) — external hash/model bridge.
-- **3 log matching inductive bridges** (`log_invariant_inductive.rs`) — local lemmas are
-  only sound under the global Raft leader-chain invariant.
-- **1 web-of-trust principal bridge** (`web_of_trust_principal.rs`) — principal digest bytes stay behind a trusted exec/model boundary.
+- **4 legacy cryptographic hash axioms / exec bridges** (`chain.rs`,
+  `snapshot_integrity.rs`) — BLAKE3-style hashing is modeled with
+  uninterpreted specs plus trusted collision-resistance/runtime wrappers;
+  equal-input determinism now follows directly from pure spec equality.
+- **1 version comparison bridge** (`nix_version.rs`) — the recursive `cv_fuel`
+  proof lemmas are now internalized, while the exec/spec connection still
+  exceeds solver budget.
+- **10 UCAN codec/signature bridges** (`ucan_did.rs`, `ucan_signature.rs`) —
+  base58btc and Ed25519 behavior is modeled behind external codec/crypto
+  contracts; `ucan_cid.rs` now composes its CID multibase round-trip model from
+  the shared DID base58btc contract instead of carrying a separate CID axiom,
+  and public DID decode now composes verified prefix, base58, varint, and
+  key-suffix primitives around the remaining base58btc contract. Base58btc
+  decode also performs verified alphabet screening before the trusted codec
+  core. UCAN signature byte-level entrypoints now reject malformed key/signature
+  lengths through verified constructors before invoking trusted Ed25519 crypto.
+- **1 web-of-trust crypto bridge** (`web_of_trust_principal.rs`) — principal
+  digest derivation stays behind a trusted runtime/model boundary; attestation
+  and revocation signature-input construction and comparison are now verified
+  from canonical bytes.
 
-**3 closeable** (`src/ssa_construction.rs`) — `assume_specification[...]`
-exec bridges for phi placement, SSA construction, and dominance/use
-checking. Def-site collection, IDF computation, SSA-property checking, and
-phi elimination are internalized now; runtime tests and manual oracles
-still cover the stronger remaining semantic claims.
+**0 closeable** — the former runtime-only public APIs in
+`src/instruction_selection.rs` now have direct Tracey implementation and test
+coverage for their well-formedness, matching, tiling, coverage, soundness,
+projection, evaluation, and validity contracts.
+Def-site collection, IDF computation, SSA-property checking, and phi elimination
+are internalized now; runtime tests and manual oracles still cover the stronger
+remaining SSA semantic claims.
 
 In addition to `external_body`, the current audit also tracks:
 
-- `3` `assume_specification[...]` exec bridges
+- `0` `assume_specification[...]` exec bridges
+- `0` runtime-only `@verified-logic:exempt` public API proof gaps
+- `0` `@verified-logic:no-ensures` markers
 - `0` `assume(...)` soundness oracles
-- `0` `@verified-logic:no-ensures` / placeholder-spec surfaces
+- `0` placeholder-spec surfaces
 
-All trusted items remain listed in `openspec/specs/verification-gaps/spec.md` with rationale.
+All trusted/proof-gap items remain listed in `openspec/specs/verification-gaps/spec.md` with rationale.

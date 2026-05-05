@@ -446,7 +446,10 @@ mod tests {
         assert_eq!(CODE_REGION_END, 32768);
         assert_eq!(ASSERTION_REGION_END, 49152);
         assert_eq!(MAP_SIZE, 65536);
-        assert_eq!(CODE_REGION_END + (ASSERTION_REGION_END - CODE_REGION_END) + (MAP_SIZE - ASSERTION_REGION_END), MAP_SIZE);
+        assert_eq!(
+            CODE_REGION_END + (ASSERTION_REGION_END - CODE_REGION_END) + (MAP_SIZE - ASSERTION_REGION_END),
+            MAP_SIZE
+        );
     }
 
     #[test]
@@ -530,12 +533,25 @@ mod tests {
     #[test]
     fn test_classify_buckets() {
         let cases: Vec<(u8, u8)> = vec![
-            (0, 0), (1, 1), (2, 2), (3, 3),
-            (4, 4), (5, 4), (7, 4),
-            (8, 8), (10, 8), (15, 8),
-            (16, 16), (20, 16), (31, 16),
-            (32, 32), (50, 32), (127, 32),
-            (128, 128), (200, 128), (255, 128),
+            (0, 0),
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 4),
+            (5, 4),
+            (7, 4),
+            (8, 8),
+            (10, 8),
+            (15, 8),
+            (16, 16),
+            (20, 16),
+            (31, 16),
+            (32, 32),
+            (50, 32),
+            (127, 32),
+            (128, 128),
+            (200, 128),
+            (255, 128),
         ];
         let mut bm = new_coverage_bitmap();
         for (i, &(input, _)) in cases.iter().enumerate() {

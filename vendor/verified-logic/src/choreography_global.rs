@@ -1114,19 +1114,16 @@ mod tests {
         let leaf = Just(GlobalChoreo::End);
         leaf.prop_recursive(depth, depth * 8, 2, |inner| {
             prop_oneof![
-                (0u32..5, 0u32..5, 0u32..5, 0u32..5, inner.clone()).prop_map(
-                    |(from, to, label, payload_tag, next)| GlobalChoreo::Comm {
+                (0u32..5, 0u32..5, 0u32..5, 0u32..5, inner.clone()).prop_map(|(from, to, label, payload_tag, next)| {
+                    GlobalChoreo::Comm {
                         from,
                         to,
                         label,
                         payload_tag,
                         next: Box::new(next),
                     }
-                ),
-                (
-                    0u32..5,
-                    prop::collection::vec((0u32..8, inner.clone()), 1..=3)
-                ).prop_map(|(decider, mut raw)| {
+                }),
+                (0u32..5, prop::collection::vec((0u32..8, inner.clone()), 1..=3)).prop_map(|(decider, mut raw)| {
                     raw.sort_by_key(|(label, _)| *label);
                     raw.dedup_by(|a, b| a.0 == b.0);
                     let branches = raw.into_iter().map(|(label, body)| branch(label, body)).collect();

@@ -435,10 +435,7 @@ mod tests {
     #[test]
     fn test_receive_gets_head_sender_badge() {
         let mut endpoint = Endpoint {
-            senders: vec![
-                SenderWaiter { tcb: 5, badge: 99 },
-                SenderWaiter { tcb: 6, badge: 100 },
-            ],
+            senders: vec![SenderWaiter { tcb: 5, badge: 99 }, SenderWaiter { tcb: 6, badge: 100 }],
             receivers: vec![],
         };
         let matched = receive(&mut endpoint, 9).expect("sender should match");

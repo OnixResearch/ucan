@@ -46,6 +46,12 @@ pub open spec fn principal_id_valid_spec(id: PrincipalId) -> bool {
     id.digest.len() == PRINCIPAL_ID_LEN
 }
 
+/// Raw principal digest bytes are admissible exactly when they are full-width IDs.
+// r[impl web-of-trust.principal-digest-admission]
+pub open spec fn principal_digest_bytes_valid_spec(bytes: Seq<u8>) -> bool {
+    bytes.len() == PRINCIPAL_ID_LEN
+}
+
 /// Prefix equality over the first `upto` digest bytes.
 // r[impl web-of-trust.principal-fingerprint]
 pub open spec fn principal_id_equal_prefix_spec(a: Seq<u8>, b: Seq<u8>, upto: int) -> bool
@@ -112,6 +118,20 @@ pub fn principal_id_from_bytes(canonical_key_bytes: &[u8]) -> (result: Principal
 {
     let digest = blake3_digest_bridge(canonical_key_bytes);
     PrincipalId { digest }
+}
+
+// r[impl web-of-trust.principal-digest-admission]
+/// Admit raw principal-ID digest bytes only when they are exactly 32 bytes.
+pub fn principal_id_from_digest_bytes(bytes: Vec<u8>) -> (result: Option<PrincipalId>)
+    ensures
+        principal_digest_bytes_valid_spec(bytes@) ==> (result matches Some(id) && id.digest@ == bytes@ && principal_id_valid_spec(id)),
+        !principal_digest_bytes_valid_spec(bytes@) ==> result is None,
+{
+    if bytes.len() == PRINCIPAL_ID_LEN {
+        Some(PrincipalId { digest: bytes })
+    } else {
+        None
+    }
 }
 
 // r[impl web-of-trust.principal-fingerprint]
@@ -217,6 +237,22 @@ mod tests {
 
         assert_eq!(&id1.digest[..PRINCIPAL_ID_LEN - 1], &id2.digest[..PRINCIPAL_ID_LEN - 1]);
         assert!(!principal_ids_equal(&id1, &id2));
+    }
+
+    // r[verify web-of-trust.principal-digest-admission]
+    #[test]
+    fn test_principal_digest_admission_accepts_full_width_digest() {
+        let digest = vec![0x5au8; PRINCIPAL_ID_LEN];
+        let id = principal_id_from_digest_bytes(digest.clone()).expect("full-width digest accepted");
+        assert_eq!(id.digest, digest);
+        assert_eq!(id.digest.len(), PRINCIPAL_ID_LEN);
+    }
+
+    // r[verify web-of-trust.principal-digest-admission]
+    #[test]
+    fn test_principal_digest_admission_rejects_bad_widths() {
+        assert!(principal_id_from_digest_bytes(vec![0u8; PRINCIPAL_ID_LEN - 1]).is_none());
+        assert!(principal_id_from_digest_bytes(vec![0u8; PRINCIPAL_ID_LEN + 1]).is_none());
     }
 
     proptest! {

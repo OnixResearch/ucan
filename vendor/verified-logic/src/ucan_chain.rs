@@ -1,9 +1,9 @@
 //! Verified UCAN proof chain walk.
 //!
-//! Walks prf CID references, verifies each hop's signature, checks
-//! iss[child] == aud[parent], confirms attenuation narrows at every
-//! step, and proves chain-level soundness: a valid chain only grants
-//! capabilities the root token authorized.
+//! Walks resolved proof-chain entries, consumes caller-provided signature-valid
+//! flags, checks iss[child] == aud[parent], confirms attenuation narrows at
+//! every step, and proves chain-level soundness: a structurally valid chain only
+//! grants capabilities the root token authorized.
 
 #![allow(clippy::ptr_arg)]
 
@@ -23,7 +23,7 @@ pub struct ChainEntry {
     pub exp: u64,
     /// Not-before timestamp.
     pub nbf: u64,
-    /// Signature was verified against issuer's public key.
+    /// Caller-provided indication that the signature was verified externally.
     pub sig_valid: bool,
 }
 
@@ -36,7 +36,7 @@ pub open spec fn chain_linked_spec(chain: Seq<ChainEntry>) -> bool {
         chain[i].aud@ =~= chain[i + 1].iss@
 }
 
-/// Every entry in the chain has a valid signature.
+/// Every entry in the chain carries a caller-provided valid-signature flag.
 // r[impl ucan-chain.signature-check]
 pub open spec fn chain_signatures_valid_spec(chain: Seq<ChainEntry>) -> bool {
     forall|i: int| 0 <= i < chain.len() ==> chain[i].sig_valid
@@ -80,6 +80,33 @@ pub open spec fn chain_attenuation_narrows_spec(chain: Seq<ChainEntry>) -> bool 
         )
 }
 
+/// Exec-facing child attenuation containment over Vec-backed entries.
+pub open spec fn child_att_has_parent_entries_spec(
+    parent_att: Seq<(Vec<u8>, Vec<u8>)>,
+    child: (Vec<u8>, Vec<u8>),
+) -> bool {
+    exists|k: int| 0 <= k < parent_att.len()
+        && #[trigger] att_entry_contains_spec(
+            (parent_att[k].0@, parent_att[k].1@),
+            (child.0@, child.1@),
+        )
+}
+
+/// Exec-facing attenuation narrowing over Vec-backed attenuation entries.
+pub open spec fn attenuation_narrows_at_entries_spec(
+    parent_att: Seq<(Vec<u8>, Vec<u8>)>,
+    child_att: Seq<(Vec<u8>, Vec<u8>)>,
+) -> bool {
+    forall|j: int| #![trigger child_att[j]] 0 <= j < child_att.len() ==>
+        child_att_has_parent_entries_spec(parent_att, child_att[j])
+}
+
+/// Exec-facing chain attenuation narrowing over Vec-backed entries.
+pub open spec fn chain_attenuation_narrows_entries_spec(chain: Seq<ChainEntry>) -> bool {
+    forall|i: int| #![trigger chain[i]] 0 <= i < chain.len() - 1 ==>
+        attenuation_narrows_at_entries_spec(chain[i].att@, chain[i + 1].att@)
+}
+
 /// Temporal validity: every hop is within its validity window.
 // r[impl ucan-chain.temporal-validity]
 pub open spec fn chain_temporal_valid_spec(chain: Seq<ChainEntry>, now: u64, tolerance: u64) -> bool {
@@ -97,6 +124,20 @@ pub open spec fn chain_valid_spec(chain: Seq<ChainEntry>, now: u64, tolerance: u
     && chain_linked_spec(chain)
     && chain_signatures_valid_spec(chain)
     && chain_attenuation_narrows_spec(chain)
+    && chain_temporal_valid_spec(chain, now, tolerance)
+}
+
+/// Exec-facing complete chain validity over Vec-backed attenuation entries.
+// r[impl ucan-chain.chain-validity]
+pub open spec fn chain_structural_valid_entries_spec(
+    chain: Seq<ChainEntry>,
+    now: u64,
+    tolerance: u64,
+) -> bool {
+    chain.len() > 0
+    && chain_linked_spec(chain)
+    && chain_signatures_valid_spec(chain)
+    && chain_attenuation_narrows_entries_spec(chain)
     && chain_temporal_valid_spec(chain, now, tolerance)
 }
 
@@ -209,6 +250,212 @@ pub fn check_chain_temporal(chain: &Vec<ChainEntry>, now: u64, tolerance: u64) -
             return false;
         }
         i = i + 1;
+    }
+    true
+}
+
+/// Check byte-sequence equality.
+// r[impl ucan-chain.attenuation-narrowing]
+pub fn bytes_equal(a: &Vec<u8>, b: &Vec<u8>) -> (result: bool)
+    ensures result == (a@ =~= b@),
+{
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            0 <= i <= a.len(),
+            a.len() == b.len(),
+            forall|k: int| 0 <= k < i ==> a@[k] == b@[k],
+        decreases a.len() - i,
+    {
+        if a[i] != b[i] {
+            assert(a@[i as int] != b@[i as int]);
+            assert(!(a@ =~= b@));
+            return false;
+        }
+        i = i + 1;
+    }
+    assert(a@ =~= b@);
+    true
+}
+
+/// Check whether `resource` has `prefix` as a byte prefix.
+// r[impl ucan-chain.attenuation-narrowing]
+pub fn resource_has_prefix(resource: &Vec<u8>, prefix: &Vec<u8>) -> (result: bool)
+    ensures result == (resource@.len() >= prefix@.len()
+        && resource@.subrange(0, prefix@.len() as int) =~= prefix@),
+{
+    if resource.len() < prefix.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < prefix.len()
+        invariant
+            0 <= i <= prefix.len(),
+            resource.len() >= prefix.len(),
+            forall|k: int| 0 <= k < i ==> resource@[k] == prefix@[k],
+        decreases prefix.len() - i,
+    {
+        if resource[i] != prefix[i] {
+            assert(resource@[i as int] != prefix@[i as int]);
+            assert(!(resource@.subrange(0, prefix@.len() as int) =~= prefix@));
+            return false;
+        }
+        i = i + 1;
+    }
+    assert(resource@.subrange(0, prefix@.len() as int) =~= prefix@);
+    true
+}
+
+/// Check whether a parent attenuation contains a child attenuation.
+// r[impl ucan-chain.attenuation-narrowing]
+pub fn check_att_contains(parent: &(Vec<u8>, Vec<u8>), child: &(Vec<u8>, Vec<u8>)) -> (result: bool)
+    ensures result == att_entry_contains_spec((parent.0@, parent.1@), (child.0@, child.1@)),
+{
+    let resource_ok = resource_has_prefix(&child.0, &parent.0);
+    if !resource_ok {
+        return false;
+    }
+    let ability_ok = bytes_equal(&child.1, &parent.1);
+    if !ability_ok {
+        return false;
+    }
+    true
+}
+
+/// Check that one child attenuation entry is contained by some parent entry.
+// r[impl ucan-chain.attenuation-narrowing]
+pub fn child_att_has_parent(parent_att: &Vec<(Vec<u8>, Vec<u8>)>, child: &(Vec<u8>, Vec<u8>)) -> (result: bool)
+    ensures result == child_att_has_parent_entries_spec(parent_att@, *child),
+{
+    let mut k: usize = 0;
+    while k < parent_att.len()
+        invariant
+            0 <= k <= parent_att.len(),
+            forall|j: int| 0 <= j < k ==> !att_entry_contains_spec(
+                (parent_att@[j].0@, parent_att@[j].1@),
+                (child.0@, child.1@),
+            ),
+        decreases parent_att.len() - k,
+    {
+        if check_att_contains(&parent_att[k], child) {
+            assert(att_entry_contains_spec(
+                (parent_att@[k as int].0@, parent_att@[k as int].1@),
+                (child.0@, child.1@),
+            ));
+            return true;
+        }
+        assert(!att_entry_contains_spec(
+            (parent_att@[k as int].0@, parent_att@[k as int].1@),
+            (child.0@, child.1@),
+        ));
+        k = k + 1;
+    }
+    assert forall|j: int| 0 <= j < parent_att@.len() implies
+        !att_entry_contains_spec((parent_att@[j].0@, parent_att@[j].1@), (child.0@, child.1@)) by {
+    }
+    false
+}
+
+/// Check attenuation narrowing between adjacent chain entries.
+// r[impl ucan-chain.attenuation-narrowing]
+pub fn check_attenuation_narrows_at(
+    parent_att: &Vec<(Vec<u8>, Vec<u8>)>,
+    child_att: &Vec<(Vec<u8>, Vec<u8>)>,
+) -> (result: bool)
+    ensures result == attenuation_narrows_at_entries_spec(parent_att@, child_att@),
+{
+    let mut j: usize = 0;
+    while j < child_att.len()
+        invariant
+            0 <= j <= child_att.len(),
+            forall|i: int| #![trigger child_att@[i]] 0 <= i < j ==>
+                child_att_has_parent_entries_spec(parent_att@, child_att@[i]),
+        decreases child_att.len() - j,
+    {
+        if !child_att_has_parent(parent_att, &child_att[j]) {
+            assert(!child_att_has_parent_entries_spec(parent_att@, child_att@[j as int]));
+            assert(!attenuation_narrows_at_entries_spec(parent_att@, child_att@));
+            return false;
+        }
+        assert(child_att_has_parent_entries_spec(parent_att@, child_att@[j as int]));
+        assert forall|i: int| #![trigger child_att@[i]] 0 <= i < j + 1 implies
+            child_att_has_parent_entries_spec(parent_att@, child_att@[i]) by {
+            if i < j {
+                assert(child_att@[i] == child_att@[i]);
+            } else {
+                assert(i == j);
+            }
+        }
+        j = j + 1;
+        assert forall|i: int| #![trigger child_att@[i]] 0 <= i < j implies
+            child_att_has_parent_entries_spec(parent_att@, child_att@[i]) by {
+            assert(child_att@[i] == child_att@[i]);
+        };
+    }
+    assert forall|i: int| #![trigger child_att@[i]] 0 <= i < child_att@.len() implies
+        child_att_has_parent_entries_spec(parent_att@, child_att@[i]) by {
+        assert(child_att@[i] == child_att@[i]);
+    }
+    true
+}
+
+/// Check attenuation narrowing at every hop in a chain.
+// r[impl ucan-chain.attenuation-narrowing]
+pub fn check_chain_attenuation_narrows(chain: &Vec<ChainEntry>) -> (result: bool)
+    ensures result == chain_attenuation_narrows_entries_spec(chain@),
+{
+    if chain.len() <= 1 {
+        return true;
+    }
+    let mut i: usize = 0;
+    while i < chain.len() - 1
+        invariant
+            0 <= i <= chain.len() - 1,
+            forall|h: int| #![trigger chain@[h]] 0 <= h < i ==>
+                attenuation_narrows_at_entries_spec(chain@[h].att@, chain@[h + 1].att@),
+        decreases chain.len() - 1 - i,
+    {
+        if !check_attenuation_narrows_at(&chain[i].att, &chain[i + 1].att) {
+            assert(!attenuation_narrows_at_entries_spec(chain@[i as int].att@, chain@[(i + 1) as int].att@));
+            assert(!chain_attenuation_narrows_entries_spec(chain@));
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Check structural validity for a finite UCAN chain.
+///
+/// This composes linked issuer/audience checks, caller-provided signature-valid
+/// booleans, structural attenuation narrowing, and bounded temporal windows. It
+/// does not verify cryptographic signatures, DID resolution, revocation, or clock
+/// correctness.
+// r[impl ucan-chain.chain-validity]
+pub fn check_chain_structural_valid(
+    chain: &Vec<ChainEntry>,
+    now: u64,
+    tolerance: u64,
+) -> (result: bool)
+    ensures result == chain_structural_valid_entries_spec(chain@, now, tolerance),
+{
+    if chain.len() == 0 {
+        return false;
+    }
+    if !check_chain_linked(chain) {
+        return false;
+    }
+    if !check_chain_signatures(chain) {
+        return false;
+    }
+    if !check_chain_attenuation_narrows(chain) {
+        return false;
+    }
+    if !check_chain_temporal(chain, now, tolerance) {
+        return false;
     }
     true
 }
@@ -375,6 +622,84 @@ mod tests {
         let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/photos", b"read", 900, false);
         let chain = vec![e1, e2];
         assert!(!check_chain_signatures(&chain));
+    }
+
+    #[test]
+    fn test_chain_attenuation_narrows_accepts_refinement() {
+        let e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/photos/vacation", b"read", 900, true);
+        let chain = vec![e1, e2];
+        assert!(check_chain_attenuation_narrows(&chain));
+    }
+
+    #[test]
+    fn test_chain_attenuation_rejects_resource_escalation() {
+        let e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/videos", b"read", 900, true);
+        let chain = vec![e1, e2];
+        assert!(!check_chain_attenuation_narrows(&chain));
+    }
+
+    #[test]
+    fn test_chain_attenuation_rejects_missing_parent_capability() {
+        let mut e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        e1.att.clear();
+        let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/photos/vacation", b"read", 900, true);
+        let chain = vec![e1, e2];
+        assert!(!check_chain_attenuation_narrows(&chain));
+    }
+
+    #[test]
+    fn test_chain_attenuation_rejects_ability_escalation() {
+        let e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/photos/vacation", b"write", 900, true);
+        let chain = vec![e1, e2];
+        assert!(!check_chain_attenuation_narrows(&chain));
+    }
+
+    #[test]
+    fn test_chain_structural_valid_accepts_complete_chain() {
+        let e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/photos/vacation", b"read", 900, true);
+        let chain = vec![e1, e2];
+        assert!(check_chain_structural_valid(&chain, 500, 0));
+    }
+
+    #[test]
+    fn test_chain_structural_valid_rejects_empty_chain() {
+        let chain = Vec::<ChainEntry>::new();
+        assert!(!check_chain_structural_valid(&chain, 500, 0));
+    }
+
+    #[test]
+    fn test_chain_structural_valid_rejects_broken_link() {
+        let e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        let e2 = make_entry(b"did:key:mallory", b"did:key:carol", b"/photos/vacation", b"read", 900, true);
+        let chain = vec![e1, e2];
+        assert!(!check_chain_structural_valid(&chain, 500, 0));
+    }
+
+    #[test]
+    fn test_chain_structural_valid_rejects_bad_signature_flag() {
+        let e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/photos/vacation", b"read", 900, false);
+        let chain = vec![e1, e2];
+        assert!(!check_chain_structural_valid(&chain, 500, 0));
+    }
+
+    #[test]
+    fn test_chain_structural_valid_rejects_attenuation_escalation() {
+        let e1 = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 1000, true);
+        let e2 = make_entry(b"did:key:bob", b"did:key:carol", b"/photos/vacation", b"write", 900, true);
+        let chain = vec![e1, e2];
+        assert!(!check_chain_structural_valid(&chain, 500, 0));
+    }
+
+    #[test]
+    fn test_chain_structural_valid_rejects_expired_entry() {
+        let e = make_entry(b"did:key:alice", b"did:key:bob", b"/photos", b"read", 100, true);
+        let chain = vec![e];
+        assert!(!check_chain_structural_valid(&chain, 500, 0));
     }
 
     #[test]

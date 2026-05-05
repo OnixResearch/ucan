@@ -299,22 +299,24 @@ pub proof fn varint_rejects_empty()
 {
 }
 
-// --- CID encode/decode (multibase, external body) ---
+// --- CID encode/decode (multibase over shared base58btc model) ---
 
-/// Uninterpreted CID multibase encoding.
+/// CID multibase encoding: one multibase prefix byte plus base58btc payload.
 // r[depends ucan-cid.cid-round-trip]
-pub uninterp spec fn cid_encode_spec(cid_bytes: Seq<u8>, base: u8) -> Seq<u8>;
-
-/// Uninterpreted CID multibase decoding.
-// r[depends ucan-cid.cid-round-trip]
-pub uninterp spec fn cid_decode_spec(encoded: Seq<u8>) -> Option<Seq<u8>>;
-
-/// Axiom: CID multibase encoding round-trips.
 // r[impl ucan-cid.cid-round-trip]
-#[verifier::external_body]
-pub proof fn axiom_cid_encode_round_trip(cid_bytes: Seq<u8>, base: u8)
-    ensures cid_decode_spec(cid_encode_spec(cid_bytes, base)) == Some(cid_bytes),
-{
+pub open spec fn cid_encode_spec(cid_bytes: Seq<u8>, base: u8) -> Seq<u8> {
+    seq![base] + crate::ucan_did::base58btc_encode_spec(cid_bytes)
+}
+
+/// CID multibase decoding: recover the base58btc payload after the prefix byte.
+// r[depends ucan-cid.cid-round-trip]
+// r[impl ucan-cid.cid-round-trip]
+pub open spec fn cid_decode_spec(encoded: Seq<u8>) -> Option<Seq<u8>> {
+    if encoded.len() < 1 {
+        None
+    } else {
+        crate::ucan_did::base58btc_decode_spec(encoded.subrange(1, encoded.len() as int))
+    }
 }
 
 /// CID bytes round-trip through multibase encode/decode.
@@ -322,7 +324,11 @@ pub proof fn axiom_cid_encode_round_trip(cid_bytes: Seq<u8>, base: u8)
 pub proof fn cid_bytes_round_trip(cid: CidSpec, base: u8)
     ensures cid_decode_spec(cid_encode_spec(cid_bytes_spec(cid), base)) == Some(cid_bytes_spec(cid)),
 {
-    axiom_cid_encode_round_trip(cid_bytes_spec(cid), base);
+    let bytes = cid_bytes_spec(cid);
+    let encoded = crate::ucan_did::base58btc_encode_spec(bytes);
+    let full = seq![base] + encoded;
+    assert(full.subrange(1, full.len() as int) =~= encoded);
+    crate::ucan_did::axiom_base58btc_round_trip(bytes);
 }
 
 // --- Hash (external body for SHA-256) ---

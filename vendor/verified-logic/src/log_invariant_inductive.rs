@@ -162,22 +162,20 @@ proof fn resolve_preserves_matching(
 // ============================================================
 
 // r[verify log-matching-inductive.leader-append]
-/// A leader appending an entry preserves the LMP.
+/// A leader appending an entry preserves the LMP when the old leader log already
+/// matches the peer through the full old prefix.
 ///
-/// The new entry extends the log without modifying existing entries.
-/// If the LMP held between log_a and log_b before the append, it still
-/// holds after log_a grows by one entry (the new entry at the end doesn't
-/// affect agreement at any prior index).
-// Z3 can't connect LMP trigger through Seq::push — quantifier over
-// logs_match_prefix_spec needs manual unfolding that exceeds Z3's budget.
-// @verified-logic:permanent-z3-limit — system-level, logs from same leader chain
-#[verifier::external_body]
+/// The new entry extends the log without modifying existing entries. If the LMP
+/// held before the append and the old full prefix matched, then any new
+/// agreement at the appended index can reuse that old-prefix fact.
 proof fn leader_append_preserves_lmp(
     log_a: Seq<LogEntry>,
     log_b: Seq<LogEntry>,
     entry: LogEntry,
 )
-    requires log_matching_property_spec(log_a, log_b)
+    requires
+        log_matching_property_spec(log_a, log_b),
+        logs_match_prefix_spec(log_a, log_b, log_a.len() as int),
     ensures log_matching_property_spec(log_a.push(entry), log_b)
 {
     let new_a = log_a.push(entry);
@@ -201,32 +199,27 @@ proof fn leader_append_preserves_lmp(
                 assert(log_a[j].term == log_b[j].term);
             }
         }
-        // If i == log_a.len(), the new entry is the only one at that index.
-        // We need logs_match_prefix(new_a, log_b, i) which checks [0, i).
-        // All j < i have j < log_a.len(), so new_a[j] == log_a[j].
-        // If new_a[i].term == log_b[i].term (hypothesis), we need prefix match.
-        // For j < i: new_a[j] == log_a[j], and we need log_a[j].term == log_b[j].term.
-        // This follows from LMP on log_a, log_b if there's a shared entry.
-        // But we're not guaranteed log_a and log_b agree at any prior index.
-        // The LMP says: IF they agree at some index, THEN prefix matches.
-        // Here we need: new_a[j].term == log_b[j].term for j < i.
-        // Without additional info about log_b, we can't derive this.
-        // This case requires the SYSTEM-LEVEL invariant that all logs were
-        // built from the same leader chain. At the module level, we can only
-        // prove the extension doesn't break existing agreements.
+        if i == log_a.len() {
+            assert forall|j: int| 0 <= j < i implies new_a[j].term == log_b[j].term
+            by {
+                assert(0 <= j < log_a.len());
+                assert(new_a[j] == log_a[j]);
+                assert(log_a[j].term == log_b[j].term);
+            }
+        }
     }
 }
 
 // r[verify log-matching-inductive.leader-append]
-/// Symmetric: appending to log_b preserves LMP.
-/// @verified-logic:permanent-z3-limit — system-level, logs from same leader chain
-#[verifier::external_body]
+/// Symmetric: appending to log_b preserves LMP when the old full prefix matches.
 proof fn leader_append_preserves_lmp_right(
     log_a: Seq<LogEntry>,
     log_b: Seq<LogEntry>,
     entry: LogEntry,
 )
-    requires log_matching_property_spec(log_a, log_b)
+    requires
+        log_matching_property_spec(log_a, log_b),
+        logs_match_prefix_spec(log_a, log_b, log_b.len() as int),
     ensures log_matching_property_spec(log_a, log_b.push(entry))
 {
     let new_b = log_b.push(entry);
@@ -244,6 +237,14 @@ proof fn leader_append_preserves_lmp_right(
             assert forall|j: int| 0 <= j < i implies log_a[j].term == new_b[j].term
             by {
                 assert(new_b[j] == log_b[j]);
+            }
+        }
+        if i == log_b.len() {
+            assert forall|j: int| 0 <= j < i implies log_a[j].term == new_b[j].term
+            by {
+                assert(0 <= j < log_b.len());
+                assert(new_b[j] == log_b[j]);
+                assert(log_a[j].term == log_b[j].term);
             }
         }
     }
@@ -269,10 +270,8 @@ proof fn election_preserves_lmp(
 
 // r[verify log-matching-inductive.leader-append]
 /// If the leader log invariant holds (new_log extends old_log) and
-/// the LMP held between old_log and some other log, then the LMP
-/// holds between new_log and that other log.
-/// @verified-logic:permanent-z3-limit — system-level, logs from same leader chain
-#[verifier::external_body]
+/// the LMP held between old_log and a peer no longer than old_log, then the LMP
+/// holds between new_log and that peer.
 proof fn leader_invariant_preserves_lmp(
     old_log: Seq<LogEntry>,
     new_log: Seq<LogEntry>,
@@ -281,6 +280,7 @@ proof fn leader_invariant_preserves_lmp(
     requires
         leader_log_invariant_spec(old_log, new_log),
         log_matching_property_spec(old_log, other_log),
+        other_log.len() <= old_log.len(),
     ensures
         log_matching_property_spec(new_log, other_log)
 {
@@ -374,7 +374,9 @@ proof fn leader_append_only_chain(
     entry: LogEntry,
     other_log: Seq<LogEntry>,
 )
-    requires log_matching_property_spec(old_log, other_log)
+    requires
+        log_matching_property_spec(old_log, other_log),
+        logs_match_prefix_spec(old_log, other_log, old_log.len() as int),
     ensures log_matching_property_spec(old_log.push(entry), other_log)
 {
     // leader_log_invariant_spec(old_log, old_log.push(entry)) holds by append_satisfies_invariant

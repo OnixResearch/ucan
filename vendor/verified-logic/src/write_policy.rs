@@ -369,8 +369,16 @@ mod tests {
     // r[verify write-policy.write-back-eviction]
     #[test]
     fn test_evict_line() {
-        let dirty = CacheLine { data: 11, dirty: true, policy: WritePolicy::WriteBack };
-        let clean = CacheLine { data: 7, dirty: false, policy: WritePolicy::WriteBack };
+        let dirty = CacheLine {
+            data: 11,
+            dirty: true,
+            policy: WritePolicy::WriteBack,
+        };
+        let clean = CacheLine {
+            data: 7,
+            dirty: false,
+            policy: WritePolicy::WriteBack,
+        };
         assert_eq!(evict_line(dirty, 1, &[1, 2, 3]), vec![1, 11, 3]);
         assert_eq!(evict_line(clean, 1, &[1, 2, 3]), vec![1, 2, 3]);
     }
@@ -390,9 +398,21 @@ mod tests {
     #[test]
     fn test_flush_all() {
         let lines = vec![
-            CacheLine { data: 5, dirty: true, policy: WritePolicy::WriteBack },
-            CacheLine { data: 7, dirty: false, policy: WritePolicy::WriteThrough },
-            CacheLine { data: 9, dirty: true, policy: WritePolicy::WriteBack },
+            CacheLine {
+                data: 5,
+                dirty: true,
+                policy: WritePolicy::WriteBack,
+            },
+            CacheLine {
+                data: 7,
+                dirty: false,
+                policy: WritePolicy::WriteThrough,
+            },
+            CacheLine {
+                data: 9,
+                dirty: true,
+                policy: WritePolicy::WriteBack,
+            },
         ];
         let memory = vec![1, 7, 3];
         let (new_lines, new_memory) = flush_all(&lines, &memory);
@@ -403,8 +423,16 @@ mod tests {
     // r[verify write-policy.read-equivalence]
     #[test]
     fn test_read_hit() {
-        let wb = CacheLine { data: 42, dirty: true, policy: WritePolicy::WriteBack };
-        let wt = CacheLine { data: 42, dirty: false, policy: WritePolicy::WriteThrough };
+        let wb = CacheLine {
+            data: 42,
+            dirty: true,
+            policy: WritePolicy::WriteBack,
+        };
+        let wt = CacheLine {
+            data: 42,
+            dirty: false,
+            policy: WritePolicy::WriteThrough,
+        };
         assert_eq!(read_hit(wb), 42);
         assert_eq!(read_hit(wt), 42);
     }

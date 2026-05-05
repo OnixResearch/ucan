@@ -341,7 +341,7 @@ mod tests {
         let mut s = new_scheduler_state(2, 3, SchedulingStrategy::RoundRobin);
         assert!(!tick(&mut s)); // 3 -> 2
         assert!(!tick(&mut s)); // 2 -> 1
-        assert!(tick(&mut s));  // 1 -> 0, switch
+        assert!(tick(&mut s)); // 1 -> 0, switch
     }
 
     #[test]
@@ -369,7 +369,10 @@ mod tests {
 
     #[test]
     fn test_randomized_advance() {
-        let strat = SchedulingStrategy::Randomized { min_quantum: 5, max_quantum: 10 };
+        let strat = SchedulingStrategy::Randomized {
+            min_quantum: 5,
+            max_quantum: 10,
+        };
         let mut s = new_scheduler_state(2, 100, strat);
         tick(&mut s); // need remaining > 0 for tick
         let next = advance_randomized(&mut s, 42);
@@ -381,7 +384,10 @@ mod tests {
 
     #[test]
     fn test_randomized_degenerate() {
-        let strat = SchedulingStrategy::Randomized { min_quantum: 7, max_quantum: 7 };
+        let strat = SchedulingStrategy::Randomized {
+            min_quantum: 7,
+            max_quantum: 7,
+        };
         let mut s = new_scheduler_state(2, 100, strat);
         tick(&mut s);
         advance_randomized(&mut s, 999);
@@ -419,7 +425,10 @@ mod tests {
     #[test]
     fn test_apply_variant_strategy_override() {
         let mut s = new_scheduler_state(2, 5, SchedulingStrategy::RoundRobin);
-        let new_strat = SchedulingStrategy::Randomized { min_quantum: 3, max_quantum: 8 };
+        let new_strat = SchedulingStrategy::Randomized {
+            min_quantum: 3,
+            max_quantum: 8,
+        };
         let v = ScheduleVariant {
             strategy_override: Some(new_strat),
             quantum_override: None,
@@ -444,9 +453,11 @@ mod tests {
         let mut s1 = new_scheduler_state(2, 2, SchedulingStrategy::RoundRobin);
         let mut s2 = new_scheduler_state(2, 2, SchedulingStrategy::RoundRobin);
         for _ in 0_u32..5_u32 {
-            tick(&mut s1); tick(&mut s1);
+            tick(&mut s1);
+            tick(&mut s1);
             advance_round_robin(&mut s1);
-            tick(&mut s2); tick(&mut s2);
+            tick(&mut s2);
+            tick(&mut s2);
             advance_round_robin(&mut s2);
         }
         assert_eq!(s1.fingerprint, s2.fingerprint);

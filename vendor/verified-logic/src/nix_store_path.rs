@@ -3,9 +3,8 @@
 //! Composes base32 encoding, hash truncation, and fingerprint construction
 //! to compute store paths of the form `/nix/store/<hash>-<name>`.
 //!
-//! SHA-256 is modeled as an opaque spec function — we axiomatize its
-//! interface properties (output length, determinism) without verifying
-//! its internals.
+//! SHA-256 is modeled as an opaque byte-level spec function assembled into a
+//! fixed-width 32-byte digest, without verifying its internals.
 
 #![allow(clippy::ptr_arg)]
 
@@ -19,22 +18,27 @@ verus! {
 
 // --- SHA-256 model ---
 
+/// Opaque byte-level SHA-256 model.
+pub uninterp spec fn sha256_byte_spec(input: Seq<u8>, index: int) -> u8;
+
 // r[depends nix-store-path.hash-part]
-/// Opaque spec for SHA-256. Returns a 32-byte hash.
-pub open spec fn sha256_spec(input: Seq<u8>) -> Seq<u8>;
+/// Opaque spec for SHA-256 assembled as a fixed 32-byte hash.
+pub open spec fn sha256_spec(input: Seq<u8>) -> Seq<u8> {
+    Seq::new(32nat, |i: int| sha256_byte_spec(input, i))
+}
 
 /// SHA-256 output is always 32 bytes.
-#[verifier::external_body]
 pub proof fn sha256_output_len(input: Seq<u8>)
     ensures sha256_spec(input).len() == 32
-{}
+{
+}
 
 /// SHA-256 is deterministic: same input always produces same output.
-#[verifier::external_body]
 pub proof fn sha256_deterministic(a: Seq<u8>, b: Seq<u8>)
     requires a == b
     ensures sha256_spec(a) == sha256_spec(b)
-{}
+{
+}
 
 // --- Store path constants ---
 

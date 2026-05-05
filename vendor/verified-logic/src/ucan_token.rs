@@ -175,17 +175,144 @@ pub open spec fn attenuation_monotone_spec(parent_att: Seq<UcanCapability>, chil
     forall|i: int| 0 <= i < child_att.len() ==> attenuation_check_one_spec(parent_att, child_att[i])
 }
 
+/// Check byte-sequence equality with a reusable extensional postcondition.
+// r[impl ucan-token.attenuation-monotone]
+pub fn bytes_equal(left: &Vec<u8>, right: &Vec<u8>) -> (result: bool)
+    ensures result == (left@ =~= right@),
+{
+    if left.len() != right.len() {
+        assert(left@.len() != right@.len());
+        assert(!(left@ =~= right@));
+        return false;
+    }
+
+    let mut i: usize = 0;
+    while i < left.len()
+        invariant
+            left.len() == right.len(),
+            0 <= i <= left.len(),
+            forall|k: int| 0 <= k < i ==> left@[k] == right@[k],
+        decreases left.len() - i,
+    {
+        if left[i] != right[i] {
+            assert(left@[i as int] != right@[i as int]);
+            assert(!(left@ =~= right@));
+            return false;
+        }
+        i = i + 1;
+    }
+
+    assert(left@ =~= right@);
+    true
+}
+
+/// Check whether `prefix` is a byte prefix of `bytes`.
+// r[impl ucan-token.attenuation-monotone]
+pub fn bytes_has_prefix(bytes: &Vec<u8>, prefix: &Vec<u8>) -> (result: bool)
+    ensures
+        result == (
+            bytes@.len() >= prefix@.len()
+            && bytes@.subrange(0, prefix@.len() as int) =~= prefix@
+        ),
+{
+    if bytes.len() < prefix.len() {
+        assert(bytes@.len() < prefix@.len());
+        return false;
+    }
+
+    let mut i: usize = 0;
+    while i < prefix.len()
+        invariant
+            bytes.len() >= prefix.len(),
+            0 <= i <= prefix.len(),
+            forall|k: int| 0 <= k < i ==> bytes@[k] == prefix@[k],
+        decreases prefix.len() - i,
+    {
+        if bytes[i] != prefix[i] {
+            assert(bytes@[i as int] != prefix@[i as int]);
+            assert(bytes@.subrange(0, prefix@.len() as int)[i as int] == bytes@[i as int]);
+            assert(!(bytes@.subrange(0, prefix@.len() as int) =~= prefix@));
+            return false;
+        }
+        i = i + 1;
+    }
+
+    assert(bytes@.subrange(0, prefix@.len() as int) =~= prefix@);
+    true
+}
+
+/// Check one child capability against one parent capability.
+// r[impl ucan-token.attenuation-monotone]
+pub fn check_capability_contained(parent: &UcanCapability, child: &UcanCapability) -> (result: bool)
+    ensures result == capability_contained_spec(*parent, *child),
+{
+    let resource_ok = bytes_has_prefix(&child.resource, &parent.resource);
+    if !resource_ok {
+        return false;
+    }
+    let ability_ok = bytes_equal(&child.ability, &parent.ability);
+    if !ability_ok {
+        return false;
+    }
+    true
+}
+
+/// Check if one child capability is contained by at least one parent capability.
+// r[impl ucan-token.attenuation-monotone]
+pub fn check_attenuation_one(parent_att: &Vec<UcanCapability>, child_cap: &UcanCapability) -> (result: bool)
+    ensures result == attenuation_check_one_spec(parent_att@, *child_cap),
+{
+    let mut j: usize = 0;
+    while j < parent_att.len()
+        invariant
+            0 <= j <= parent_att.len(),
+            forall|k: int| 0 <= k < j ==> !capability_contained_spec(parent_att@[k], *child_cap),
+        decreases parent_att.len() - j,
+    {
+        let contained = check_capability_contained(&parent_att[j], child_cap);
+        if contained {
+            assert(capability_contained_spec(parent_att@[j as int], *child_cap));
+            assert(attenuation_check_one_spec(parent_att@, *child_cap));
+            return true;
+        }
+        assert(!capability_contained_spec(parent_att@[j as int], *child_cap));
+        j = j + 1;
+    }
+
+    assert forall|k: int| 0 <= k < parent_att@.len() implies !capability_contained_spec(parent_att@[k], *child_cap) by {
+        assert(k < j);
+    }
+    assert(!attenuation_check_one_spec(parent_att@, *child_cap));
+    false
+}
+
 /// Check whether every child capability is contained by some parent capability.
 // r[impl ucan-token.attenuation-monotone]
-#[verifier::external_body]
 pub fn check_attenuation_chain(parent_att: &Vec<UcanCapability>, child_att: &Vec<UcanCapability>) -> (result: bool)
     ensures result == attenuation_monotone_spec(parent_att@, child_att@),
 {
-    child_att.iter().all(|child| {
-        parent_att.iter().any(|parent| {
-            child.resource.starts_with(&parent.resource) && child.ability == parent.ability
-        })
-    })
+    let mut i: usize = 0;
+    while i < child_att.len()
+        invariant
+            0 <= i <= child_att.len(),
+            forall|k: int| 0 <= k < i ==> attenuation_check_one_spec(parent_att@, child_att@[k]),
+        decreases child_att.len() - i,
+    {
+        let child_ok = check_attenuation_one(parent_att, &child_att[i]);
+        if !child_ok {
+            assert(!attenuation_check_one_spec(parent_att@, child_att@[i as int]));
+            assert(!attenuation_monotone_spec(parent_att@, child_att@));
+            return false;
+        }
+        assert(attenuation_check_one_spec(parent_att@, child_att@[i as int]));
+        i = i + 1;
+    }
+
+    assert forall|k: int| 0 <= k < child_att@.len() implies attenuation_check_one_spec(parent_att@, child_att@[k]) by {
+        assert(k < i);
+    }
+    assert(attenuation_monotone_spec(parent_att@, child_att@));
+    true
 }
 
 /// Canonical payload-byte construction is an explicit external assumption at this layer.

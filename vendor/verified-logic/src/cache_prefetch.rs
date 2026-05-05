@@ -283,6 +283,7 @@ pub fn prefetch_drop(arch: &ArchState, caches: &[u8]) -> (result: (ArchState, Ve
 }
 
 // r[impl cache-prefetch.eviction-safe]
+#[allow(clippy::cast_possible_truncation)]
 pub fn replace_prefetch_line(
     set: &[CacheSlot],
     memory: &[u64],
@@ -505,6 +506,7 @@ mod tests {
 
     // r[verify cache-prefetch.eviction-safe]
     #[test]
+    #[allow(clippy::cast_possible_truncation)]
     fn test_dirty_victim_writeback_updates_memory() {
         let set = vec![
             sample_slot(TEST_VICTIM_TAG, mesi::STATE_MODIFIED, true, TEST_DIRTY_DATA),

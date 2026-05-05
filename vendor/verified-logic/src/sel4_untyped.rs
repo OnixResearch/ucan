@@ -7,9 +7,12 @@
 
 use vstd::prelude::*;
 
+use crate::region::contains_region;
 #[cfg(verus_keep_ghost)]
-use crate::region::{contains_region_spec, regions_disjoint_spec};
-use crate::region::{contains_region, regions_disjoint};
+use crate::region::contains_region_spec;
+use crate::region::regions_disjoint;
+#[cfg(verus_keep_ghost)]
+use crate::region::regions_disjoint_spec;
 
 verus! {
 

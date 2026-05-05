@@ -489,10 +489,26 @@ mod tests {
     // r[verify sel4-tcb.blocking-object]
     #[test]
     fn test_blocked_states_name_wait_object() {
-        let send = Tcb { tid: 1, priority: 2, state: TcbState::BlockedOnSend { endpoint: 11 } };
-        let recv = Tcb { tid: 1, priority: 2, state: TcbState::BlockedOnReceive { endpoint: 12 } };
-        let notif = Tcb { tid: 1, priority: 2, state: TcbState::BlockedOnNotification { notification: 13 } };
-        let reply = Tcb { tid: 1, priority: 2, state: TcbState::BlockedOnReply { reply: 14 } };
+        let send = Tcb {
+            tid: 1,
+            priority: 2,
+            state: TcbState::BlockedOnSend { endpoint: 11 },
+        };
+        let recv = Tcb {
+            tid: 1,
+            priority: 2,
+            state: TcbState::BlockedOnReceive { endpoint: 12 },
+        };
+        let notif = Tcb {
+            tid: 1,
+            priority: 2,
+            state: TcbState::BlockedOnNotification { notification: 13 },
+        };
+        let reply = Tcb {
+            tid: 1,
+            priority: 2,
+            state: TcbState::BlockedOnReply { reply: 14 },
+        };
 
         assert!(is_blocked(&send));
         assert_eq!(blocking_object(&send), Some(11));
@@ -504,7 +520,11 @@ mod tests {
     // r[verify sel4-tcb.transitions]
     #[test]
     fn test_wake_moves_blocked_receive_to_runnable() {
-        let mut tcb = Tcb { tid: 9, priority: 1, state: TcbState::Running };
+        let mut tcb = Tcb {
+            tid: 9,
+            priority: 1,
+            state: TcbState::Running,
+        };
         assert!(block_on_receive(&mut tcb, 44));
         assert!(is_blocked(&tcb));
         assert!(wake(&mut tcb));

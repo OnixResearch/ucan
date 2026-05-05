@@ -83,8 +83,12 @@
 //!   exit edges, and nesting
 //! - `liveness_analysis` — backward live-in/live-out dataflow, fixed-point checking, and live-range
 //!   projection
+//! - `register_allocation` — live-range overlap graphs, conflict-free register assignment, and
+//!   deterministic spill fallback
 //! - `stack_frame_layout` — aligned stack-slot placement, exact rounded frame sizing, and explicit
 //!   safe-reuse checks over live ranges
+//! - `wasm_primitives` — exact Wasm value tags, `i32.add` stack discipline, typed local access, and
+//!   linear-memory bounds/grow semantics
 //! - `dead_code_elimination` — dead instruction classification from side-effect tagging and
 //!   live-out facts
 //! - `debruijn` — de Bruijn shifting, substitution, and beta reduction with scope preservation
@@ -161,6 +165,8 @@
 //!   composition, load/store validity
 //! - `cache_hierarchy` — inclusive/exclusive/non-inclusive L1/L2 invariants, back-invalidation,
 //!   capacity accounting, and snoop scope
+//! - `directory_coherence` — single-line directory protocol with shared-bit vectors, targeted
+//!   invalidations, exclusive-owner grants, eviction notifications, and MESI-compatible embedding
 //! - `cache_prefetch` — architecturally invisible prefetch hints with MESI-compatible cache
 //!   transitions and explicit dirty-victim writeback
 //! - `mesi` — MESI cache coherence protocol: M/E/S/I states, processor read/write, bus snooping,
@@ -181,6 +187,7 @@
 //! - `noop_commit` — no-op entry for committing prior-term entries after election
 //! - `node_classify` — node classification: voter/learner, leader/follower, batch with bounds
 //! - `nix_closure` — Nix generic closure with fuel-based termination
+//! - `nix_eval_closure_policy` — composite Nix evaluation closure admission policy
 //! - `node_lifecycle` — node status FSM: Starting/Online/Degraded/Offline
 //! - `nix_list` — Nix list builtins: elem, head, tail, `gen_list`, concat
 //! - `nix_string` — Nix string operations: length, substring, replace
@@ -209,6 +216,8 @@
 //! - `quota` — resource quota enforcement: remaining capacity, admission, consume/release,
 //!   utilization
 //! - `quorum` — majority threshold, quorum predicate, intersection theorem
+//! - `raft_consensus_core` — finite Raft term, stale-message, vote, RequestVote, and
+//!   election-safety primitives for the domain-primitives OpenSpec
 //! - `raft_step` — Raft step decomposition for modular invariant proofs
 //! - `raft_timing` — Raft timeout configuration validators with fail-fast composition
 //! - `rate_limit` — integer token bucket rate limiting
@@ -354,6 +363,7 @@ pub mod append_response;
 pub mod approval;
 pub mod arithmetic;
 pub mod authorize;
+pub mod backend_frame_allocator;
 pub mod backoff;
 pub mod balance;
 pub mod ballot;
@@ -370,6 +380,7 @@ pub mod bitfield;
 pub mod bitmap;
 pub mod bitwise;
 pub mod bloom;
+pub mod bounded_interval;
 pub mod bounded_range;
 pub mod btree_balance;
 pub mod btree_delete;
@@ -392,9 +403,11 @@ pub mod alloc_bitmap;
 pub mod alloc_token;
 pub mod arena;
 pub mod block_cache;
+pub mod blocking_bounded_channel;
 pub mod bounded_mpmc;
 pub mod bounded_peers;
 pub mod bounds;
+pub mod cache_coherent_memory_region;
 pub mod cache_hierarchy;
 pub mod cache_partition;
 pub mod cache_prefetch;
@@ -403,6 +416,7 @@ pub mod cas;
 pub mod cas_loop;
 pub mod chain;
 pub mod chaoscontrol_coverage;
+pub mod chaoscontrol_exploration_core;
 pub mod chaoscontrol_fault_schedule;
 pub mod chaoscontrol_fault_state;
 pub mod chaoscontrol_frontier;
@@ -423,13 +437,36 @@ pub mod collections;
 pub mod commit_advance;
 pub mod commit_notify;
 pub mod compaction_fence;
+pub mod composite_outcome;
+pub mod config_admission;
 pub mod config_change;
+pub mod config_default;
+pub mod config_key;
+pub mod config_override_precedence;
+pub mod config_typed_value;
+pub mod config_validation_decision;
 pub mod constant_folding;
 pub mod constant_time_eq;
+pub mod constraint_admission;
+pub mod constraint_assignment;
+pub mod constraint_consistency;
+pub mod constraint_domain;
+pub mod constraint_propagation;
+pub mod constraint_relation;
+pub mod constraint_variable;
+pub mod constraint_witness;
+pub mod control_actuator_saturation;
+pub mod control_deadband;
+pub mod control_error_signal;
 pub mod control_flow_graph;
+pub mod control_hysteresis;
+pub mod control_rate_limit;
+pub mod control_safety_envelope;
+pub mod control_setpoint;
 pub mod conversion;
 pub mod cost_tracker;
 pub mod cow;
+pub mod crash_safe_page_cache;
 pub mod crdt;
 pub mod cron_field;
 pub mod cron_match;
@@ -437,16 +474,33 @@ pub mod cron_next;
 pub mod cryptoshedding;
 pub mod ct_select;
 pub mod cycle_detect;
+pub mod data_validation_admission;
+pub mod data_validation_cross_field;
+pub mod data_validation_enum_constraint;
+pub mod data_validation_error_accumulation;
+pub mod data_validation_field_presence;
+pub mod data_validation_normalization_decision;
+pub mod data_validation_range_constraint;
+pub mod data_validation_schema_predicate;
 pub mod dead_code_elimination;
 pub mod deadline_queue;
 pub mod debruijn;
 pub mod delegation;
+pub mod dependency_scheduler;
+pub mod directory_coherence;
 pub mod distributed_lock;
 pub mod dominator_tree;
 pub mod double_entry;
 pub mod drain;
 pub mod drain_protocol;
+pub mod ds_bounded_array;
+pub mod ds_fifo_queue;
+pub mod ds_key_value_map;
+pub mod ds_priority_queue;
+pub mod ds_ring_buffer;
+pub mod ds_union_find;
 pub mod durable_history;
+pub mod durable_job_executor;
 pub mod durable_replay;
 pub mod durable_resume;
 pub mod durable_terminal;
@@ -462,10 +516,13 @@ pub mod epoch_reclaim;
 pub mod escrow;
 pub mod eviction;
 pub mod eviction_score;
+pub mod exactly_once_ledger_transfer;
 pub mod expiration;
 pub mod fair_share;
 pub mod false_sharing;
 pub mod fast_backtrack;
+pub mod feature_flag_gate;
+pub mod feature_flag_rollout_bucket;
 pub mod fee;
 pub mod fencing;
 pub mod fetch_add;
@@ -476,11 +533,37 @@ pub mod forest;
 pub mod fragmentation;
 pub mod free_list;
 pub mod free_space_map;
+pub mod fs_path_admission;
+pub mod fs_path_containment;
+pub mod fs_path_extension_type;
+pub mod fs_path_form;
+pub mod fs_path_join_split;
+pub mod fs_path_normalization;
+pub mod fs_path_segment;
+pub mod fs_path_traversal;
 pub mod futex_state;
+pub mod geom_admission;
+pub mod geom_bounds;
+pub mod geom_containment;
+pub mod geom_grid_cell;
+pub mod geom_intersection;
+pub mod geom_orientation;
+pub mod geom_point_vector;
+pub mod geom_transform;
 pub mod ghost_history;
+pub mod gis_bounding_box;
+pub mod gis_coordinate_envelope;
+pub mod gis_linestring_topology;
+pub mod gis_tile_index;
 pub mod glob;
 pub mod gossip;
+pub mod graph_adjacency;
 pub mod graph_color;
+pub mod graph_component_partition;
+pub mod graph_frontier_cut;
+pub mod graph_reachability;
+pub mod graph_shortest_path_envelope;
+pub mod graph_topological_order;
 pub mod hash_bucket;
 pub mod hazard_pointer;
 pub mod heap_index;
@@ -491,6 +574,14 @@ pub mod hypervisor_gpa;
 pub mod hypervisor_interrupt;
 pub mod hypervisor_memslot;
 pub mod hypervisor_vcpu;
+pub mod id_alias_map;
+pub mod id_canonicalization;
+pub mod id_collision_metadata;
+pub mod id_identifier_envelope;
+pub mod id_lookup_result;
+pub mod id_namespace_scope;
+pub mod id_registration_admission;
+pub mod id_scoped_uniqueness;
 pub mod index_select;
 pub mod install_snapshot;
 pub mod instruction_selection;
@@ -522,6 +613,7 @@ pub mod lease_read;
 pub mod ledger;
 pub mod left_right;
 pub mod linearizability;
+pub mod linearizable_read_gate;
 pub mod liveness_analysis;
 pub mod lock_ordering;
 pub mod log;
@@ -535,10 +627,35 @@ pub mod match_index;
 pub mod memory_order;
 pub mod merkle;
 pub mod mesi;
+pub mod metric_admission;
+pub mod metric_aggregate;
+pub mod metric_alert;
+pub mod metric_counter;
+pub mod metric_gauge;
+pub mod metric_histogram;
+pub mod metric_id;
+pub mod metric_labels;
+pub mod metric_window;
+pub mod ml_batch_iterator;
+pub mod ml_confusion_matrix;
+pub mod ml_dataset_split;
+pub mod ml_feature_normalization;
+pub mod ml_inference_envelope;
+pub mod ml_label_encoding;
+pub mod ml_tensor_shape;
+pub mod ml_top_k;
 pub mod moesi;
 pub mod monotonic;
 pub mod mpsc_bounds;
 pub mod mvcc;
+pub mod net_checksum_shape;
+pub mod net_endpoint_address;
+pub mod net_header_field;
+pub mod net_message_sequence;
+pub mod net_packet_frame;
+pub mod net_parser_admission;
+pub mod net_payload_bound;
+pub mod net_protocol_admission;
 pub mod nickel_field_merge;
 pub mod nickel_merge_split;
 pub mod nickel_pattern_coverage;
@@ -550,6 +667,7 @@ pub mod nix_attrset;
 pub mod nix_base32;
 pub mod nix_closure;
 pub mod nix_drv_serialize;
+pub mod nix_eval_closure_policy;
 pub mod nix_fingerprint;
 pub mod nix_hash_truncate;
 pub mod nix_list;
@@ -560,6 +678,22 @@ pub mod node_classify;
 pub mod node_lifecycle;
 pub mod nonce;
 pub mod noop_commit;
+pub mod numeric_affine_transform_discrete;
+pub mod numeric_checked_arithmetic_envelope;
+pub mod numeric_denominator_safe_ratio;
+pub mod numeric_fixed_point_scale;
+pub mod numeric_histogram_counter;
+pub mod numeric_monotone_sequence;
+pub mod numeric_prefix_sum;
+pub mod numeric_quantized_threshold;
+pub mod opt_admission;
+pub mod opt_bound;
+pub mod opt_candidate_ranking;
+pub mod opt_dominance;
+pub mod opt_feasible_set;
+pub mod opt_frontier;
+pub mod opt_objective;
+pub mod opt_optimum_witness;
 pub mod option;
 pub mod ordering;
 pub mod page;
@@ -571,7 +705,24 @@ pub mod peer_spec;
 pub mod per_core_rwlock;
 pub mod permission;
 pub mod persistent_state;
+pub mod physics_collision_envelope;
+pub mod physics_contact_manifold;
+pub mod physics_energy_budget;
+pub mod physics_integrator_step;
+pub mod physics_momentum_budget;
+pub mod physics_time_horizon;
+pub mod physics_units;
+pub mod physics_vector_bounds;
 pub mod pointwise;
+pub mod policy_action;
+pub mod policy_authorization;
+pub mod policy_conflict;
+pub mod policy_decision_engine;
+pub mod policy_delegation;
+pub mod policy_grant_denial;
+pub mod policy_principal;
+pub mod policy_resource;
+pub mod policy_rule;
 pub mod pool;
 pub mod pre_vote;
 pub mod pre_vote_lease;
@@ -585,14 +736,18 @@ pub mod query_cost;
 pub mod quorum;
 pub mod quorum_cert;
 pub mod quota;
+pub mod raft_consensus_core;
+pub mod raft_membership_manager;
 pub mod raft_step;
 pub mod raft_timing;
 pub mod rate_limit;
 pub mod rcu;
 pub mod reachability;
 pub mod read_index;
+pub mod rect_grid_index;
 pub mod ref_count;
 pub mod region;
+pub mod register_allocation;
 pub mod replication_mode;
 pub mod replication_pipeline;
 pub mod request_forward;
@@ -600,6 +755,8 @@ pub mod result;
 pub mod retry;
 pub mod ring_buffer;
 pub mod rwlock;
+pub mod safe_reclamation_domain;
+pub mod safe_snapshot_replication;
 pub mod scope;
 pub mod segregated_free;
 pub mod sel4_asid;
@@ -610,6 +767,7 @@ pub mod sel4_endpoint;
 pub mod sel4_fault_ipc;
 pub mod sel4_invariants;
 pub mod sel4_invocation;
+pub mod sel4_invocation_step;
 pub mod sel4_irq;
 pub mod sel4_notification;
 pub mod sel4_ready_queue;
@@ -623,6 +781,7 @@ pub mod seq_set;
 pub mod seqlock;
 pub mod sequence;
 pub mod sequential;
+pub mod serializable_txn_guard;
 pub mod serialize_inj;
 pub mod session_tree;
 pub mod set_associative_lookup;
@@ -694,11 +853,22 @@ pub mod ucan_signature;
 pub mod ucan_temporal;
 pub mod ucan_token;
 pub mod vector_clock;
+pub mod verified_compiler_pipeline;
+pub mod verified_lsm_ingest;
 pub mod view_change;
+pub mod vision_color_layout;
+pub mod vision_color_transform_envelope;
+pub mod vision_connected_components;
+pub mod vision_convolution_window;
+pub mod vision_detection_nms;
+pub mod vision_image_buffer;
+pub mod vision_image_pyramid;
+pub mod vision_roi;
 pub mod vote_tally;
 pub mod voter_set;
 pub mod wal_recovery;
 pub mod wal_segment;
+pub mod wasm_primitives;
 pub mod watermark;
 pub mod web_of_trust_attestation;
 pub mod web_of_trust_chain;
@@ -706,6 +876,7 @@ pub mod web_of_trust_policy;
 pub mod web_of_trust_principal;
 pub mod web_of_trust_resolution;
 pub mod web_of_trust_revocation;
+pub mod web_of_trust_ucan_authorizer;
 pub mod weighted_round_robin;
 pub mod witness;
 pub mod work_stealing;

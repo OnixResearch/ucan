@@ -413,10 +413,9 @@ A threshold policy MUST count only distinct introducers.
             facts.requirement_defs[0].section.as_deref(),
             Some("Requirement: Threshold Policy Counts Distinct Introducers")
         );
-        assert_eq!(
-            facts.requirement_defs[0].body,
-            vec!["A threshold policy MUST count only distinct introducers.".to_string()]
-        );
+        assert_eq!(facts.requirement_defs[0].body, vec![
+            "A threshold policy MUST count only distinct introducers.".to_string()
+        ]);
     }
 
     #[test]

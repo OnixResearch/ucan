@@ -445,9 +445,7 @@ mod tests {
     fn oracle_can_forward(entry: StoreEntry, load_addr: u64, load_size: u8) -> bool {
         let store_size = entry.size as u64;
         let load_size_u64 = load_size as u64;
-        entry.addr <= load_addr
-            && load_size_u64 <= store_size
-            && load_addr - entry.addr <= store_size - load_size_u64
+        entry.addr <= load_addr && load_size_u64 <= store_size && load_addr - entry.addr <= store_size - load_size_u64
     }
 
     fn oracle_forward_lookup(buffer: &[StoreEntry], load_addr: u64, load_size: u8) -> Option<StoreEntry> {
@@ -480,7 +478,8 @@ mod tests {
             buffer.push(entry(TEST_ADDR_BASE + index as u64, STORE_SIZE_BYTE, index as u64, index as u64));
             index += 1;
         }
-        let rejected = enqueue(&buffer, entry(TEST_ADDR_OTHER, STORE_SIZE_WORD, TEST_DATA_CACHE, STORE_BUFFER_CAPACITY as u64));
+        let rejected =
+            enqueue(&buffer, entry(TEST_ADDR_OTHER, STORE_SIZE_WORD, TEST_DATA_CACHE, STORE_BUFFER_CAPACITY as u64));
         assert_eq!(rejected, None);
         assert_eq!(buffer.len(), STORE_BUFFER_CAPACITY);
     }

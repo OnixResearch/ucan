@@ -4,7 +4,9 @@
 
 use vstd::prelude::*;
 
-use crate::choreography_global::{LabelId, PayloadTag, RoleId};
+use crate::choreography_global::LabelId;
+use crate::choreography_global::PayloadTag;
+use crate::choreography_global::RoleId;
 
 verus! {
 
@@ -1603,15 +1605,26 @@ pub fn merge_local(decider: RoleId, left: &LocalChoreo, right: &LocalChoreo) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use proptest::prelude::*;
 
+    use super::*;
+
     fn recv(peer: RoleId, label: LabelId, payload_tag: PayloadTag, next: LocalChoreo) -> LocalChoreo {
-        LocalChoreo::Recv { peer, label, payload_tag, next: Box::new(next) }
+        LocalChoreo::Recv {
+            peer,
+            label,
+            payload_tag,
+            next: Box::new(next),
+        }
     }
 
     fn send(peer: RoleId, label: LabelId, payload_tag: PayloadTag, next: LocalChoreo) -> LocalChoreo {
-        LocalChoreo::Send { peer, label, payload_tag, next: Box::new(next) }
+        LocalChoreo::Send {
+            peer,
+            label,
+            payload_tag,
+            next: Box::new(next),
+        }
     }
 
     // r[verify choreography.merge]
@@ -1646,15 +1659,27 @@ mod tests {
         let left = LocalChoreo::Offer {
             from: 2,
             branches: vec![
-                LocalBranch { label: 1, body: LocalChoreo::End },
-                LocalBranch { label: 3, body: send(8, 9, 0, LocalChoreo::End) },
+                LocalBranch {
+                    label: 1,
+                    body: LocalChoreo::End,
+                },
+                LocalBranch {
+                    label: 3,
+                    body: send(8, 9, 0, LocalChoreo::End),
+                },
             ],
         };
         let right = LocalChoreo::Offer {
             from: 2,
             branches: vec![
-                LocalBranch { label: 2, body: LocalChoreo::End },
-                LocalBranch { label: 3, body: send(8, 9, 0, LocalChoreo::End) },
+                LocalBranch {
+                    label: 2,
+                    body: LocalChoreo::End,
+                },
+                LocalBranch {
+                    label: 3,
+                    body: send(8, 9, 0, LocalChoreo::End),
+                },
             ],
         };
         let merged = merge_local(2, &left, &right).unwrap();

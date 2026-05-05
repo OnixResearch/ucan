@@ -2,8 +2,8 @@
 //!
 //! Models a hash chain where each entry's hash depends on its predecessor,
 //! its log index, its term, and its data. Blake3 is modeled as an
-//! uninterpreted function with two trusted axioms (determinism and fixed
-//! output size). Proves that appending a correctly-hashed entry preserves
+//! uninterpreted function with trusted runtime and collision-resistance
+//! boundaries. Proves that appending a correctly-hashed entry preserves
 //! chain validity.
 //!
 //! Matches aspen's `compute_entry_hash` and the chain validity invariant
@@ -31,22 +31,22 @@ pub struct ChainEntry {
 ///
 /// In practice this is blake3(prev_hash || index || term || data).
 /// We model it as a pure function from four u64 inputs to a u64 hash.
-/// The axioms below assert determinism — Verus treats it as opaque.
+/// Determinism for equal inputs follows directly from pure spec equality;
+/// collision resistance remains an explicit trusted axiom below.
 // r[depends chain.hash-deterministic]
 // r[impl chain.hash-deterministic]
 pub uninterp spec fn hash_spec(prev: u64, index: u64, term: u64, data_id: u64) -> u64;
 
 // r[verify chain.hash-deterministic]
-/// Axiom: the hash function is deterministic.
-/// @verified-logic:permanent-axiom — hash_spec is closed/uninterpreted
-#[verifier::external_body]
+/// Pure spec determinism for equal hash inputs.
 pub proof fn hash_deterministic(
     prev1: u64, idx1: u64, term1: u64, data1: u64,
     prev2: u64, idx2: u64, term2: u64, data2: u64,
 )
     requires prev1 == prev2, idx1 == idx2, term1 == term2, data1 == data2
     ensures hash_spec(prev1, idx1, term1, data1) == hash_spec(prev2, idx2, term2, data2)
-{}
+{
+}
 
 // --- compute_entry_hash ---
 

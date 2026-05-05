@@ -4,27 +4,73 @@
 
 use vstd::prelude::*;
 
-use crate::choreography_global::{GlobalBranch, GlobalChoreo, LabelId, PayloadTag, RoleId, clone_global};
-use crate::choreography_local::{LocalBranch, LocalChoreo, clone_local};
-
 #[cfg(verus_keep_ghost)]
-use crate::choreography_global::{
-    GBranch, GChoreo, gbranches_view, global_branch_labels_strict_spec, global_view,
-    role_in_branches_spec, role_in_global_spec,
-};
+use crate::choreography_global::GBranch;
 #[cfg(verus_keep_ghost)]
-use crate::choreography_local::{
-    LBranch, LChoreo, lbranches_view, local_size, local_view, lookup_branch_from_spec, lookup_branch_spec,
-    option_local_view,
-};
+use crate::choreography_global::GChoreo;
+use crate::choreography_global::GlobalBranch;
+use crate::choreography_global::GlobalChoreo;
+use crate::choreography_global::LabelId;
+use crate::choreography_global::PayloadTag;
+use crate::choreography_global::RoleId;
+use crate::choreography_global::clone_global;
 #[cfg(verus_keep_ghost)]
-use crate::choreography_projection::{
-    absent_from_branches_excludes_each, absent_role_projects_to_end, decider_choice_projects_to_internal_choice,
-    lookup_in_strictly_labeled_branches, merge_projected_absent_role_is_end, merge_projected_alignment,
-    merge_projected_branches_spec, merge_projected_labeled_branches_spec, project_decider_choice_from_pointwise,
-    project_decider_choice_strict_labels, project_decider_choice_from_spec, project_endpoint_spec, project_local_spec,
-    projectable_spec,
-};
+use crate::choreography_global::gbranches_view;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_global::global_branch_labels_strict_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_global::global_view;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_global::role_in_branches_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_global::role_in_global_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::LBranch;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::LChoreo;
+use crate::choreography_local::LocalBranch;
+use crate::choreography_local::LocalChoreo;
+use crate::choreography_local::clone_local;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::lbranches_view;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::local_size;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::local_view;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::lookup_branch_from_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::lookup_branch_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_local::option_local_view;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::absent_from_branches_excludes_each;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::absent_role_projects_to_end;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::decider_choice_projects_to_internal_choice;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::lookup_in_strictly_labeled_branches;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::merge_projected_absent_role_is_end;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::merge_projected_alignment;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::merge_projected_branches_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::merge_projected_labeled_branches_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::project_decider_choice_from_pointwise;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::project_decider_choice_from_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::project_decider_choice_strict_labels;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::project_endpoint_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::project_local_spec;
+#[cfg(verus_keep_ghost)]
+use crate::choreography_projection::projectable_spec;
 
 verus! {
 
@@ -497,8 +543,10 @@ pub fn local_offer_step(local: &LocalChoreo, label: LabelId) -> (result: Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::choreography_global::{GlobalBranch, GlobalChoreo};
-    use crate::choreography_local::{LocalBranch, LocalChoreo};
+    use crate::choreography_global::GlobalBranch;
+    use crate::choreography_global::GlobalChoreo;
+    use crate::choreography_local::LocalBranch;
+    use crate::choreography_local::LocalChoreo;
     use crate::choreography_projection::project_endpoint;
 
     fn branch(label: LabelId, body: GlobalChoreo) -> GlobalBranch {
@@ -506,11 +554,21 @@ mod tests {
     }
 
     fn send(peer: RoleId, label: LabelId, payload_tag: PayloadTag, next: LocalChoreo) -> LocalChoreo {
-        LocalChoreo::Send { peer, label, payload_tag, next: Box::new(next) }
+        LocalChoreo::Send {
+            peer,
+            label,
+            payload_tag,
+            next: Box::new(next),
+        }
     }
 
     fn recv(peer: RoleId, label: LabelId, payload_tag: PayloadTag, next: LocalChoreo) -> LocalChoreo {
-        LocalChoreo::Recv { peer, label, payload_tag, next: Box::new(next) }
+        LocalChoreo::Recv {
+            peer,
+            label,
+            payload_tag,
+            next: Box::new(next),
+        }
     }
 
     // r[verify choreography.steps]
@@ -560,15 +618,27 @@ mod tests {
     fn test_choice_head_steps() {
         let internal = LocalChoreo::InternalChoice {
             branches: vec![
-                LocalBranch { label: 1, body: LocalChoreo::End },
-                LocalBranch { label: 4, body: send(9, 2, 0, LocalChoreo::End) },
+                LocalBranch {
+                    label: 1,
+                    body: LocalChoreo::End,
+                },
+                LocalBranch {
+                    label: 4,
+                    body: send(9, 2, 0, LocalChoreo::End),
+                },
             ],
         };
         let offer = LocalChoreo::Offer {
             from: 3,
             branches: vec![
-                LocalBranch { label: 1, body: LocalChoreo::End },
-                LocalBranch { label: 4, body: recv(3, 8, 0, LocalChoreo::End) },
+                LocalBranch {
+                    label: 1,
+                    body: LocalChoreo::End,
+                },
+                LocalBranch {
+                    label: 4,
+                    body: recv(3, 8, 0, LocalChoreo::End),
+                },
             ],
         };
         assert_eq!(local_internal_choice_step(&internal, 4), Some(send(9, 2, 0, LocalChoreo::End)));

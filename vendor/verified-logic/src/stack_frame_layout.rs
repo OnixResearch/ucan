@@ -7,7 +7,9 @@
 //! separate compatibility check over explicit live ranges.
 
 #[cfg(verus_keep_ghost)]
-use vstd::arithmetic::div_mod::{lemma_fundamental_div_mod, lemma_mod_pos_bound};
+use vstd::arithmetic::div_mod::lemma_fundamental_div_mod;
+#[cfg(verus_keep_ghost)]
+use vstd::arithmetic::div_mod::lemma_mod_pos_bound;
 use vstd::prelude::*;
 
 verus! {
@@ -472,6 +474,7 @@ pub fn empty_frame(stack_alignment: u32) -> (result: Option<FrameLayout>)
 // r[impl stack-frame.alignment]
 // r[impl stack-frame.frame-size]
 // r[impl stack-frame.growth]
+#[allow(clippy::manual_let_else, clippy::question_mark)]
 pub fn assign_slot(layout: &FrameLayout, size: u32, alignment: u32, kind: SlotKind) -> (result: Option<(StackSlot, FrameLayout)>)
     ensures
         result.is_some() ==> {
@@ -601,14 +604,28 @@ mod tests {
     // r[verify stack-frame.non-overlap]
     #[test]
     fn test_reuse_allowed_for_disjoint_liveness() {
-        let slot = StackSlot { offset: 0u32, size: SLOT_SIZE_8, alignment: SLOT_ALIGN_8, kind: SlotKind::Local(0u32) };
+        let slot = StackSlot {
+            offset: 0u32,
+            size: SLOT_SIZE_8,
+            alignment: SLOT_ALIGN_8,
+            kind: SlotKind::Local(0u32),
+        };
         let first = LiveSlot {
             slot,
-            live: LiveRange { start: LIVE_START_ZERO, end: LIVE_MID },
+            live: LiveRange {
+                start: LIVE_START_ZERO,
+                end: LIVE_MID,
+            },
         };
         let second = LiveSlot {
-            slot: StackSlot { kind: SlotKind::Spill(1u32), ..slot },
-            live: LiveRange { start: LIVE_MID, end: LIVE_END },
+            slot: StackSlot {
+                kind: SlotKind::Spill(1u32),
+                ..slot
+            },
+            live: LiveRange {
+                start: LIVE_MID,
+                end: LIVE_END,
+            },
         };
         assert!(can_reuse_slot(first, second));
         assert!(check_non_overlap(&[first, second]));
@@ -618,12 +635,28 @@ mod tests {
     #[test]
     fn test_overlap_rejected_for_live_ranges() {
         let first = LiveSlot {
-            slot: StackSlot { offset: 0u32, size: SLOT_SIZE_8, alignment: SLOT_ALIGN_8, kind: SlotKind::Local(0u32) },
-            live: LiveRange { start: LIVE_START_ZERO, end: LIVE_END },
+            slot: StackSlot {
+                offset: 0u32,
+                size: SLOT_SIZE_8,
+                alignment: SLOT_ALIGN_8,
+                kind: SlotKind::Local(0u32),
+            },
+            live: LiveRange {
+                start: LIVE_START_ZERO,
+                end: LIVE_END,
+            },
         };
         let second = LiveSlot {
-            slot: StackSlot { offset: SLOT_ALIGN_4, size: SLOT_SIZE_8, alignment: SLOT_ALIGN_4, kind: SlotKind::Spill(1u32) },
-            live: LiveRange { start: LIVE_MID, end: LIVE_END },
+            slot: StackSlot {
+                offset: SLOT_ALIGN_4,
+                size: SLOT_SIZE_8,
+                alignment: SLOT_ALIGN_4,
+                kind: SlotKind::Spill(1u32),
+            },
+            live: LiveRange {
+                start: LIVE_MID,
+                end: LIVE_END,
+            },
         };
         assert!(!check_non_overlap(&[first, second]));
     }

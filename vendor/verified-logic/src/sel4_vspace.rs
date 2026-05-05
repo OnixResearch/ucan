@@ -8,12 +8,16 @@
 
 use vstd::prelude::*;
 
-#[cfg(verus_keep_ghost)]
-use crate::region::regions_disjoint_spec;
 use crate::region::regions_disjoint;
 #[cfg(verus_keep_ghost)]
-use crate::sel4_cap_rights::{mask_rights_spec, masking_never_adds, rights_subset_spec};
+use crate::region::regions_disjoint_spec;
 use crate::sel4_cap_rights::mask_rights;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_cap_rights::mask_rights_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_cap_rights::masking_never_adds;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_cap_rights::rights_subset_spec;
 
 verus! {
 
@@ -605,13 +609,7 @@ mod tests {
     #[test]
     fn test_readonly_cap_yields_readonly_mapping() {
         let mut vspace = VSpace::new();
-        assert!(vspace.map(
-            0x7000,
-            0x1000,
-            7,
-            SEL4_VM_READ,
-            SEL4_VM_READ | SEL4_VM_WRITE,
-        ));
+        assert!(vspace.map(0x7000, 0x1000, 7, SEL4_VM_READ, SEL4_VM_READ | SEL4_VM_WRITE,));
         assert_eq!(vspace.mappings[0].rights, SEL4_VM_READ);
     }
 

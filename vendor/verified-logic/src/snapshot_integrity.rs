@@ -6,8 +6,9 @@
 //! chain hash check ties the snapshot to a position in the log's hash
 //! chain.
 //!
-//! Blake3 is axiomatized as an uninterpreted function (same pattern as
-//! `chain.rs`) with determinism and collision-resistance axioms.
+//! Blake3 is modeled as an uninterpreted function (same pattern as
+//! `chain.rs`) with a trusted collision-resistance axiom and runtime bridge;
+//! determinism for equal inputs follows from pure spec equality.
 //!
 //! Proves: compute→verify round-trip, tamper detection on data and
 //! metadata independently, chain hash mismatch detection, and the
@@ -34,17 +35,16 @@ pub struct SnapshotIntegrity {
 /// Abstract hash combining two u64 values.
 ///
 /// In practice this is blake3(a || b). Modeled as uninterpreted with
-/// determinism and collision-resistance axioms.
+/// collision resistance kept as an explicit axiom below.
 // r[depends snapshot-integrity.compute]
 pub uninterp spec fn dual_hash_spec(a: u64, b: u64) -> u64;
 
-/// Axiom: the dual hash is deterministic.
-/// @verified-logic:permanent-axiom — dual_hash_spec is closed/uninterpreted
-#[verifier::external_body]
+/// Pure spec determinism for equal dual-hash inputs.
 pub proof fn dual_hash_deterministic(a1: u64, b1: u64, a2: u64, b2: u64)
     requires a1 == a2, b1 == b2
     ensures dual_hash_spec(a1, b1) == dual_hash_spec(a2, b2)
-{}
+{
+}
 
 /// Axiom: collision resistance — different inputs produce different outputs.
 ///

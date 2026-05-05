@@ -4,14 +4,19 @@
 //! contended global counter on the read fast path. Writers set a global flag,
 //! then wait for the aggregate reader count to drain to zero.
 
-use crate::rwlock::{
-    decrement_reader_count, increment_reader_count, MODE_FREE, MODE_READ, MODE_WRITE,
-};
-#[cfg(verus_keep_ghost)]
-use crate::rwlock::{
-    check_mutual_exclusion_spec, decrement_reader_count_spec, increment_reader_count_spec,
-};
 use vstd::prelude::*;
+
+use crate::rwlock::MODE_FREE;
+use crate::rwlock::MODE_READ;
+use crate::rwlock::MODE_WRITE;
+#[cfg(verus_keep_ghost)]
+use crate::rwlock::check_mutual_exclusion_spec;
+use crate::rwlock::decrement_reader_count;
+#[cfg(verus_keep_ghost)]
+use crate::rwlock::decrement_reader_count_spec;
+use crate::rwlock::increment_reader_count;
+#[cfg(verus_keep_ghost)]
+use crate::rwlock::increment_reader_count_spec;
 
 verus! {
 

@@ -195,7 +195,10 @@ mod tests {
     use super::*;
 
     fn entry(base: u32, sel: u32) -> FrontierEntry {
-        FrontierEntry { base_score: base, times_selected: sel }
+        FrontierEntry {
+            base_score: base,
+            times_selected: sel,
+        }
     }
 
     #[test]

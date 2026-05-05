@@ -100,26 +100,204 @@ pub open spec fn ability_contains_spec2(parent: Ability, child: Ability) -> bool
 
 // --- Exec ---
 
+/// Check byte-segment equality with an extensional postcondition.
+// r[impl ucan-ability.glob-one-level]
+pub fn segments_equal(a: &Vec<u8>, b: &Vec<u8>) -> (result: bool)
+    ensures result == segments_equal_spec(a@, b@),
+{
+    if a.len() != b.len() {
+        assert(a@.len() != b@.len());
+        assert(!(a@ =~= b@));
+        return false;
+    }
+
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            a.len() == b.len(),
+            0 <= i <= a.len(),
+            forall|k: int| 0 <= k < i ==> a@[k] == b@[k],
+        decreases a.len() - i,
+    {
+        if a[i] != b[i] {
+            assert(a@[i as int] != b@[i as int]);
+            assert(!(a@ =~= b@));
+            return false;
+        }
+        i = i + 1;
+    }
+
+    assert(a@ =~= b@);
+    true
+}
+
+/// Check whether a segment is the single-level glob wildcard.
+// r[impl ucan-ability.glob-one-level]
+pub fn is_glob_segment(seg: &Vec<u8>) -> (result: bool)
+    ensures result == is_glob_segment_spec(seg@),
+{
+    seg.len() == 1 && seg[0] == 0x2au8
+}
+
+proof fn top_ability_exec_equiv(pattern: Seq<Vec<u8>>)
+    ensures
+        ((pattern.len() == 1 && is_glob_segment_spec(pattern[0]@))
+            == (pattern.map_values(|s: Vec<u8>| s@) =~= top_ability_spec())),
+{
+    if pattern.len() == 1 && is_glob_segment_spec(pattern[0]@) {
+        assert(pattern[0]@ =~= seq![glob_byte_spec()]);
+        assert(pattern.map_values(|s: Vec<u8>| s@).len() == 1);
+        assert(pattern.map_values(|s: Vec<u8>| s@)[0] == pattern[0]@);
+        assert(pattern.map_values(|s: Vec<u8>| s@) =~= top_ability_spec());
+    } else if pattern.map_values(|s: Vec<u8>| s@) =~= top_ability_spec() {
+        assert(pattern.map_values(|s: Vec<u8>| s@).len() == 1);
+        assert(pattern.len() == 1);
+        assert(pattern.map_values(|s: Vec<u8>| s@)[0] == seq![glob_byte_spec()]);
+        assert(pattern[0]@ =~= seq![glob_byte_spec()]);
+        assert(is_glob_segment_spec(pattern[0]@));
+    }
+}
+
+proof fn segment_match_at(pattern: Seq<Vec<u8>>, ability: Seq<Vec<u8>>, i: int)
+    requires
+        0 <= i < pattern.len(),
+        pattern.len() == ability.len(),
+        is_glob_segment_spec(pattern[i]@) || segments_equal_spec(pattern[i]@, ability[i]@),
+    ensures
+        is_glob_segment_spec(pattern.map_values(|s: Vec<u8>| s@)[i])
+            || segments_equal_spec(
+                pattern.map_values(|s: Vec<u8>| s@)[i],
+                ability.map_values(|s: Vec<u8>| s@)[i],
+            ),
+{
+    assert(pattern.map_values(|s: Vec<u8>| s@)[i] == pattern[i]@);
+    assert(ability.map_values(|s: Vec<u8>| s@)[i] == ability[i]@);
+}
+
+proof fn segment_mismatch_at(pattern: Seq<Vec<u8>>, ability: Seq<Vec<u8>>, i: int)
+    requires
+        0 <= i < pattern.len(),
+        pattern.len() == ability.len(),
+        !is_glob_segment_spec(pattern[i]@),
+        !segments_equal_spec(pattern[i]@, ability[i]@),
+    ensures
+        !(is_glob_segment_spec(pattern.map_values(|s: Vec<u8>| s@)[i])
+            || segments_equal_spec(
+                pattern.map_values(|s: Vec<u8>| s@)[i],
+                ability.map_values(|s: Vec<u8>| s@)[i],
+            )),
+{
+    assert(pattern.map_values(|s: Vec<u8>| s@)[i] == pattern[i]@);
+    assert(ability.map_values(|s: Vec<u8>| s@)[i] == ability[i]@);
+}
+
+proof fn all_vec_segments_match_implies_spec(pattern: Seq<Vec<u8>>, ability: Seq<Vec<u8>>, from: int)
+    requires
+        pattern.len() == ability.len(),
+        0 <= from <= pattern.len(),
+        forall|k: int| from <= k < pattern.len() ==>
+            is_glob_segment_spec(#[trigger] pattern[k]@) || segments_equal_spec(pattern[k]@, ability[k]@),
+    ensures ability_segments_match_spec(
+        pattern.map_values(|s: Vec<u8>| s@),
+        ability.map_values(|s: Vec<u8>| s@),
+        from,
+    ),
+    decreases pattern.len() - from,
+{
+    if from < pattern.len() {
+        segment_match_at(pattern, ability, from);
+        all_vec_segments_match_implies_spec(pattern, ability, from + 1);
+    }
+}
+
+proof fn vec_mismatch_implies_not_segments_match(
+    pattern: Seq<Vec<u8>>,
+    ability: Seq<Vec<u8>>,
+    from: int,
+    bad: int,
+)
+    requires
+        pattern.len() == ability.len(),
+        0 <= from <= bad < pattern.len(),
+        forall|k: int| from <= k < bad ==>
+            is_glob_segment_spec(#[trigger] pattern[k]@) || segments_equal_spec(pattern[k]@, ability[k]@),
+        !is_glob_segment_spec(pattern[bad]@),
+        !segments_equal_spec(pattern[bad]@, ability[bad]@),
+    ensures !ability_segments_match_spec(
+        pattern.map_values(|s: Vec<u8>| s@),
+        ability.map_values(|s: Vec<u8>| s@),
+        from,
+    ),
+    decreases bad - from,
+{
+    if from < bad {
+        segment_match_at(pattern, ability, from);
+        vec_mismatch_implies_not_segments_match(pattern, ability, from + 1, bad);
+    } else {
+        segment_mismatch_at(pattern, ability, bad);
+    }
+}
+
+/// Check segment-by-segment ability matching.
+// r[impl ucan-ability.glob-one-level]
+pub fn ability_segments_match(pattern: &Vec<Vec<u8>>, ability: &Vec<Vec<u8>>) -> (result: bool)
+    requires pattern.len() == ability.len(),
+    ensures result == ability_segments_match_spec(
+        pattern@.map_values(|s: Vec<u8>| s@),
+        ability@.map_values(|s: Vec<u8>| s@),
+        0,
+    ),
+{
+    let mut i: usize = 0;
+    while i < pattern.len()
+        invariant
+            pattern.len() == ability.len(),
+            0 <= i <= pattern.len(),
+            forall|k: int| 0 <= k < i ==>
+                is_glob_segment_spec(#[trigger] pattern@[k]@) || segments_equal_spec(pattern@[k]@, ability@[k]@),
+        decreases pattern.len() - i,
+    {
+        let glob = is_glob_segment(&pattern[i]);
+        if !glob {
+            let equal = segments_equal(&pattern[i], &ability[i]);
+            if !equal {
+                proof {
+                    vec_mismatch_implies_not_segments_match(pattern@, ability@, 0, i as int);
+                }
+                return false;
+            }
+        }
+        proof { segment_match_at(pattern@, ability@, i as int); }
+        i = i + 1;
+    }
+
+    proof {
+        all_vec_segments_match_implies_spec(pattern@, ability@, 0);
+    }
+    true
+}
+
 /// Check if a pattern subsumes an ability at runtime.
 // r[impl ucan-ability.subsumption-reflexive]
 // r[impl ucan-ability.top-subsumes-all]
-// @verified-logic:no-ensures external_body runtime-only, proofs are on spec functions
-#[verifier::external_body]
 pub fn ability_subsumes(pattern: &Ability, ability: &Ability) -> (result: bool)
+    ensures result == ability_subsumes_spec(
+        pattern.segments@.map_values(|s: Vec<u8>| s@),
+        ability.segments@.map_values(|s: Vec<u8>| s@),
+    ),
 {
     // Top ability: single "*" segment
-    if pattern.segments.len() == 1 && pattern.segments[0] == b"*" {
+    if pattern.segments.len() == 1 && is_glob_segment(&pattern.segments[0]) {
+        proof { top_ability_exec_equiv(pattern.segments@); }
         return true;
     }
+    proof { top_ability_exec_equiv(pattern.segments@); }
+
     if pattern.segments.len() != ability.segments.len() {
         return false;
     }
-    for (p, a) in pattern.segments.iter().zip(ability.segments.iter()) {
-        if p != b"*" && p != a {
-            return false;
-        }
-    }
-    true
+
+    ability_segments_match(&pattern.segments, &ability.segments)
 }
 
 // --- Proofs ---

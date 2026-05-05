@@ -11,19 +11,43 @@ use crate::region::regions_disjoint_spec;
 use crate::sel4_asid::AsidPool;
 use crate::sel4_cdt::Cdt;
 use crate::sel4_cspace::CSpace;
-use crate::sel4_endpoint::{send, Endpoint, Rendezvous, SenderWaiter};
+use crate::sel4_endpoint::Endpoint;
+use crate::sel4_endpoint::Rendezvous;
+use crate::sel4_endpoint::SenderWaiter;
+use crate::sel4_endpoint::send;
 use crate::sel4_irq::IrqLine;
+use crate::sel4_ready_queue::ReadyQueues;
 #[cfg(verus_keep_ghost)]
-use crate::sel4_ready_queue::{
-    consistent_ready_queues_spec, count_tid_in_queue_from_spec, count_tid_in_queue_spec,
-    count_tid_in_queues_from_spec, count_tid_in_queues_spec, queue_contains_spec,
-    queue_view_spec, queues_contain_spec,
-};
-use crate::sel4_ready_queue::{enqueue, ReadyQueues};
+use crate::sel4_ready_queue::consistent_ready_queues_spec;
 #[cfg(verus_keep_ghost)]
-use crate::sel4_tcb::{block_on_send_transition_spec, legal_state_spec, runnable_state_spec, wake_transition_spec};
-use crate::sel4_tcb::{block_on_send, wake, Tcb, TcbState};
-use crate::sel4_untyped::{ChildObject, UntypedMemory};
+use crate::sel4_ready_queue::count_tid_in_queue_from_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_ready_queue::count_tid_in_queue_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_ready_queue::count_tid_in_queues_from_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_ready_queue::count_tid_in_queues_spec;
+use crate::sel4_ready_queue::enqueue;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_ready_queue::queue_contains_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_ready_queue::queue_view_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_ready_queue::queues_contain_spec;
+use crate::sel4_tcb::Tcb;
+use crate::sel4_tcb::TcbState;
+use crate::sel4_tcb::block_on_send;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_tcb::block_on_send_transition_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_tcb::legal_state_spec;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_tcb::runnable_state_spec;
+use crate::sel4_tcb::wake;
+#[cfg(verus_keep_ghost)]
+use crate::sel4_tcb::wake_transition_spec;
+use crate::sel4_untyped::ChildObject;
+use crate::sel4_untyped::UntypedMemory;
 use crate::sel4_vspace::VSpace;
 
 verus! {
@@ -1172,12 +1196,20 @@ mod tests {
     use super::*;
     use crate::sel4_asid::AsidPool;
     use crate::sel4_cdt::Cdt;
-    use crate::sel4_cspace::{CNode, CSpace};
+    use crate::sel4_cspace::CNode;
+    use crate::sel4_cspace::CSpace;
     use crate::sel4_ready_queue::new_ready_queues;
     use crate::sel4_tcb::new_tcb;
-    use crate::sel4_untyped::{UntypedMemory, SEL4_OBJ_ENDPOINT, SEL4_OBJ_FRAME};
+    use crate::sel4_untyped::SEL4_OBJ_ENDPOINT;
+    use crate::sel4_untyped::SEL4_OBJ_FRAME;
+    use crate::sel4_untyped::UntypedMemory;
 
-    fn base_kernel_state(tcbs: Vec<Tcb>, ready_queues: ReadyQueues, endpoints: Vec<Endpoint>, untypeds: Vec<UntypedMemory>) -> KernelState {
+    fn base_kernel_state(
+        tcbs: Vec<Tcb>,
+        ready_queues: ReadyQueues,
+        endpoints: Vec<Endpoint>,
+        untypeds: Vec<UntypedMemory>,
+    ) -> KernelState {
         KernelState {
             tcbs,
             ready_queues,

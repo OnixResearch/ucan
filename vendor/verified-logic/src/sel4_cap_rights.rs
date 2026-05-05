@@ -208,11 +208,7 @@ mod tests {
     use super::*;
 
     fn all_rights() -> u64 {
-        SEL4_RIGHT_SEND
-            | SEL4_RIGHT_RECEIVE
-            | SEL4_RIGHT_GRANT
-            | SEL4_RIGHT_MAP
-            | SEL4_RIGHT_CONTROL
+        SEL4_RIGHT_SEND | SEL4_RIGHT_RECEIVE | SEL4_RIGHT_GRANT | SEL4_RIGHT_MAP | SEL4_RIGHT_CONTROL
     }
 
     // r[verify sel4-cap-rights.attenuation]

@@ -22,27 +22,49 @@ mod verus_proofs {
     use crate::arithmetic::saturating_sub_spec;
     use crate::bounds::clamp_spec;
     use crate::bounds::in_range_spec;
+    use crate::choreography_global::GBranch;
+    use crate::choreography_global::GChoreo;
+    use crate::choreography_global::LabelId;
+    use crate::choreography_global::PayloadTag;
+    use crate::choreography_global::RoleId;
+    use crate::choreography_local::LBranch;
+    use crate::choreography_local::LChoreo;
+    use crate::choreography_local::branch_labels_spec;
+    use crate::choreography_projection::all_decider_guarded_spec;
+    use crate::choreography_projection::common_recv_tails_spec;
+    use crate::choreography_projection::common_send_tails_spec;
+    use crate::choreography_projection::project_decider_choice_from_len;
+    use crate::choreography_projection::project_decider_choice_from_pointwise;
+    use crate::choreography_projection::project_decider_choice_from_spec;
+    use crate::choreography_projection::project_endpoint_spec;
+    use crate::choreography_projection::projectable_spec;
+    use crate::choreography_projection::projected_branch_suffix_size;
+    use crate::choreography_projection::same_projected_bodies_spec;
+    use crate::choreography_step::choice_alignment_spec;
+    use crate::choreography_step::first_offer_labels_from_spec;
+    use crate::choreography_step::global_choice_step_spec;
+    use crate::choreography_step::global_comm_step_spec;
+    use crate::choreography_step::local_recv_step_spec;
+    use crate::choreography_step::local_send_step_spec;
     use crate::fencing::is_stale_spec;
     use crate::fencing::is_valid_write_spec;
     use crate::fencing::issue_token_spec;
     use crate::monotonic::is_strict_advance_spec;
-    use crate::choreography_global::{GBranch, GChoreo, LabelId, PayloadTag, RoleId};
-    use crate::choreography_local::{LBranch, LChoreo, branch_labels_spec};
-    use crate::choreography_projection::{
-        all_decider_guarded_spec, common_recv_tails_spec, common_send_tails_spec, project_decider_choice_from_len,
-        project_decider_choice_from_pointwise, project_decider_choice_from_spec, project_endpoint_spec,
-        projected_branch_suffix_size, projectable_spec, same_projected_bodies_spec,
-    };
-    use crate::choreography_step::{
-        choice_alignment_spec, first_offer_labels_from_spec, global_choice_step_spec, global_comm_step_spec,
-        local_recv_step_spec, local_send_step_spec,
-    };
-    use crate::web_of_trust_attestation::{attestation_active_respects_revocation, Attestation};
-    use crate::web_of_trust_chain::{chain_valid_at_spec, chain_valid_requires_active_edges, root_member_spec};
-    use crate::web_of_trust_policy::{introducer_qualifies_at_spec, seen_indices_in_range_spec, seen_introducer_spec, threshold_accepts_from_spec};
+    use crate::web_of_trust_attestation::Attestation;
+    use crate::web_of_trust_attestation::attestation_active_respects_revocation;
+    use crate::web_of_trust_chain::chain_valid_at_spec;
+    use crate::web_of_trust_chain::chain_valid_requires_active_edges;
+    use crate::web_of_trust_chain::root_member_spec;
+    use crate::web_of_trust_policy::introducer_qualifies_at_spec;
+    use crate::web_of_trust_policy::seen_indices_in_range_spec;
+    use crate::web_of_trust_policy::seen_introducer_spec;
+    use crate::web_of_trust_policy::threshold_accepts_from_spec;
     use crate::web_of_trust_principal::PrincipalId;
-    use crate::web_of_trust_resolution::{resolves_trusted_at_complete, resolves_trusted_at_sound, resolves_trusted_at_spec};
-    use crate::web_of_trust_revocation::{revocation_effective_at_spec, Revocation};
+    use crate::web_of_trust_resolution::resolves_trusted_at_complete;
+    use crate::web_of_trust_resolution::resolves_trusted_at_sound;
+    use crate::web_of_trust_resolution::resolves_trusted_at_spec;
+    use crate::web_of_trust_revocation::Revocation;
+    use crate::web_of_trust_revocation::revocation_effective_at_spec;
 
     verus! {
 
@@ -2474,28 +2496,50 @@ mod retry_proofs {
     use vstd::prelude::*;
 
     use crate::backoff::compute_backoff_spec;
+    use crate::choreography_global::GBranch;
+    use crate::choreography_global::GChoreo;
+    use crate::choreography_global::LabelId;
+    use crate::choreography_global::PayloadTag;
+    use crate::choreography_global::RoleId;
+    use crate::choreography_local::LBranch;
+    use crate::choreography_local::LChoreo;
+    use crate::choreography_local::branch_labels_spec;
+    use crate::choreography_projection::all_decider_guarded_spec;
+    use crate::choreography_projection::common_recv_tails_spec;
+    use crate::choreography_projection::common_send_tails_spec;
+    use crate::choreography_projection::project_decider_choice_from_len;
+    use crate::choreography_projection::project_decider_choice_from_pointwise;
+    use crate::choreography_projection::project_decider_choice_from_spec;
+    use crate::choreography_projection::project_endpoint_spec;
+    use crate::choreography_projection::projectable_spec;
+    use crate::choreography_projection::projected_branch_suffix_size;
+    use crate::choreography_projection::same_projected_bodies_spec;
+    use crate::choreography_step::choice_alignment_spec;
+    use crate::choreography_step::first_offer_labels_from_spec;
+    use crate::choreography_step::global_choice_step_spec;
+    use crate::choreography_step::global_comm_step_spec;
+    use crate::choreography_step::local_recv_step_spec;
+    use crate::choreography_step::local_send_step_spec;
     use crate::circuit_breaker::CLOSED;
     use crate::circuit_breaker::allow_request_spec;
     use crate::retry::RETRY;
     use crate::retry::classify_outcome_spec;
     use crate::retry::should_retry_spec;
-    use crate::choreography_global::{GBranch, GChoreo, LabelId, PayloadTag, RoleId};
-    use crate::choreography_local::{LBranch, LChoreo, branch_labels_spec};
-    use crate::choreography_projection::{
-        all_decider_guarded_spec, common_recv_tails_spec, common_send_tails_spec, project_decider_choice_from_len,
-        project_decider_choice_from_pointwise, project_decider_choice_from_spec, project_endpoint_spec,
-        projected_branch_suffix_size, projectable_spec, same_projected_bodies_spec,
-    };
-    use crate::choreography_step::{
-        choice_alignment_spec, first_offer_labels_from_spec, global_choice_step_spec, global_comm_step_spec,
-        local_recv_step_spec, local_send_step_spec,
-    };
-    use crate::web_of_trust_attestation::{attestation_active_respects_revocation, Attestation};
-    use crate::web_of_trust_chain::{chain_valid_at_spec, chain_valid_requires_active_edges, root_member_spec};
-    use crate::web_of_trust_policy::{introducer_qualifies_at_spec, seen_indices_in_range_spec, seen_introducer_spec, threshold_accepts_from_spec};
+    use crate::web_of_trust_attestation::Attestation;
+    use crate::web_of_trust_attestation::attestation_active_respects_revocation;
+    use crate::web_of_trust_chain::chain_valid_at_spec;
+    use crate::web_of_trust_chain::chain_valid_requires_active_edges;
+    use crate::web_of_trust_chain::root_member_spec;
+    use crate::web_of_trust_policy::introducer_qualifies_at_spec;
+    use crate::web_of_trust_policy::seen_indices_in_range_spec;
+    use crate::web_of_trust_policy::seen_introducer_spec;
+    use crate::web_of_trust_policy::threshold_accepts_from_spec;
     use crate::web_of_trust_principal::PrincipalId;
-    use crate::web_of_trust_resolution::{resolves_trusted_at_complete, resolves_trusted_at_sound, resolves_trusted_at_spec};
-    use crate::web_of_trust_revocation::{revocation_effective_at_spec, Revocation};
+    use crate::web_of_trust_resolution::resolves_trusted_at_complete;
+    use crate::web_of_trust_resolution::resolves_trusted_at_sound;
+    use crate::web_of_trust_resolution::resolves_trusted_at_spec;
+    use crate::web_of_trust_revocation::Revocation;
+    use crate::web_of_trust_revocation::revocation_effective_at_spec;
 
     verus! {
 
@@ -8857,11 +8901,7 @@ mod chaoscontrol_property_tests {
     const FP_MULT: u64 = 0x517c_c1b7_2722_0a95;
 
     fn subset_by_source_index(source: &[(i64, i64, i64)], indices: &[i64]) -> Vec<(i64, i64, i64)> {
-        source
-            .iter()
-            .copied()
-            .filter(|entry| indices.contains(&entry.2))
-            .collect()
+        source.iter().copied().filter(|entry| indices.contains(&entry.2)).collect()
     }
 
     fn replay_fully(schedule: &[(i64, i64, i64)], horizons: &[i64]) -> Vec<(i64, i64, i64)> {
@@ -8932,11 +8972,9 @@ mod chaoscontrol_property_tests {
     #[test]
     fn test_chaoscontrol_quorum_gate_sound() {
         let alive = vec![true, true, true];
-        let partitioned = vec![
-            vec![false, false, true],
-            vec![false, false, true],
-            vec![true, true, false],
-        ];
+        let partitioned = vec![vec![false, false, true], vec![false, false, true], vec![
+            true, true, false,
+        ]];
         assert!(healthy_period(&alive, &partitioned));
         assert!(quorum_reachable(&alive, &partitioned));
     }
@@ -8944,10 +8982,15 @@ mod chaoscontrol_property_tests {
 
 #[cfg(test)]
 mod choreography_property_tests {
-    use crate::choreography_global::{GlobalBranch, GlobalChoreo};
-    use crate::choreography_local::{LocalBranch, LocalChoreo};
+    use crate::choreography_global::GlobalBranch;
+    use crate::choreography_global::GlobalChoreo;
+    use crate::choreography_local::LocalBranch;
+    use crate::choreography_local::LocalChoreo;
     use crate::choreography_projection::project_endpoint;
-    use crate::choreography_step::{global_choice_step, local_offer_step, local_recv_step, local_send_step};
+    use crate::choreography_step::global_choice_step;
+    use crate::choreography_step::local_offer_step;
+    use crate::choreography_step::local_recv_step;
+    use crate::choreography_step::local_send_step;
 
     fn branch(label: u32, body: GlobalChoreo) -> GlobalBranch {
         GlobalBranch { label, body }
@@ -8957,7 +9000,10 @@ mod choreography_property_tests {
         match local {
             LocalChoreo::Send { next, .. } | LocalChoreo::Recv { next, .. } => first_offer_labels(next, from),
             LocalChoreo::End | LocalChoreo::InternalChoice { .. } => None,
-            LocalChoreo::Offer { from: offer_from, branches } => {
+            LocalChoreo::Offer {
+                from: offer_from,
+                branches,
+            } => {
                 if *offer_from == from {
                     Some(branches.iter().map(|branch| branch.label).collect())
                 } else {
@@ -9007,31 +9053,28 @@ mod choreography_property_tests {
         };
         let decider = project_endpoint(0, &global);
         let non_decider = project_endpoint(2, &global);
-        assert_eq!(
-            decider,
-            LocalChoreo::InternalChoice {
-                branches: vec![
-                    LocalBranch {
+        assert_eq!(decider, LocalChoreo::InternalChoice {
+            branches: vec![
+                LocalBranch {
+                    label: 1,
+                    body: LocalChoreo::Send {
+                        peer: 2,
                         label: 1,
-                        body: LocalChoreo::Send {
-                            peer: 2,
-                            label: 1,
-                            payload_tag: 10,
-                            next: Box::new(LocalChoreo::End),
-                        },
+                        payload_tag: 10,
+                        next: Box::new(LocalChoreo::End),
                     },
-                    LocalBranch {
+                },
+                LocalBranch {
+                    label: 4,
+                    body: LocalChoreo::Send {
+                        peer: 2,
                         label: 4,
-                        body: LocalChoreo::Send {
-                            peer: 2,
-                            label: 4,
-                            payload_tag: 11,
-                            next: Box::new(LocalChoreo::End),
-                        },
+                        payload_tag: 11,
+                        next: Box::new(LocalChoreo::End),
                     },
-                ],
-            }
-        );
+                },
+            ],
+        });
         assert_eq!(first_offer_labels(&non_decider, 0), Some(vec![1, 4]));
     }
 
@@ -9083,12 +9126,20 @@ mod choreography_property_tests {
 
 #[cfg(test)]
 mod web_of_trust_property_tests {
-    use crate::web_of_trust_attestation::{attestation_active_at, attestation_payload_bytes, attestation_signature_bytes_runtime, Attestation, TRUST_ROLE_TAG};
+    use crate::web_of_trust_attestation::Attestation;
+    use crate::web_of_trust_attestation::TRUST_ROLE_TAG;
+    use crate::web_of_trust_attestation::attestation_active_at;
+    use crate::web_of_trust_attestation::attestation_payload_bytes;
+    use crate::web_of_trust_attestation::attestation_signature_bytes_runtime;
     use crate::web_of_trust_chain::chain_valid_at;
     use crate::web_of_trust_policy::threshold_accepts;
-    use crate::web_of_trust_principal::{principal_id_from_bytes, PrincipalId};
+    use crate::web_of_trust_principal::PrincipalId;
+    use crate::web_of_trust_principal::principal_id_from_bytes;
     use crate::web_of_trust_resolution::resolves_trusted_at;
-    use crate::web_of_trust_revocation::{revocation_payload_bytes, revocation_signature_bytes_runtime, Revocation, FAMILY_TARGET_KIND_TAG};
+    use crate::web_of_trust_revocation::FAMILY_TARGET_KIND_TAG;
+    use crate::web_of_trust_revocation::Revocation;
+    use crate::web_of_trust_revocation::revocation_payload_bytes;
+    use crate::web_of_trust_revocation::revocation_signature_bytes_runtime;
 
     fn signed_attestation(
         issuer_key_bytes: Vec<u8>,
@@ -9112,10 +9163,7 @@ mod web_of_trust_property_tests {
             signature: Vec::new(),
         };
         let payload = attestation_payload_bytes(&unsigned).unwrap();
-        let signature = attestation_signature_bytes_runtime(
-            unsigned.issuer_key_bytes.as_slice(),
-            payload.as_slice(),
-        );
+        let signature = attestation_signature_bytes_runtime(unsigned.issuer_key_bytes.as_slice(), payload.as_slice());
         Attestation { signature, ..unsigned }
     }
 
@@ -9139,10 +9187,7 @@ mod web_of_trust_property_tests {
             signature: Vec::new(),
         };
         let payload = revocation_payload_bytes(&unsigned).unwrap();
-        let signature = revocation_signature_bytes_runtime(
-            unsigned.issuer_key_bytes.as_slice(),
-            payload.as_slice(),
-        );
+        let signature = revocation_signature_bytes_runtime(unsigned.issuer_key_bytes.as_slice(), payload.as_slice());
         Revocation { signature, ..unsigned }
     }
 
@@ -9285,7 +9330,10 @@ mod web_of_trust_property_tests {
         let dedup_a1 = signed_attestation(root_a_key.clone(), subject_key.clone(), TRUST_ROLE_TAG, 0, 20, 1);
         let dedup_b = signed_attestation(root_b_key.clone(), subject_key.clone(), TRUST_ROLE_TAG, 0, 20, 3);
 
-        let roots = vec![principal_id_from_bytes(&root_a_key), principal_id_from_bytes(&root_b_key)];
+        let roots = vec![
+            principal_id_from_bytes(&root_a_key),
+            principal_id_from_bytes(&root_b_key),
+        ];
         let subject = principal_id_from_bytes(&subject_key);
         let revocations = Vec::new();
         let with_duplicates = vec![att_a1, att_a2, att_b];
@@ -9308,7 +9356,10 @@ mod web_of_trust_property_tests {
         let dedup_a1 = signed_attestation(root_a_key.clone(), subject_key.clone(), TRUST_ROLE_TAG, 0, 20, 1);
         let dedup_b = signed_attestation(root_b_key.clone(), subject_key.clone(), TRUST_ROLE_TAG, 0, 20, 3);
 
-        let roots = vec![principal_id_from_bytes(&root_a_key), principal_id_from_bytes(&root_b_key)];
+        let roots = vec![
+            principal_id_from_bytes(&root_a_key),
+            principal_id_from_bytes(&root_b_key),
+        ];
         let subject = principal_id_from_bytes(&subject_key);
         let revocations = Vec::new();
         let with_duplicates = vec![att_a1, att_a2, att_b];

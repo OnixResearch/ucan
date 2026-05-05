@@ -10,7 +10,11 @@ use crate::arithmetic::div_ceil;
 #[cfg(verus_keep_ghost)]
 use crate::arithmetic::div_ceil_spec;
 #[cfg(verus_keep_ghost)]
-use crate::set_associative_lookup::{extract_index_spec, extract_tag_spec, low_mask_spec};
+use crate::set_associative_lookup::extract_index_spec;
+#[cfg(verus_keep_ghost)]
+use crate::set_associative_lookup::extract_tag_spec;
+#[cfg(verus_keep_ghost)]
+use crate::set_associative_lookup::low_mask_spec;
 
 verus! {
 
@@ -631,7 +635,8 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::set_associative_lookup::{extract_index, extract_tag};
+    use crate::set_associative_lookup::extract_index;
+    use crate::set_associative_lookup::extract_tag;
 
     // r[verify false-sharing.same-line]
     #[test]

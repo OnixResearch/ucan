@@ -5,12 +5,17 @@
 
 #![allow(clippy::ptr_arg)]
 
-use crate::web_of_trust_attestation::{attestation_active_at, Attestation, TRUST_ROLE_TAG};
+use vstd::prelude::*;
+
+use crate::web_of_trust_attestation::Attestation;
+use crate::web_of_trust_attestation::TRUST_ROLE_TAG;
+use crate::web_of_trust_attestation::attestation_active_at;
 #[cfg(verus_keep_ghost)]
-use crate::web_of_trust_attestation::{attestation_active_at_spec, attestation_record_ids_match_bytes_spec};
+use crate::web_of_trust_attestation::attestation_active_at_spec;
+#[cfg(verus_keep_ghost)]
+use crate::web_of_trust_attestation::attestation_record_ids_match_bytes_spec;
 use crate::web_of_trust_principal::PrincipalId;
 use crate::web_of_trust_revocation::Revocation;
-use vstd::prelude::*;
 
 verus! {
 
@@ -578,9 +583,13 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::web_of_trust_attestation::{attestation_payload_bytes, attestation_signature_bytes_runtime};
+    use crate::web_of_trust_attestation::attestation_payload_bytes;
+    use crate::web_of_trust_attestation::attestation_signature_bytes_runtime;
     use crate::web_of_trust_principal::principal_id_from_bytes;
-    use crate::web_of_trust_revocation::{revocation_payload_bytes, revocation_signature_bytes_runtime, Revocation, FAMILY_TARGET_KIND_TAG};
+    use crate::web_of_trust_revocation::FAMILY_TARGET_KIND_TAG;
+    use crate::web_of_trust_revocation::Revocation;
+    use crate::web_of_trust_revocation::revocation_payload_bytes;
+    use crate::web_of_trust_revocation::revocation_signature_bytes_runtime;
 
     fn signed_attestation(
         issuer_key_bytes: Vec<u8>,
@@ -604,10 +613,7 @@ mod tests {
             signature: Vec::new(),
         };
         let payload = attestation_payload_bytes(&unsigned).unwrap();
-        let signature = attestation_signature_bytes_runtime(
-            unsigned.issuer_key_bytes.as_slice(),
-            payload.as_slice(),
-        );
+        let signature = attestation_signature_bytes_runtime(unsigned.issuer_key_bytes.as_slice(), payload.as_slice());
         Attestation { signature, ..unsigned }
     }
 
@@ -631,10 +637,7 @@ mod tests {
             signature: Vec::new(),
         };
         let payload = revocation_payload_bytes(&unsigned).unwrap();
-        let signature = revocation_signature_bytes_runtime(
-            unsigned.issuer_key_bytes.as_slice(),
-            payload.as_slice(),
-        );
+        let signature = revocation_signature_bytes_runtime(unsigned.issuer_key_bytes.as_slice(), payload.as_slice());
         Revocation { signature, ..unsigned }
     }
 
@@ -659,7 +662,9 @@ mod tests {
         let mut seen = vec![first.issuer.digest.clone()];
         for (pos, idx) in witness.iter().copied().enumerate() {
             let att = &attestations[idx];
-            if att.role_tag != TRUST_ROLE_TAG || !crate::web_of_trust_attestation::attestation_active_at(att, revocations, t) {
+            if att.role_tag != TRUST_ROLE_TAG
+                || !crate::web_of_trust_attestation::attestation_active_at(att, revocations, t)
+            {
                 return false;
             }
             if pos > 0 {

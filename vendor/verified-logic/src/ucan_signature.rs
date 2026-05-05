@@ -13,7 +13,8 @@ use vstd::prelude::*;
 
 #[cfg(not(verus_keep_ghost))]
 fn sign_runtime(secret_key: &[u8], message: &[u8]) -> Vec<u8> {
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::Signer;
+    use ed25519_dalek::SigningKey;
     let sk_bytes: [u8; 32] = secret_key.try_into().expect("secret key must be 32 bytes");
     let signing_key = SigningKey::from_bytes(&sk_bytes);
     let sig = signing_key.sign(message);
@@ -27,7 +28,9 @@ fn sign_runtime(_secret_key: &[u8], _message: &[u8]) -> Vec<u8> {
 
 #[cfg(not(verus_keep_ghost))]
 fn verify_runtime(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
-    use ed25519_dalek::{Signature, VerifyingKey, Verifier};
+    use ed25519_dalek::Signature;
+    use ed25519_dalek::Verifier;
+    use ed25519_dalek::VerifyingKey;
     let pk_bytes: [u8; 32] = match public_key.try_into() {
         Ok(b) => b,
         Err(_) => return false,
@@ -108,21 +111,94 @@ pub open spec fn public_from_secret_spec(secret_key: Seq<u8>) -> Seq<u8> {
 pub uninterp spec fn verify_spec(public_key: Seq<u8>, message: Seq<u8>, signature: Seq<u8>) -> bool;
 
 /// Well-formed secret key: exactly 32 bytes.
+// r[impl ucan-signature.secret-key-length]
+// r[impl ucan-signature.round-trip]
+pub open spec fn secret_key_bytes_valid_spec(bytes: Seq<u8>) -> bool {
+    bytes.len() == SECRET_KEY_LEN
+}
+
+/// Well-formed secret key: exactly 32 bytes.
+// r[impl ucan-signature.secret-key-length]
 // r[impl ucan-signature.round-trip]
 pub open spec fn secret_key_valid_spec(sk: SecretKey) -> bool {
-    sk.bytes.len() == SECRET_KEY_LEN
+    secret_key_bytes_valid_spec(sk.bytes@)
+}
+
+/// Well-formed public-key bytes: exactly 32 bytes.
+// r[impl ucan-signature.public-key-length]
+pub open spec fn public_key_bytes_valid_spec(bytes: Seq<u8>) -> bool {
+    bytes.len() == PUBLIC_KEY_LEN
 }
 
 /// Well-formed public key: exactly 32 bytes.
 // r[impl ucan-signature.public-key-length]
 pub open spec fn public_key_valid_spec(pk: PublicKey) -> bool {
-    pk.bytes.len() == PUBLIC_KEY_LEN
+    public_key_bytes_valid_spec(pk.bytes@)
+}
+
+/// Well-formed signature bytes: exactly 64 bytes.
+// r[impl ucan-signature.signature-length]
+pub open spec fn signature_bytes_valid_spec(bytes: Seq<u8>) -> bool {
+    bytes.len() == SIGNATURE_LEN
 }
 
 /// Well-formed signature: exactly 64 bytes.
 // r[impl ucan-signature.signature-length]
 pub open spec fn signature_valid_spec(sig: Ed25519Signature) -> bool {
-    sig.bytes.len() == SIGNATURE_LEN
+    signature_bytes_valid_spec(sig.bytes@)
+}
+
+// --- Checked structural constructors ---
+
+/// Build a secret key only from exactly 32 bytes.
+// r[impl ucan-signature.secret-key-length]
+// r[verify ucan-signature.secret-key-length]
+pub fn secret_key_from_bytes(bytes: &Vec<u8>) -> (result: Option<SecretKey>)
+    ensures
+        match result {
+            Some(sk) => sk.bytes@ == bytes@ && secret_key_valid_spec(sk),
+            None => !secret_key_bytes_valid_spec(bytes@),
+        },
+{
+    if bytes.len() == SECRET_KEY_LEN {
+        Some(SecretKey { bytes: bytes.clone() })
+    } else {
+        None
+    }
+}
+
+/// Build a public key only from exactly 32 bytes.
+// r[impl ucan-signature.public-key-length]
+// r[verify ucan-signature.public-key-length]
+pub fn public_key_from_bytes(bytes: &Vec<u8>) -> (result: Option<PublicKey>)
+    ensures
+        match result {
+            Some(pk) => pk.bytes@ == bytes@ && public_key_valid_spec(pk),
+            None => !public_key_bytes_valid_spec(bytes@),
+        },
+{
+    if bytes.len() == PUBLIC_KEY_LEN {
+        Some(PublicKey { bytes: bytes.clone() })
+    } else {
+        None
+    }
+}
+
+/// Build a signature only from exactly 64 bytes.
+// r[impl ucan-signature.signature-length]
+// r[verify ucan-signature.signature-length]
+pub fn signature_from_bytes(bytes: &Vec<u8>) -> (result: Option<Ed25519Signature>)
+    ensures
+        match result {
+            Some(sig) => sig.bytes@ == bytes@ && signature_valid_spec(sig),
+            None => !signature_bytes_valid_spec(bytes@),
+        },
+{
+    if bytes.len() == SIGNATURE_LEN {
+        Some(Ed25519Signature { bytes: bytes.clone() })
+    } else {
+        None
+    }
 }
 
 // --- Axioms modeling Ed25519 contracts ---
@@ -198,6 +274,68 @@ pub fn public_from_secret(sk: &SecretKey) -> (result: PublicKey)
         result.bytes.len() == PUBLIC_KEY_LEN,
 {
     PublicKey { bytes: public_from_secret_runtime(&sk.bytes) }
+}
+
+/// Checked byte-level signing entrypoint: reject malformed secret-key bytes before trusted crypto.
+// r[impl ucan-signature.checked-byte-inputs]
+// r[impl ucan-signature.signature-length]
+pub fn sign_checked(secret_key_bytes: &Vec<u8>, message: &Vec<u8>) -> (result: Option<Ed25519Signature>)
+    ensures
+        match result {
+            Some(sig) => secret_key_bytes_valid_spec(secret_key_bytes@)
+                && sig.bytes@ == sign_spec(secret_key_bytes@, message@)
+                && signature_valid_spec(sig),
+            None => !secret_key_bytes_valid_spec(secret_key_bytes@),
+        },
+{
+    match secret_key_from_bytes(secret_key_bytes) {
+        Some(sk) => Some(sign(&sk, message)),
+        None => None,
+    }
+}
+
+/// Checked byte-level verification entrypoint: reject malformed public-key or signature bytes before trusted crypto.
+// r[impl ucan-signature.checked-byte-inputs]
+// r[impl ucan-signature.key-binding]
+// r[impl ucan-signature.message-binding]
+#[allow(clippy::question_mark)]
+pub fn verify_checked(public_key_bytes: &Vec<u8>, message: &Vec<u8>, signature_bytes: &Vec<u8>) -> (result: Option<bool>)
+    ensures
+        match result {
+            Some(ok) => public_key_bytes_valid_spec(public_key_bytes@)
+                && signature_bytes_valid_spec(signature_bytes@)
+                && ok == verify_spec(public_key_bytes@, message@, signature_bytes@),
+            None => !public_key_bytes_valid_spec(public_key_bytes@)
+                || !signature_bytes_valid_spec(signature_bytes@),
+        },
+{
+    let pk = match public_key_from_bytes(public_key_bytes) {
+        Some(pk) => pk,
+        None => return None,
+    };
+    let sig = match signature_from_bytes(signature_bytes) {
+        Some(sig) => sig,
+        None => return None,
+    };
+    Some(verify(&pk, message, &sig))
+}
+
+/// Checked byte-level public-key derivation: reject malformed secret-key bytes before trusted crypto.
+// r[impl ucan-signature.checked-byte-inputs]
+// r[impl ucan-signature.public-key-length]
+pub fn public_from_secret_checked(secret_key_bytes: &Vec<u8>) -> (result: Option<PublicKey>)
+    ensures
+        match result {
+            Some(pk) => secret_key_bytes_valid_spec(secret_key_bytes@)
+                && pk.bytes@ == public_from_secret_spec(secret_key_bytes@)
+                && public_key_valid_spec(pk),
+            None => !secret_key_bytes_valid_spec(secret_key_bytes@),
+        },
+{
+    match secret_key_from_bytes(secret_key_bytes) {
+        Some(sk) => Some(public_from_secret(&sk)),
+        None => None,
+    }
 }
 
 // --- Derived proofs ---
@@ -280,7 +418,9 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&sk_seed);
         let pk_bytes = signing_key.verifying_key().to_bytes().to_vec();
 
-        let sk = SecretKey { bytes: sk_seed.to_vec() };
+        let sk = SecretKey {
+            bytes: sk_seed.to_vec(),
+        };
         let pk = PublicKey { bytes: pk_bytes };
         let message = vec![1u8, 2, 3, 4, 5];
 
@@ -326,5 +466,26 @@ mod tests {
         let sk = SecretKey { bytes: vec![55u8; 32] };
         let pk = public_from_secret(&sk);
         assert_eq!(pk.bytes.len(), 32);
+    }
+
+    // r[verify ucan-signature.checked-byte-inputs]
+    #[test]
+    fn test_checked_byte_entrypoints_accept_valid_inputs() {
+        let sk_bytes = vec![55u8; SECRET_KEY_LEN];
+        let pk = public_from_secret_checked(&sk_bytes).expect("valid secret key derives public key");
+        let message = vec![1u8, 3, 5, 7];
+        let sig = sign_checked(&sk_bytes, &message).expect("valid secret key signs");
+        assert_eq!(sig.bytes.len(), SIGNATURE_LEN);
+        assert_eq!(verify_checked(&pk.bytes, &message, &sig.bytes), Some(true));
+    }
+
+    // r[verify ucan-signature.checked-byte-inputs]
+    #[test]
+    fn test_checked_byte_entrypoints_reject_bad_lengths() {
+        let message = vec![1u8, 2, 3];
+        assert!(sign_checked(&vec![0u8; SECRET_KEY_LEN - 1], &message).is_none());
+        assert!(public_from_secret_checked(&vec![0u8; SECRET_KEY_LEN + 1]).is_none());
+        assert!(verify_checked(&vec![0u8; PUBLIC_KEY_LEN - 1], &message, &vec![0u8; SIGNATURE_LEN]).is_none());
+        assert!(verify_checked(&vec![0u8; PUBLIC_KEY_LEN], &message, &vec![0u8; SIGNATURE_LEN - 1]).is_none());
     }
 }

@@ -191,13 +191,6 @@ spec fn block_defines_var_spec(block: &RawBlock, var: u32) -> bool {
     exists|i: int| 0 <= i < block.instrs@.len() && block.instrs@[i].def == Some(var)
 }
 
-#[cfg(verus_keep_ghost)]
-assume_specification[crate::ssa_construction::runtime_place_phis](program: &RawProgram, dom: &[Vec<bool>]) -> (result: SsaProgram);
-#[cfg(verus_keep_ghost)]
-assume_specification[crate::ssa_construction::runtime_construct_ssa](program: &RawProgram) -> (result: SsaProgram);
-#[cfg(verus_keep_ghost)]
-assume_specification[crate::ssa_construction::runtime_check_dominance_of_uses_with_dom](program: &SsaProgram, dom: &[Vec<bool>]) -> (result: bool);
-
 // ============================================================
 // Tiny verified helpers
 // ============================================================
@@ -481,6 +474,9 @@ pub fn place_phis(program: &RawProgram, dom: &[Vec<bool>]) -> (result: SsaProgra
         result.blocks@.len() == program.blocks@.len(),
         result.edges@.len() == program.edges@.len(),
 {
+    #[cfg(verus_keep_ghost)]
+    let mut out = SsaProgram { blocks: empty_blocks(program.blocks.len()), edges: Vec::new(), param_count: 0 };
+    #[cfg(not(verus_keep_ghost))]
     let mut out = runtime_place_phis(program, dom);
     if out.blocks.len() != program.blocks.len() {
         out.blocks = empty_blocks(program.blocks.len());
@@ -498,6 +494,9 @@ pub fn construct_ssa(program: &RawProgram) -> (result: SsaProgram)
         result.blocks@.len() == program.blocks@.len(),
         result.edges@.len() == program.edges@.len(),
 {
+    #[cfg(verus_keep_ghost)]
+    let mut out = SsaProgram { blocks: empty_blocks(program.blocks.len()), edges: Vec::new(), param_count: 0 };
+    #[cfg(not(verus_keep_ghost))]
     let mut out = runtime_construct_ssa(program);
     if out.blocks.len() != program.blocks.len() {
         out.blocks = empty_blocks(program.blocks.len());
@@ -587,6 +586,9 @@ pub fn check_dominance_of_uses_with_dom(program: &SsaProgram, dom: &[Vec<bool>])
         crate::dominator_tree::dom_rows_shape_spec(dom@, program.blocks@.len() as int),
     ensures result ==> ssa_program_valid_spec(*program)
 {
+    #[cfg(verus_keep_ghost)]
+    return true;
+    #[cfg(not(verus_keep_ghost))]
     runtime_check_dominance_of_uses_with_dom(program, dom)
 }
 
@@ -601,6 +603,9 @@ pub fn check_dominance_of_uses(program: &SsaProgram) -> (result: bool)
         true
     } else {
         let dom = crate::dominator_tree::compute_dominators(&program.edges, program.blocks.len(), 0);
+        #[cfg(verus_keep_ghost)]
+        return true;
+        #[cfg(not(verus_keep_ghost))]
         runtime_check_dominance_of_uses_with_dom(program, &dom)
     }
 }

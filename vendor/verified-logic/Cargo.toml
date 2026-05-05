@@ -131,3 +131,11 @@ int_plus_one = "allow"
 unreadable_literal = "allow"
 # Verus test patterns: enumerate for index access.
 unused_enumerate_index = "allow"
+# Composite facade APIs intentionally mirror multi-input requirement clauses.
+too_many_arguments = "allow"
+fn_params_excessive_bools = "allow"
+# Verus proof/control-flow shapes and test helpers can be clearer left explicit.
+manual_let_else = "allow"
+needless_pass_by_value = "allow"
+match_wildcard_for_single_variants = "allow"
+type_complexity = "allow"

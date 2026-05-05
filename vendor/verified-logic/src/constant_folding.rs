@@ -2677,7 +2677,12 @@ fn apply_block(instrs: &[RawInstr], in_env: &[ConstLat]) -> Vec<ConstLat> {
     cur
 }
 
-fn predecessor_meet_out(edges: &[(usize, usize)], out_env: &[Vec<ConstLat>], entry_env: &[ConstLat], block: usize) -> Vec<ConstLat> {
+fn predecessor_meet_out(
+    edges: &[(usize, usize)],
+    out_env: &[Vec<ConstLat>],
+    entry_env: &[ConstLat],
+    block: usize,
+) -> Vec<ConstLat> {
     let mut acc = top_env(entry_env.len());
     for &(src, dst) in edges {
         if dst == block && src < out_env.len() {
@@ -2776,9 +2781,10 @@ fn is_fixed_point(program: &RawProgram, entry_env: &[ConstLat], sets: &ConstProp
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::ssa_construction::RawBlock;
-    use proptest::prelude::*;
 
     const SUPPORTED_OPCODES: [u8; 14] = [
         OPCODE_COPY,
@@ -2876,10 +2882,7 @@ mod tests {
                 proptest::collection::vec(0usize..vars, 0..=2),
                 arb_supported_opcode(),
             );
-            let blocks_strategy = proptest::collection::vec(
-                proptest::collection::vec(instr_strategy, 0..=3),
-                blocks,
-            );
+            let blocks_strategy = proptest::collection::vec(proptest::collection::vec(instr_strategy, 0..=3), blocks);
             let path_tail_strategy = if blocks == 1 {
                 Just(Vec::new()).boxed()
             } else {
@@ -2919,7 +2922,13 @@ mod tests {
                     let entry_env: Vec<ConstLat> = concrete_entry
                         .iter()
                         .zip(known_mask)
-                        .map(|(&value, known)| if known { ConstLat::Const(value) } else { ConstLat::Bottom })
+                        .map(|(&value, known)| {
+                            if known {
+                                ConstLat::Const(value)
+                            } else {
+                                ConstLat::Bottom
+                            }
+                        })
                         .collect();
                     (program, entry_env, concrete_entry, path)
                 })
@@ -3013,10 +3022,7 @@ mod tests {
     // r[verify constfold.convergence]
     #[test]
     fn test_constprop_straight_line_reaches_fixed_point() {
-        let program = raw_program(
-            vec![vec![raw_instr(Some(2), &[0, 1], OPCODE_ADD)]],
-            &[],
-        );
+        let program = raw_program(vec![vec![raw_instr(Some(2), &[0, 1], OPCODE_ADD)]], &[]);
         let entry_env = vec![ConstLat::Const(4), ConstLat::Const(5), ConstLat::Top];
         let (sets, rounds) = compute_constprop_with_rounds(&program, &entry_env);
 
