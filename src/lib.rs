@@ -100,6 +100,7 @@ pub use verified::VerifiedWebOfTrustCaveatContext;
 pub use verified::VerifiedWebOfTrustRevocation;
 pub use verified::VerifiedWebOfTrustUcanAuthorizationRequest;
 pub use verified::attenuation_chain_is_valid;
+pub use verified::capability_set_authorizes;
 pub use verified::compose_time_window_chain;
 pub use verified::decode_did_key;
 pub use verified::derive_ed25519_public_key;

@@ -3,6 +3,7 @@ use core::fmt;
 use verified_logic::scope;
 use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
+use verified_logic::ucan_capability_merge;
 use verified_logic::ucan_caveat;
 use verified_logic::ucan_chain;
 use verified_logic::ucan_delegation_depth;
@@ -344,6 +345,39 @@ pub fn attenuation_chain_is_valid(
     let parent_capabilities = build_token_capabilities(parent_capabilities)?;
     let child_capabilities = build_token_capabilities(child_capabilities)?;
     Ok(ucan_token::check_attenuation_chain(&parent_capabilities, &child_capabilities))
+}
+
+/// Check whether a finite capability set authorizes an exact resource/ability request.
+///
+/// This advanced helper mirrors the vendored capability-merge authorizer: it
+/// accepts when any supplied capability has a resource byte-prefix that contains
+/// the requested resource and an ability that exactly equals the requested
+/// ability. It intentionally does not perform wildcard ability subsumption;
+/// callers needing full UCAN token/effective-delegation semantics should use the
+/// shell authorization APIs instead.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidCapability`] when any supplied
+/// capability or the requested resource/ability pair fails core validation.
+pub fn capability_set_authorizes(
+    capabilities: &[CapabilityDocument],
+    resource: &str,
+    ability: &str,
+) -> VerifiedResult<bool> {
+    let requested = CapabilityDocument::new(resource.to_owned(), ability.to_owned()).map_err(|error| match error {
+        crate::Error::Capability { source } => VerifiedPrimitiveError::InvalidCapability { source },
+        crate::Error::Io { .. } => unreachable!("CapabilityDocument::new performs validation only"),
+        crate::Error::Caveat { .. } | crate::Error::TokenClaims { .. } => {
+            unreachable!("CapabilityDocument::new does not include caveats")
+        }
+    })?;
+    let capability_set = build_capability_merge_entries(capabilities)?;
+    Ok(ucan_capability_merge::check_authorized_by(
+        &capability_set,
+        &requested.resource.as_bytes().to_vec(),
+        &requested.ability.as_bytes().to_vec(),
+    ))
 }
 
 /// Check whether a parent proof audience links to a child token issuer.
@@ -772,6 +806,20 @@ fn build_token_capabilities(documents: &[CapabilityDocument]) -> VerifiedResult<
     documents.iter().map(build_token_capability).collect()
 }
 
+fn build_capability_merge_entry(document: &CapabilityDocument) -> VerifiedResult<ucan_capability_merge::CapEntry> {
+    validate_capability_document(document)?;
+    Ok(ucan_capability_merge::CapEntry {
+        resource: document.resource.as_bytes().to_vec(),
+        ability: document.ability.as_bytes().to_vec(),
+    })
+}
+
+fn build_capability_merge_entries(
+    documents: &[CapabilityDocument],
+) -> VerifiedResult<Vec<ucan_capability_merge::CapEntry>> {
+    documents.iter().map(build_capability_merge_entry).collect()
+}
+
 fn to_chain_capability(document: &CapabilityDocument) -> VerifiedResult<(Vec<u8>, Vec<u8>)> {
     validate_capability_document(document)?;
     Ok((document.resource.as_bytes().to_vec(), document.ability.as_bytes().to_vec()))
@@ -936,6 +984,7 @@ mod tests {
     use super::VerifiedWebOfTrustRevocation;
     use super::VerifiedWebOfTrustUcanAuthorizationRequest;
     use super::attenuation_chain_is_valid;
+    use super::capability_set_authorizes;
     use super::compose_time_window_chain;
     use super::decode_did_key;
     use super::derive_ed25519_public_key;
@@ -1076,6 +1125,33 @@ mod tests {
             .expect("attenuation chain should validate capability inputs");
 
         assert!(!valid);
+    }
+
+    #[test]
+    fn capability_set_authorizes_exact_resource_prefix_request() {
+        let capabilities = vec![
+            valid_capability(VALID_RESOURCE, VALID_ABILITY_CHILD),
+            valid_capability("resource:other", VALID_ABILITY_OTHER_NAMESPACE),
+        ];
+
+        let valid = capability_set_authorizes(capabilities.as_slice(), VALID_RESOURCE_CHILD, VALID_ABILITY_CHILD)
+            .expect("capability-set inputs should validate");
+
+        assert!(valid);
+    }
+
+    #[test]
+    fn capability_set_authorizer_rejects_escalation_or_wildcard_subsumption() {
+        let capabilities = vec![valid_capability(VALID_RESOURCE, VALID_ABILITY_GLOB)];
+
+        assert!(
+            !capability_set_authorizes(capabilities.as_slice(), VALID_RESOURCE_CHILD, VALID_ABILITY_CHILD)
+                .expect("wildcard capability-set inputs should validate")
+        );
+        assert!(
+            !capability_set_authorizes(capabilities.as_slice(), "resource:other/child", VALID_ABILITY_GLOB)
+                .expect("resource-escalation inputs should validate")
+        );
     }
 
     #[test]

@@ -23,6 +23,7 @@ reject_pattern() {
 }
 
 require_pattern 'use verified_logic::ucan_ability|VerifiedCapability::from_document|\.contains\(' src
+require_pattern 'use verified_logic::ucan_capability_merge|capability_set_authorizes|check_authorized_by' src
 require_pattern 'use verified_logic::ucan_temporal|compose_time_window_chain' src
 require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sign_ed25519' src
 require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
