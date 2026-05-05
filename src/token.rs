@@ -18,11 +18,14 @@ use crate::verified::TokenEnvelopeInput;
 use crate::verified::TokenTimeWindow;
 use crate::verified::TokenValidationFailure;
 use crate::verified::VerifiedCapability;
+use crate::verified::VerifiedCompactTokenEnvelope;
+use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedPrimitiveError;
 use crate::verified::VerifiedProofTraversalBudget;
 use crate::verified::VerifiedProofTraversalEntry;
 use crate::verified::VerifiedProofTraversalTarget;
 use crate::verified::VerifiedProofTraversalTranscript;
+use crate::verified::compact_token_envelope_is_valid;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
@@ -145,6 +148,7 @@ pub enum TokenError {
     EmptyCompactToken,
     CompactTokenMustBeTrimmed,
     InvalidCompactTokenStructure { actual_parts: usize },
+    CompactTokenFramingMismatch,
     Base64Decode { part: CompactPart, message: String },
     JsonDecode { part: CompactPart, message: String },
     JsonEncode { message: String },
@@ -179,6 +183,9 @@ impl fmt::Display for TokenError {
             }
             Self::InvalidCompactTokenStructure { actual_parts } => {
                 write!(formatter, "compact token must contain {COMPACT_TOKEN_PART_COUNT} parts, got {actual_parts}")
+            }
+            Self::CompactTokenFramingMismatch => {
+                formatter.write_str("compact token bytes do not match verified compact framing")
             }
             Self::Base64Decode { part, message } => {
                 write!(formatter, "{} part is not valid base64url: {message}", part.as_str())
@@ -236,6 +243,7 @@ impl std::error::Error for TokenError {
             Self::EmptyCompactToken
             | Self::CompactTokenMustBeTrimmed
             | Self::InvalidCompactTokenStructure { .. }
+            | Self::CompactTokenFramingMismatch
             | Self::Base64Decode { .. }
             | Self::JsonDecode { .. }
             | Self::JsonEncode { .. }
@@ -2052,14 +2060,26 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`TokenError`] when compact structure, base64url decoding, or JSON
-/// decoding fails.
+/// Returns [`TokenError`] when compact structure, verified compact framing,
+/// base64url decoding, or JSON decoding fails.
 pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
     let parts = compact_parts(token.as_str())?;
+    let signing_input = signing_input(parts[COMPACT_HEADER_INDEX], parts[COMPACT_PAYLOAD_INDEX]).into_bytes();
+    let envelope = VerifiedCompactTokenEnvelope {
+        compact: token.as_str().as_bytes().to_vec(),
+        parts: VerifiedCompactTokenParts {
+            header: parts[COMPACT_HEADER_INDEX].as_bytes().to_vec(),
+            payload: parts[COMPACT_PAYLOAD_INDEX].as_bytes().to_vec(),
+            signature: parts[COMPACT_SIGNATURE_INDEX].as_bytes().to_vec(),
+        },
+        signing_input: signing_input.clone(),
+    };
+    if !compact_token_envelope_is_valid(&envelope) {
+        return Err(TokenError::CompactTokenFramingMismatch);
+    }
     let header = decode_json_part::<DecodedHeader>(parts[COMPACT_HEADER_INDEX], CompactPart::Header)?;
     let claims = decode_json_part::<DecodedClaims>(parts[COMPACT_PAYLOAD_INDEX], CompactPart::Payload)?;
     let signature = decode_part(parts[COMPACT_SIGNATURE_INDEX], CompactPart::Signature)?;
-    let signing_input = signing_input(parts[COMPACT_HEADER_INDEX], parts[COMPACT_PAYLOAD_INDEX]).into_bytes();
     Ok(DecodedToken {
         compact: token.clone(),
         header,

@@ -6,6 +6,7 @@ use verified_logic::ucan_ability;
 use verified_logic::ucan_capability_merge;
 use verified_logic::ucan_caveat;
 use verified_logic::ucan_chain;
+use verified_logic::ucan_compact;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
 use verified_logic::ucan_invocation;
@@ -118,6 +119,20 @@ pub struct TokenEnvelopeInput {
     pub proofs: Vec<Vec<u8>>,
     pub expires_at_seconds: u64,
     pub not_before_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedCompactTokenParts {
+    pub header: Vec<u8>,
+    pub payload: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedCompactTokenEnvelope {
+    pub compact: Vec<u8>,
+    pub parts: VerifiedCompactTokenParts,
+    pub signing_input: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -562,6 +577,27 @@ pub fn invocation_chain_is_authorized(
         now_seconds,
         tolerance_seconds,
     ))
+}
+
+/// Check that compact-token bytes and signing input match verified framing.
+///
+/// This is a data-only bridge to vendored verified-logic. It checks only the
+/// canonical byte framing over already-encoded compact-token parts:
+/// `header.payload.signature` for the compact token and `header.payload` for
+/// the signing input.
+///
+/// It does not split compact strings, decode base64url, parse JSON, derive
+/// proof references, hash, sign, verify signatures, resolve keys, fetch proofs,
+/// query revocation backends, access storage/network backends, persist state,
+/// replay-protect, or read an ambient clock.
+#[must_use]
+pub fn compact_token_envelope_is_valid(envelope: &VerifiedCompactTokenEnvelope) -> bool {
+    let parts = ucan_compact::CompactTokenParts {
+        header: envelope.parts.header.clone(),
+        payload: envelope.parts.payload.clone(),
+        signature: envelope.parts.signature.clone(),
+    };
+    ucan_compact::compact_envelope_matches_parts(&envelope.compact, &parts, &envelope.signing_input)
 }
 
 /// Check a finite proof traversal transcript produced by the shell.
@@ -1368,6 +1404,8 @@ mod tests {
     use super::TokenValidationFailure;
     use super::VerifiedCapability;
     use super::VerifiedChainEntry;
+    use super::VerifiedCompactTokenEnvelope;
+    use super::VerifiedCompactTokenParts;
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedPrimitiveError;
     use super::VerifiedProofTraversalBudget;
@@ -1383,6 +1421,7 @@ mod tests {
     use super::VerifiedWebOfTrustUcanAuthorizationRequest;
     use super::attenuation_chain_is_valid;
     use super::capability_set_authorizes;
+    use super::compact_token_envelope_is_valid;
     use super::compose_time_window_chain;
     use super::decode_did_key;
     use super::derive_ed25519_public_key;
@@ -1437,6 +1476,28 @@ mod tests {
     const INVALID_LENGTH_BYTES: usize = 1;
     const MESSAGE: &[u8] = b"ucan verified primitives";
     const WRONG_MESSAGE: &[u8] = b"wrong message";
+
+    #[test]
+    fn compact_token_envelope_uses_verified_framing() {
+        let envelope = VerifiedCompactTokenEnvelope {
+            compact: b"header.payload.signature".to_vec(),
+            parts: VerifiedCompactTokenParts {
+                header: b"header".to_vec(),
+                payload: b"payload".to_vec(),
+                signature: b"signature".to_vec(),
+            },
+            signing_input: b"header.payload".to_vec(),
+        };
+        assert!(compact_token_envelope_is_valid(&envelope));
+
+        let mut bad_signing = envelope.clone();
+        bad_signing.signing_input = b"header.payload.signature".to_vec();
+        assert!(!compact_token_envelope_is_valid(&bad_signing));
+
+        let mut bad_compact = envelope;
+        bad_compact.compact = b"header.payload".to_vec();
+        assert!(!compact_token_envelope_is_valid(&bad_compact));
+    }
 
     #[test]
     fn verified_capability_contains_narrower_resource_and_globbed_ability() {

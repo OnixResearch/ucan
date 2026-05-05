@@ -836,7 +836,9 @@ pub mod ucan_ability;
 /// Verified UCAN capability merge from multiple delegation paths.
 pub mod ucan_capability_merge;
 pub mod ucan_caveat;
-/// Verified UCAN proof chain walk and delegation chain validation.
+
+pub mod ucan_compact;
+
 pub mod ucan_chain;
 pub mod ucan_cid;
 /// Verified UCAN delegation depth budget.
