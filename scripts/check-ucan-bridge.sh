@@ -28,6 +28,7 @@ require_pattern 'use verified_logic::ucan_temporal|compose_time_window_chain' sr
 require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sign_ed25519' src
 require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
 require_pattern 'use verified_logic::ucan_compact|compact_token_envelope_is_valid|compact_envelope_matches_parts|VerifiedCompactTokenEnvelope' src
+require_pattern 'use verified_logic::ucan_verification_stage|verification_stage_transcript_outcome|stage_transcript_accepts|first_failed_stage|VerifiedVerificationStageTranscript' src
 require_pattern 'use verified_logic::ucan_chain|proof_link_is_valid|structural_chain_is_valid|check_chain_structural_valid' src
 require_pattern 'use verified_logic::ucan_delegation_depth|proof_depth_within_budget' src
 require_pattern 'use verified_logic::ucan_revocation|revocation_reference_is_listed|structural_chain_not_revoked_is_valid|check_chain_structural_valid_not_revoked' src

@@ -15,6 +15,7 @@ use verified_logic::ucan_revocation;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
 use verified_logic::ucan_token;
+use verified_logic::ucan_verification_stage;
 use verified_logic::web_of_trust_attestation;
 use verified_logic::web_of_trust_policy;
 use verified_logic::web_of_trust_principal;
@@ -133,6 +134,57 @@ pub struct VerifiedCompactTokenEnvelope {
     pub compact: Vec<u8>,
     pub parts: VerifiedCompactTokenParts,
     pub signing_input: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifiedVerificationStage {
+    Parse,
+    Structural,
+    KeyResolution,
+    Signature,
+    Envelope,
+    Revocation,
+    ProofLoad,
+    ProofChain,
+    Authorization,
+    Accepted,
+}
+
+impl VerifiedVerificationStage {
+    const fn from_verified_logic(stage: u8) -> Self {
+        match stage {
+            ucan_verification_stage::STAGE_PARSE => Self::Parse,
+            ucan_verification_stage::STAGE_STRUCTURAL => Self::Structural,
+            ucan_verification_stage::STAGE_KEY_RESOLUTION => Self::KeyResolution,
+            ucan_verification_stage::STAGE_SIGNATURE => Self::Signature,
+            ucan_verification_stage::STAGE_ENVELOPE => Self::Envelope,
+            ucan_verification_stage::STAGE_REVOCATION => Self::Revocation,
+            ucan_verification_stage::STAGE_PROOF_LOAD => Self::ProofLoad,
+            ucan_verification_stage::STAGE_PROOF_CHAIN => Self::ProofChain,
+            ucan_verification_stage::STAGE_AUTHORIZATION => Self::Authorization,
+            _ => Self::Accepted,
+        }
+    }
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedVerificationStageTranscript {
+    pub parse_ok: bool,
+    pub structural_ok: bool,
+    pub key_resolved: bool,
+    pub signature_valid: bool,
+    pub envelope_valid: bool,
+    pub revocation_clear: bool,
+    pub proofs_loaded: bool,
+    pub proof_chain_valid: bool,
+    pub authorized: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedVerificationStageOutcome {
+    pub accepted: bool,
+    pub first_failed_stage: VerifiedVerificationStage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -598,6 +650,35 @@ pub fn compact_token_envelope_is_valid(envelope: &VerifiedCompactTokenEnvelope) 
         signature: envelope.parts.signature.clone(),
     };
     ucan_compact::compact_envelope_matches_parts(&envelope.compact, &parts, &envelope.signing_input)
+}
+
+/// Evaluate a finite verification-stage transcript through vendored verified logic.
+///
+/// This bridge consumes only caller/shell-supplied stage facts. It does not parse
+/// tokens, decode base64url or JSON, hash proof references, verify Ed25519
+/// signatures, fetch proofs, query revocation state, evaluate caveat semantics,
+/// persist state, replay-protect, or read an ambient clock.
+#[must_use]
+pub fn verification_stage_transcript_outcome(
+    transcript: &VerifiedVerificationStageTranscript,
+) -> VerifiedVerificationStageOutcome {
+    let transcript = ucan_verification_stage::VerificationStageTranscript {
+        parse_ok: transcript.parse_ok,
+        structural_ok: transcript.structural_ok,
+        key_resolved: transcript.key_resolved,
+        signature_valid: transcript.signature_valid,
+        envelope_valid: transcript.envelope_valid,
+        revocation_clear: transcript.revocation_clear,
+        proofs_loaded: transcript.proofs_loaded,
+        proof_chain_valid: transcript.proof_chain_valid,
+        authorized: transcript.authorized,
+    };
+    VerifiedVerificationStageOutcome {
+        accepted: ucan_verification_stage::stage_transcript_accepts(&transcript),
+        first_failed_stage: VerifiedVerificationStage::from_verified_logic(
+            ucan_verification_stage::first_failed_stage(&transcript),
+        ),
+    }
 }
 
 /// Check a finite proof traversal transcript produced by the shell.
@@ -1413,6 +1494,8 @@ mod tests {
     use super::VerifiedProofTraversalEntry;
     use super::VerifiedProofTraversalTarget;
     use super::VerifiedProofTraversalTranscript;
+    use super::VerifiedVerificationStage;
+    use super::VerifiedVerificationStageTranscript;
     use super::VerifiedWebOfTrustAttestation;
     use super::VerifiedWebOfTrustAuthorization;
     use super::VerifiedWebOfTrustCaveat;
@@ -1442,6 +1525,7 @@ mod tests {
     use super::typed_caveat_is_satisfied;
     use super::typed_caveat_set_is_satisfied;
     use super::validate_token_envelope;
+    use super::verification_stage_transcript_outcome;
     use super::verify_ed25519_signature;
     use super::web_of_trust_attestation_is_active_at;
     use super::web_of_trust_attestation_payload_bytes;
@@ -1497,6 +1581,44 @@ mod tests {
         let mut bad_compact = envelope;
         bad_compact.compact = b"header.payload".to_vec();
         assert!(!compact_token_envelope_is_valid(&bad_compact));
+    }
+
+    #[test]
+    fn verification_stage_transcript_accepts_all_successful_stages() {
+        let transcript = accepting_stage_transcript();
+        let outcome = verification_stage_transcript_outcome(&transcript);
+        assert!(outcome.accepted);
+        assert_eq!(outcome.first_failed_stage, VerifiedVerificationStage::Accepted);
+    }
+
+    #[test]
+    fn verification_stage_transcript_reports_first_failure() {
+        let mut transcript = accepting_stage_transcript();
+        transcript.signature_valid = false;
+        transcript.proofs_loaded = false;
+        let outcome = verification_stage_transcript_outcome(&transcript);
+        assert!(!outcome.accepted);
+        assert_eq!(outcome.first_failed_stage, VerifiedVerificationStage::Signature);
+
+        let mut transcript = accepting_stage_transcript();
+        transcript.proofs_loaded = false;
+        let outcome = verification_stage_transcript_outcome(&transcript);
+        assert!(!outcome.accepted);
+        assert_eq!(outcome.first_failed_stage, VerifiedVerificationStage::ProofLoad);
+    }
+
+    fn accepting_stage_transcript() -> VerifiedVerificationStageTranscript {
+        VerifiedVerificationStageTranscript {
+            parse_ok: true,
+            structural_ok: true,
+            key_resolved: true,
+            signature_valid: true,
+            envelope_valid: true,
+            revocation_clear: true,
+            proofs_loaded: true,
+            proof_chain_valid: true,
+            authorized: true,
+        }
     }
 
     #[test]

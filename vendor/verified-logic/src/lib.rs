@@ -856,6 +856,7 @@ pub mod ucan_signature;
 /// Verified UCAN time-bounded delegation composition.
 pub mod ucan_temporal;
 pub mod ucan_token;
+pub mod ucan_verification_stage;
 pub mod vector_clock;
 pub mod verified_compiler_pipeline;
 pub mod verified_lsm_ingest;
