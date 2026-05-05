@@ -29,7 +29,7 @@ require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
 require_pattern 'use verified_logic::ucan_chain|proof_link_is_valid|structural_chain_is_valid|check_chain_structural_valid' src
 require_pattern 'use verified_logic::ucan_delegation_depth|proof_depth_within_budget' src
 require_pattern 'use verified_logic::ucan_revocation|revocation_reference_is_listed|structural_chain_not_revoked_is_valid|check_chain_structural_valid_not_revoked' src
-require_pattern 'use verified_logic::ucan_invocation|invocation_request_is_authorized|receipt_execution_is_valid|check_receipt_valid' src
+require_pattern 'use verified_logic::ucan_invocation|invocation_request_is_authorized|invocation_chain_is_authorized|receipt_execution_is_valid|check_invocation_chain_authorized|check_receipt_valid' src
 require_pattern 'use verified_logic::ucan_did|encode_ed25519_did_key' src
 require_pattern '\.is_concrete\(\)' src/token.rs
 require_pattern '\.has_wildcard_segment\(\)' src/verified.rs

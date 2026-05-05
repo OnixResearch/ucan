@@ -114,6 +114,15 @@ pub struct VerifiedChainEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedInvocationChainRequest {
+    pub authorization_reference: Vec<u8>,
+    pub invoker_did: String,
+    pub resource: String,
+    pub ability: String,
+    pub leaf_capability_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedCapability {
     document: CapabilityDocument,
     ability_segments: Vec<Vec<u8>>,
@@ -333,6 +342,56 @@ pub fn structural_chain_not_revoked_is_valid(
         &revocation_set,
         &chain,
         &chain_references,
+        now_seconds,
+        tolerance_seconds,
+    ))
+}
+
+/// Check resolved chain authorization for a concrete invocation request.
+///
+/// This is the shell bridge to verified-logic's composed invocation-chain
+/// checker. It checks finite structural chain validity, aligned proof-reference
+/// non-revocation, explicit authorization-reference binding to the chain leaf,
+/// leaf capability index admission, invoker/audience equality, request-resource
+/// refinement, and exact ability equality.
+///
+/// It does not resolve proofs, parse or verify compact UCANs, perform
+/// cryptographic signature verification, evaluate caveat policy, replace
+/// wildcard containment semantics, check revocation backend availability or
+/// freshness, access registries/storage/network backends, persist receipts, or
+/// read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidCapability`] when any supplied
+/// chain capability fails core capability validation.
+pub fn invocation_chain_is_authorized(
+    entries: &[VerifiedChainEntry],
+    chain_references: &[Vec<u8>],
+    revoked_references: &[Vec<u8>],
+    request: &VerifiedInvocationChainRequest,
+    now_seconds: u64,
+    tolerance_seconds: u64,
+) -> VerifiedResult<bool> {
+    let chain = entries.iter().map(to_verified_chain_entry).collect::<VerifiedResult<Vec<_>>>()?;
+    let chain_references = chain_references.to_vec();
+    let revocation_set = ucan_revocation::RevocationSet {
+        entries: revoked_references.to_vec(),
+    };
+    let invocation = ucan_invocation::Invocation {
+        auth_cid: request.authorization_reference.clone(),
+        invoker: request.invoker_did.as_bytes().to_vec(),
+        resource: request.resource.as_bytes().to_vec(),
+        ability: request.ability.as_bytes().to_vec(),
+        timestamp: now_seconds,
+    };
+
+    Ok(ucan_invocation::check_invocation_chain_authorized(
+        &revocation_set,
+        &chain,
+        &chain_references,
+        &invocation,
+        request.leaf_capability_index,
         now_seconds,
         tolerance_seconds,
     ))
@@ -636,11 +695,13 @@ mod tests {
     use super::TokenValidationFailure;
     use super::VerifiedCapability;
     use super::VerifiedChainEntry;
+    use super::VerifiedInvocationChainRequest;
     use super::VerifiedPrimitiveError;
     use super::attenuation_chain_is_valid;
     use super::compose_time_window_chain;
     use super::derive_ed25519_public_key;
     use super::encode_ed25519_did_key;
+    use super::invocation_chain_is_authorized;
     use super::invocation_request_is_authorized;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
@@ -895,6 +956,103 @@ mod tests {
     }
 
     #[test]
+    fn invocation_chain_uses_verified_authorization_composition() {
+        let parent = chain_entry(
+            "did:key:z6Mkissuer",
+            "did:key:z6Mkdelegate",
+            VALID_RESOURCE,
+            VALID_ABILITY_CHILD,
+            100,
+            400,
+            true,
+        );
+        let child = chain_entry(
+            "did:key:z6Mkdelegate",
+            "did:key:z6Mkleaf",
+            VALID_RESOURCE_CHILD,
+            VALID_ABILITY_CHILD,
+            150,
+            350,
+            true,
+        );
+        let chain = vec![parent.clone(), child];
+        let references = vec![b"parent-proof".to_vec(), b"child-proof".to_vec()];
+        let request = invocation_chain_request(
+            b"child-proof",
+            "did:key:z6Mkleaf",
+            "did:key:z6Mkexample/photos/2026",
+            VALID_ABILITY_CHILD,
+            0,
+        );
+
+        let valid = invocation_chain_is_authorized(&chain, &references, &[], &request, 200, 0)
+            .expect("invocation chain inputs should validate");
+        assert!(valid);
+
+        let revoked = vec![b"child-proof".to_vec()];
+        let valid = invocation_chain_is_authorized(&chain, &references, &revoked, &request, 200, 0)
+            .expect("invocation chain inputs should validate");
+        assert!(!valid);
+
+        let broken_child = chain_entry(
+            "did:key:z6Mkwrong",
+            "did:key:z6Mkleaf",
+            VALID_RESOURCE_CHILD,
+            VALID_ABILITY_CHILD,
+            150,
+            350,
+            true,
+        );
+        let valid = invocation_chain_is_authorized(&[parent, broken_child], &references, &[], &request, 200, 0)
+            .expect("invocation chain inputs should validate");
+        assert!(!valid);
+
+        let wrong_reference = invocation_chain_request(
+            b"other-proof",
+            "did:key:z6Mkleaf",
+            "did:key:z6Mkexample/photos/2026",
+            VALID_ABILITY_CHILD,
+            0,
+        );
+        let valid = invocation_chain_is_authorized(&chain, &references, &[], &wrong_reference, 200, 0)
+            .expect("invocation chain inputs should validate");
+        assert!(!valid);
+
+        let escalated_resource = invocation_chain_request(
+            b"child-proof",
+            "did:key:z6Mkleaf",
+            "did:key:z6Mkother/photos",
+            VALID_ABILITY_CHILD,
+            0,
+        );
+        let valid = invocation_chain_is_authorized(&chain, &references, &[], &escalated_resource, 200, 0)
+            .expect("invocation chain inputs should validate");
+        assert!(!valid);
+
+        let escalated_ability = invocation_chain_request(
+            b"child-proof",
+            "did:key:z6Mkleaf",
+            "did:key:z6Mkexample/photos/2026",
+            VALID_ABILITY_OTHER_NAMESPACE,
+            0,
+        );
+        let valid = invocation_chain_is_authorized(&chain, &references, &[], &escalated_ability, 200, 0)
+            .expect("invocation chain inputs should validate");
+        assert!(!valid);
+
+        let bad_index = invocation_chain_request(
+            b"child-proof",
+            "did:key:z6Mkleaf",
+            "did:key:z6Mkexample/photos/2026",
+            VALID_ABILITY_CHILD,
+            1,
+        );
+        let valid = invocation_chain_is_authorized(&chain, &references, &[], &bad_index, 200, 0)
+            .expect("invocation chain inputs should validate");
+        assert!(!valid);
+    }
+
+    #[test]
     fn revocation_reference_lookup_uses_verified_set_semantics() {
         let revoked = vec![b"root-proof".to_vec(), b"leaf-proof".to_vec()];
 
@@ -1032,6 +1190,22 @@ mod tests {
 
     fn valid_capability(resource: &str, ability: &str) -> CapabilityDocument {
         CapabilityDocument::new(resource.to_owned(), ability.to_owned()).expect("capability fixture should validate")
+    }
+
+    fn invocation_chain_request(
+        authorization_reference: &[u8],
+        invoker_did: &str,
+        resource: &str,
+        ability: &str,
+        leaf_capability_index: usize,
+    ) -> VerifiedInvocationChainRequest {
+        VerifiedInvocationChainRequest {
+            authorization_reference: authorization_reference.to_vec(),
+            invoker_did: invoker_did.to_owned(),
+            resource: resource.to_owned(),
+            ability: ability.to_owned(),
+            leaf_capability_index,
+        }
     }
 
     fn chain_entry(
