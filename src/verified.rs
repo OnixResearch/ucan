@@ -301,6 +301,43 @@ pub fn structural_chain_is_valid(
     Ok(ucan_chain::check_chain_structural_valid(&chain, now_seconds, tolerance_seconds))
 }
 
+/// Check structural validity and non-revocation for caller-supplied resolved chain data.
+///
+/// This is the shell bridge to verified-logic's composed revocation-chain
+/// checker. It checks finite structural chain validity, one-to-one alignment
+/// between chain entries and proof-reference bytes, and finite revoked-reference
+/// non-membership.
+///
+/// It does not resolve proofs, derive references from compact tokens, check
+/// backend availability or revocation freshness, perform cryptographic signature
+/// verification, evaluate caveat policy, access registries, use storage/network
+/// backends, or read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidCapability`] when any supplied
+/// chain capability fails core capability validation.
+pub fn structural_chain_not_revoked_is_valid(
+    entries: &[VerifiedChainEntry],
+    chain_references: &[Vec<u8>],
+    revoked_references: &[Vec<u8>],
+    now_seconds: u64,
+    tolerance_seconds: u64,
+) -> VerifiedResult<bool> {
+    let chain = entries.iter().map(to_verified_chain_entry).collect::<VerifiedResult<Vec<_>>>()?;
+    let revocation_set = ucan_revocation::RevocationSet {
+        entries: revoked_references.to_vec(),
+    };
+    let chain_references = chain_references.to_vec();
+    Ok(ucan_revocation::check_chain_structural_valid_not_revoked(
+        &revocation_set,
+        &chain,
+        &chain_references,
+        now_seconds,
+        tolerance_seconds,
+    ))
+}
+
 /// Check whether a proof-reference byte string is present in a finite revocation list.
 ///
 /// This is the shell bridge to verified-logic's finite revocation-set lookup. It
@@ -611,6 +648,7 @@ mod tests {
     use super::revocation_reference_is_listed;
     use super::sign_ed25519;
     use super::structural_chain_is_valid;
+    use super::structural_chain_not_revoked_is_valid;
     use super::token_needs_refresh;
     use super::token_time_valid;
     use super::validate_token_envelope;
@@ -801,6 +839,58 @@ mod tests {
         assert!(!valid);
 
         let valid = structural_chain_is_valid(&[child], 500, 0).expect("structural chain inputs should validate");
+        assert!(!valid);
+    }
+
+    #[test]
+    fn structural_chain_not_revoked_uses_verified_revocation_composition() {
+        let parent = chain_entry(
+            "did:key:z6Mkissuer",
+            "did:key:z6Mkdelegate",
+            VALID_RESOURCE,
+            VALID_ABILITY_CHILD,
+            100,
+            400,
+            true,
+        );
+        let child = chain_entry(
+            "did:key:z6Mkdelegate",
+            "did:key:z6Mkleaf",
+            VALID_RESOURCE_CHILD,
+            VALID_ABILITY_CHILD,
+            150,
+            350,
+            true,
+        );
+        let chain = vec![parent.clone(), child];
+        let references = vec![b"parent-proof".to_vec(), b"child-proof".to_vec()];
+        let revoked = vec![b"other-proof".to_vec()];
+
+        let valid = structural_chain_not_revoked_is_valid(&chain, &references, &revoked, 200, 0)
+            .expect("chain inputs should validate");
+        assert!(valid);
+
+        let revoked = vec![b"child-proof".to_vec()];
+        let valid = structural_chain_not_revoked_is_valid(&chain, &references, &revoked, 200, 0)
+            .expect("chain inputs should validate");
+        assert!(!valid);
+
+        let missing_reference = vec![b"parent-proof".to_vec()];
+        let valid = structural_chain_not_revoked_is_valid(&chain, &missing_reference, &[], 200, 0)
+            .expect("chain inputs should validate");
+        assert!(!valid);
+
+        let broken_child = chain_entry(
+            "did:key:z6Mkwrong",
+            "did:key:z6Mkleaf",
+            VALID_RESOURCE_CHILD,
+            VALID_ABILITY_CHILD,
+            150,
+            350,
+            true,
+        );
+        let valid = structural_chain_not_revoked_is_valid(&[parent, broken_child], &references, &[], 200, 0)
+            .expect("chain inputs should validate");
         assert!(!valid);
     }
 

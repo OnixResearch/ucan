@@ -102,6 +102,7 @@ pub use verified::receipt_execution_is_valid;
 pub use verified::revocation_reference_is_listed;
 pub use verified::sign_ed25519;
 pub use verified::structural_chain_is_valid;
+pub use verified::structural_chain_not_revoked_is_valid;
 pub use verified::token_needs_refresh;
 pub use verified::token_time_valid;
 pub use verified::token_time_valid_at;
