@@ -5,6 +5,7 @@ use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
 use verified_logic::ucan_chain;
 use verified_logic::ucan_did;
+use verified_logic::ucan_invocation;
 use verified_logic::ucan_revocation;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
@@ -280,6 +281,31 @@ pub fn revocation_reference_is_listed(revoked_references: &[Vec<u8>], reference:
     ucan_revocation::is_revoked(&revocation_set, &reference.to_vec())
 }
 
+/// Check concrete invocation admission against a leaf audience and concrete leaf capability.
+///
+/// This is the shell bridge to verified-logic's invocation authorization primitive. It
+/// checks only the structural invoker/audience match, request-resource prefix refinement,
+/// and exact ability equality. Wildcard ability containment, caveat policy evaluation,
+/// proof traversal, signatures, and revocation checks remain in their existing shell paths.
+#[must_use]
+pub fn invocation_request_is_authorized(
+    invoker_did: &str,
+    leaf_audience_did: &str,
+    request_resource: &str,
+    request_ability: &str,
+    leaf_resource: &str,
+    leaf_ability: &str,
+) -> bool {
+    ucan_invocation::check_invocation_authorized(
+        &invoker_did.as_bytes().to_vec(),
+        &leaf_audience_did.as_bytes().to_vec(),
+        &request_resource.as_bytes().to_vec(),
+        &request_ability.as_bytes().to_vec(),
+        &leaf_resource.as_bytes().to_vec(),
+        &leaf_ability.as_bytes().to_vec(),
+    )
+}
+
 /// Validate a UCAN envelope using verified-logic's checked pipeline.
 ///
 /// # Errors
@@ -483,6 +509,7 @@ mod tests {
     use super::compose_time_window_chain;
     use super::derive_ed25519_public_key;
     use super::encode_ed25519_did_key;
+    use super::invocation_request_is_authorized;
     use super::proof_link_is_valid;
     use super::revocation_reference_is_listed;
     use super::sign_ed25519;
@@ -630,6 +657,44 @@ mod tests {
 
         assert!(revocation_reference_is_listed(&revoked, b"leaf-proof"));
         assert!(!revocation_reference_is_listed(&revoked, b"other-proof"));
+    }
+
+    #[test]
+    fn invocation_request_uses_verified_invocation_semantics() {
+        let audience = "did:key:z6Mkaudience";
+
+        assert!(invocation_request_is_authorized(
+            audience,
+            audience,
+            "did:key:z6Mkresource/photos",
+            "store/add",
+            "did:key:z6Mkresource",
+            "store/add",
+        ));
+        assert!(!invocation_request_is_authorized(
+            "did:key:z6Mkwrong",
+            audience,
+            "did:key:z6Mkresource/photos",
+            "store/add",
+            "did:key:z6Mkresource",
+            "store/add",
+        ));
+        assert!(!invocation_request_is_authorized(
+            audience,
+            audience,
+            "did:key:z6Mkother/photos",
+            "store/add",
+            "did:key:z6Mkresource",
+            "store/add",
+        ));
+        assert!(!invocation_request_is_authorized(
+            audience,
+            audience,
+            "did:key:z6Mkresource/photos",
+            "store/remove",
+            "did:key:z6Mkresource",
+            "store/add",
+        ));
     }
 
     #[test]
