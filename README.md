@@ -97,6 +97,7 @@ Proof material is explicit. A child token carries BLAKE3 proof references in `pr
 ```bash
 cargo run --example proof_chain
 cargo run --example proof_store
+cargo run --example revocation
 ```
 
 The verified result exposes the issuer, audience, direct capability set, direct proof list, and effective delegation window/capabilities so callers do not need to recompute chain constraints.
