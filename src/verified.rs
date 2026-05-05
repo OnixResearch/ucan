@@ -3,6 +3,7 @@ use core::fmt;
 use verified_logic::scope;
 use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
+use verified_logic::ucan_caveat;
 use verified_logic::ucan_chain;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
@@ -11,6 +12,10 @@ use verified_logic::ucan_revocation;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
 use verified_logic::ucan_token;
+use verified_logic::web_of_trust_attestation;
+use verified_logic::web_of_trust_principal;
+use verified_logic::web_of_trust_revocation;
+use verified_logic::web_of_trust_ucan_authorizer;
 
 use crate::shell::CapabilityDocument;
 
@@ -27,6 +32,7 @@ pub enum VerifiedPrimitiveError {
     InvalidSecretKeyLength { actual: usize },
     InvalidPublicKeyLength { actual: usize },
     InvalidSignatureLength { actual: usize },
+    InvalidPrincipalDigestLength { actual: usize },
     TokenValidation { failure: TokenValidationFailure },
 }
 
@@ -44,6 +50,13 @@ impl fmt::Display for VerifiedPrimitiveError {
             Self::InvalidSignatureLength { actual } => {
                 write!(formatter, "ed25519 signatures must be {} bytes, got {actual}", ucan_signature::SIGNATURE_LEN)
             }
+            Self::InvalidPrincipalDigestLength { actual } => {
+                write!(
+                    formatter,
+                    "web-of-trust principal digests must be {} bytes, got {actual}",
+                    web_of_trust_principal::PRINCIPAL_ID_LEN
+                )
+            }
             Self::TokenValidation { failure } => write!(formatter, "token validation failed: {failure}"),
         }
     }
@@ -57,6 +70,7 @@ impl std::error::Error for VerifiedPrimitiveError {
             | Self::InvalidSecretKeyLength { .. }
             | Self::InvalidPublicKeyLength { .. }
             | Self::InvalidSignatureLength { .. }
+            | Self::InvalidPrincipalDigestLength { .. }
             | Self::TokenValidation { .. } => None,
         }
     }
@@ -120,6 +134,71 @@ pub struct VerifiedInvocationChainRequest {
     pub resource: String,
     pub ability: String,
     pub leaf_capability_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifiedWebOfTrustAuthorization {
+    Authorized,
+    Denied,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifiedWebOfTrustCaveat {
+    TimeBound { not_after_seconds: u64 },
+    RateLimit { max_count: u64, window_seconds: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedWebOfTrustCaveatContext {
+    pub now_seconds: u64,
+    pub count_in_window: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedWebOfTrustAttestation {
+    pub issuer_key_bytes: Vec<u8>,
+    pub issuer_digest: Vec<u8>,
+    pub subject_key_bytes: Vec<u8>,
+    pub subject_digest: Vec<u8>,
+    pub role_tag: u8,
+    pub not_before_seconds: u64,
+    pub not_after_seconds: u64,
+    pub sequence_no: u64,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedWebOfTrustRevocation {
+    pub issuer_key_bytes: Vec<u8>,
+    pub issuer_digest: Vec<u8>,
+    pub target_kind_tag: u8,
+    pub exact_payload_target: Vec<u8>,
+    pub family_subject_key_bytes: Vec<u8>,
+    pub family_subject_digest: Vec<u8>,
+    pub family_role_tag: u8,
+    pub effective_time_seconds: u64,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct VerifiedWebOfTrustUcanAuthorizationRequest {
+    pub token_envelope: TokenEnvelopeInput,
+    pub signature_valid: bool,
+    pub now_seconds: u64,
+    pub tolerance_seconds: u64,
+    pub ability_allowed: bool,
+    pub caveats_contained: bool,
+    pub active_caveats: Vec<VerifiedWebOfTrustCaveat>,
+    pub caveat_context: VerifiedWebOfTrustCaveatContext,
+    pub did_cid_linked: bool,
+    pub root_principal_digests: Vec<Vec<u8>>,
+    pub attestations: Vec<VerifiedWebOfTrustAttestation>,
+    pub revocations: Vec<VerifiedWebOfTrustRevocation>,
+    pub subject_principal_digest: Vec<u8>,
+    pub threshold: usize,
+    pub depth: usize,
+    pub trust_time_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -397,6 +476,72 @@ pub fn invocation_chain_is_authorized(
     ))
 }
 
+/// Authorize a UCAN payload with caller-supplied finite Web-of-Trust data.
+///
+/// This is the shell bridge to verified-logic's Web-of-Trust UCAN authorizer.
+/// It delegates a structurally valid token envelope, caller-supplied
+/// ability/caveat/DID-CID facts, active caveats, root principals,
+/// attestations, revocations, threshold, depth, and deterministic evaluation
+/// times to the vendored composed checker.
+///
+/// It does not parse or verify compact UCANs, perform cryptographic signature
+/// verification, decode DID/CID bytes, resolve proofs, fetch keys, check
+/// revocation backend availability or freshness, evaluate application caveat
+/// policy, access registries/storage/network backends, persist trust records,
+/// perform replay checks, or read an ambient clock.
+///
+/// # Errors
+///
+/// Returns [`VerifiedPrimitiveError::InvalidCapability`] when a supplied UCAN
+/// capability fails core validation, or
+/// [`VerifiedPrimitiveError::InvalidPrincipalDigestLength`] when a supplied
+/// Web-of-Trust principal digest is not full width.
+pub fn web_of_trust_ucan_authorization(
+    request: &VerifiedWebOfTrustUcanAuthorizationRequest,
+) -> VerifiedResult<VerifiedWebOfTrustAuthorization> {
+    let payload = build_token_payload(&request.token_envelope)?;
+    let roots = request
+        .root_principal_digests
+        .iter()
+        .map(|digest| build_web_of_trust_principal(digest.as_slice()))
+        .collect::<VerifiedResult<Vec<_>>>()?;
+    let attestations =
+        request.attestations.iter().map(to_web_of_trust_attestation).collect::<VerifiedResult<Vec<_>>>()?;
+    let revocations = request.revocations.iter().map(to_web_of_trust_revocation).collect::<VerifiedResult<Vec<_>>>()?;
+    let subject = build_web_of_trust_principal(request.subject_principal_digest.as_slice())?;
+    let active_caveats = request.active_caveats.iter().map(to_web_of_trust_caveat).collect::<Vec<_>>();
+    let caveat_context = ucan_caveat::CaveatContext {
+        now: request.caveat_context.now_seconds,
+        count_in_window: request.caveat_context.count_in_window,
+    };
+
+    let decision = web_of_trust_ucan_authorizer::web_of_trust_ucan_authorizer(
+        &payload,
+        request.signature_valid,
+        request.now_seconds,
+        request.tolerance_seconds,
+        request.ability_allowed,
+        request.caveats_contained,
+        &active_caveats,
+        &caveat_context,
+        request.did_cid_linked,
+        &roots,
+        &attestations,
+        &revocations,
+        &subject,
+        request.threshold,
+        request.depth,
+        request.trust_time_seconds,
+    );
+
+    Ok(match decision {
+        web_of_trust_ucan_authorizer::WebOfTrustUcanAuthorization::Authorized => {
+            VerifiedWebOfTrustAuthorization::Authorized
+        }
+        web_of_trust_ucan_authorizer::WebOfTrustUcanAuthorization::Denied => VerifiedWebOfTrustAuthorization::Denied,
+    })
+}
+
 /// Check whether a proof-reference byte string is present in a finite revocation list.
 ///
 /// This is the shell bridge to verified-logic's finite revocation-set lookup. It
@@ -629,6 +774,63 @@ fn build_token_payload(envelope: &TokenEnvelopeInput) -> VerifiedResult<ucan_tok
     })
 }
 
+fn build_web_of_trust_principal(digest: &[u8]) -> VerifiedResult<web_of_trust_principal::PrincipalId> {
+    let actual = digest.len();
+    if actual != web_of_trust_principal::PRINCIPAL_ID_LEN {
+        return Err(VerifiedPrimitiveError::InvalidPrincipalDigestLength { actual });
+    }
+    Ok(web_of_trust_principal::PrincipalId {
+        digest: digest.to_vec(),
+    })
+}
+
+const fn to_web_of_trust_caveat(caveat: &VerifiedWebOfTrustCaveat) -> ucan_caveat::Caveat {
+    match caveat {
+        VerifiedWebOfTrustCaveat::TimeBound { not_after_seconds } => ucan_caveat::Caveat::TimeBound {
+            not_after: *not_after_seconds,
+        },
+        VerifiedWebOfTrustCaveat::RateLimit {
+            max_count,
+            window_seconds,
+        } => ucan_caveat::Caveat::RateLimit {
+            max_count: *max_count,
+            window_secs: *window_seconds,
+        },
+    }
+}
+
+fn to_web_of_trust_attestation(
+    attestation: &VerifiedWebOfTrustAttestation,
+) -> VerifiedResult<web_of_trust_attestation::Attestation> {
+    Ok(web_of_trust_attestation::Attestation {
+        issuer_key_bytes: attestation.issuer_key_bytes.clone(),
+        issuer: build_web_of_trust_principal(attestation.issuer_digest.as_slice())?,
+        subject_key_bytes: attestation.subject_key_bytes.clone(),
+        subject: build_web_of_trust_principal(attestation.subject_digest.as_slice())?,
+        role_tag: attestation.role_tag,
+        not_before: attestation.not_before_seconds,
+        not_after: attestation.not_after_seconds,
+        sequence_no: attestation.sequence_no,
+        signature: attestation.signature.clone(),
+    })
+}
+
+fn to_web_of_trust_revocation(
+    revocation: &VerifiedWebOfTrustRevocation,
+) -> VerifiedResult<web_of_trust_revocation::Revocation> {
+    Ok(web_of_trust_revocation::Revocation {
+        issuer_key_bytes: revocation.issuer_key_bytes.clone(),
+        issuer: build_web_of_trust_principal(revocation.issuer_digest.as_slice())?,
+        target_kind_tag: revocation.target_kind_tag,
+        exact_payload_target: revocation.exact_payload_target.clone(),
+        family_subject_key_bytes: revocation.family_subject_key_bytes.clone(),
+        family_subject: build_web_of_trust_principal(revocation.family_subject_digest.as_slice())?,
+        family_role_tag: revocation.family_role_tag,
+        effective_time: revocation.effective_time_seconds,
+        signature: revocation.signature.clone(),
+    })
+}
+
 const fn map_validation_failure(error: &ucan_token::ValidationError) -> TokenValidationFailure {
     match error {
         ucan_token::ValidationError::ExpiredToken => TokenValidationFailure::ExpiredToken,
@@ -689,6 +891,9 @@ const fn validate_signature_length(signature_bytes: &[u8]) -> VerifiedResult<()>
 #[cfg(test)]
 mod tests {
     use verified_logic::ucan_signature;
+    use verified_logic::web_of_trust_attestation as verified_wot_attestation;
+    use verified_logic::web_of_trust_principal as verified_wot_principal;
+    use verified_logic::web_of_trust_revocation as verified_wot_revocation;
 
     use super::TokenEnvelopeInput;
     use super::TokenTimeWindow;
@@ -697,6 +902,12 @@ mod tests {
     use super::VerifiedChainEntry;
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedPrimitiveError;
+    use super::VerifiedWebOfTrustAttestation;
+    use super::VerifiedWebOfTrustAuthorization;
+    use super::VerifiedWebOfTrustCaveat;
+    use super::VerifiedWebOfTrustCaveatContext;
+    use super::VerifiedWebOfTrustRevocation;
+    use super::VerifiedWebOfTrustUcanAuthorizationRequest;
     use super::attenuation_chain_is_valid;
     use super::compose_time_window_chain;
     use super::derive_ed25519_public_key;
@@ -714,6 +925,7 @@ mod tests {
     use super::token_time_valid;
     use super::validate_token_envelope;
     use super::verify_ed25519_signature;
+    use super::web_of_trust_ucan_authorization;
     use crate::shell::CapabilityDocument;
 
     const VALID_RESOURCE: &str = "did:key:z6Mkexample";
@@ -1053,6 +1265,64 @@ mod tests {
     }
 
     #[test]
+    fn web_of_trust_ucan_authorization_uses_verified_facade() {
+        let root_key = vec![1, 2, 3];
+        let subject_key = vec![7, 8, 9];
+        let attestation = signed_wot_attestation(root_key.clone(), subject_key.clone(), 1, 0, 20, 1);
+        let request = wot_authorization_request(
+            vec![principal_digest(&root_key)],
+            vec![attestation],
+            Vec::new(),
+            principal_digest(&subject_key),
+            1,
+        );
+
+        let decision = web_of_trust_ucan_authorization(&request).expect("WOT UCAN inputs should validate");
+        assert_eq!(decision, VerifiedWebOfTrustAuthorization::Authorized);
+
+        let mut denied_fact = request.clone();
+        denied_fact.did_cid_linked = false;
+        let decision = web_of_trust_ucan_authorization(&denied_fact).expect("WOT UCAN inputs should validate");
+        assert_eq!(decision, VerifiedWebOfTrustAuthorization::Denied);
+
+        let mut unsatisfied_caveat = request.clone();
+        unsatisfied_caveat.active_caveats = vec![VerifiedWebOfTrustCaveat::TimeBound { not_after_seconds: 1 }];
+        let decision = web_of_trust_ucan_authorization(&unsatisfied_caveat).expect("WOT UCAN inputs should validate");
+        assert_eq!(decision, VerifiedWebOfTrustAuthorization::Denied);
+
+        let mut invalid_digest = request;
+        invalid_digest.subject_principal_digest = vec![1, 2, 3];
+        let error = web_of_trust_ucan_authorization(&invalid_digest).expect_err("short digest should reject");
+        assert_eq!(error, VerifiedPrimitiveError::InvalidPrincipalDigestLength { actual: 3 });
+    }
+
+    #[test]
+    fn web_of_trust_ucan_authorization_denies_revoked_or_under_threshold_trust() {
+        let alpha_root_key = vec![1, 2, 3];
+        let beta_root_key = vec![4, 5, 6];
+        let subject_key = vec![7, 8, 9];
+        let attestation_a = signed_wot_attestation(alpha_root_key.clone(), subject_key.clone(), 1, 0, 20, 1);
+        let attestation_b = signed_wot_attestation(beta_root_key.clone(), subject_key.clone(), 1, 0, 20, 2);
+        let roots = vec![principal_digest(&alpha_root_key), principal_digest(&beta_root_key)];
+        let subject = principal_digest(&subject_key);
+
+        let under_threshold =
+            wot_authorization_request(roots.clone(), vec![attestation_a.clone()], Vec::new(), subject.clone(), 2);
+        let decision = web_of_trust_ucan_authorization(&under_threshold).expect("WOT UCAN inputs should validate");
+        assert_eq!(decision, VerifiedWebOfTrustAuthorization::Denied);
+
+        let revoked = wot_authorization_request(
+            roots,
+            vec![attestation_a, attestation_b],
+            vec![signed_wot_family_revocation(beta_root_key, subject_key, 1, 5)],
+            subject,
+            2,
+        );
+        let decision = web_of_trust_ucan_authorization(&revoked).expect("WOT UCAN inputs should validate");
+        assert_eq!(decision, VerifiedWebOfTrustAuthorization::Denied);
+    }
+
+    #[test]
     fn revocation_reference_lookup_uses_verified_set_semantics() {
         let revoked = vec![b"root-proof".to_vec(), b"leaf-proof".to_vec()];
 
@@ -1205,6 +1475,129 @@ mod tests {
             resource: resource.to_owned(),
             ability: ability.to_owned(),
             leaf_capability_index,
+        }
+    }
+
+    fn principal_digest(key_bytes: &[u8]) -> Vec<u8> {
+        verified_wot_principal::principal_id_from_bytes(key_bytes).digest
+    }
+
+    fn sign_wot_bytes(domain_tag: u8, issuer_key_bytes: &[u8], payload_bytes: &[u8]) -> Vec<u8> {
+        let mut signature = Vec::new();
+        signature.push(domain_tag);
+        let issuer_len = u32::try_from(issuer_key_bytes.len()).expect("fixture issuer key length fits u32");
+        signature.extend_from_slice(&issuer_len.to_le_bytes());
+        signature.extend_from_slice(issuer_key_bytes);
+        signature.extend_from_slice(payload_bytes);
+        signature
+    }
+
+    fn signed_wot_attestation(
+        issuer_key_bytes: Vec<u8>,
+        subject_key_bytes: Vec<u8>,
+        role_tag: u8,
+        not_before_seconds: u64,
+        not_after_seconds: u64,
+        sequence_no: u64,
+    ) -> VerifiedWebOfTrustAttestation {
+        let issuer = verified_wot_principal::principal_id_from_bytes(issuer_key_bytes.as_slice());
+        let subject = verified_wot_principal::principal_id_from_bytes(subject_key_bytes.as_slice());
+        let unsigned = verified_wot_attestation::Attestation {
+            issuer_key_bytes: issuer_key_bytes.clone(),
+            issuer,
+            subject_key_bytes: subject_key_bytes.clone(),
+            subject,
+            role_tag,
+            not_before: not_before_seconds,
+            not_after: not_after_seconds,
+            sequence_no,
+            signature: Vec::new(),
+        };
+        let payload = verified_wot_attestation::attestation_payload_bytes(&unsigned)
+            .expect("fixture attestation payload should encode");
+        let signature = sign_wot_bytes(0xa1, issuer_key_bytes.as_slice(), payload.as_slice());
+        VerifiedWebOfTrustAttestation {
+            issuer_key_bytes,
+            issuer_digest: unsigned.issuer.digest,
+            subject_key_bytes,
+            subject_digest: unsigned.subject.digest,
+            role_tag,
+            not_before_seconds,
+            not_after_seconds,
+            sequence_no,
+            signature,
+        }
+    }
+
+    fn signed_wot_family_revocation(
+        issuer_key_bytes: Vec<u8>,
+        subject_key_bytes: Vec<u8>,
+        role_tag: u8,
+        effective_time_seconds: u64,
+    ) -> VerifiedWebOfTrustRevocation {
+        let issuer = verified_wot_principal::principal_id_from_bytes(issuer_key_bytes.as_slice());
+        let family_subject = verified_wot_principal::principal_id_from_bytes(subject_key_bytes.as_slice());
+        let unsigned = verified_wot_revocation::Revocation {
+            issuer_key_bytes: issuer_key_bytes.clone(),
+            issuer,
+            target_kind_tag: 0x02,
+            exact_payload_target: Vec::new(),
+            family_subject_key_bytes: subject_key_bytes.clone(),
+            family_subject,
+            family_role_tag: role_tag,
+            effective_time: effective_time_seconds,
+            signature: Vec::new(),
+        };
+        let payload = verified_wot_revocation::revocation_payload_bytes(&unsigned)
+            .expect("fixture revocation payload should encode");
+        let signature = sign_wot_bytes(0xa2, issuer_key_bytes.as_slice(), payload.as_slice());
+        VerifiedWebOfTrustRevocation {
+            issuer_key_bytes,
+            issuer_digest: unsigned.issuer.digest,
+            target_kind_tag: 0x02,
+            exact_payload_target: Vec::new(),
+            family_subject_key_bytes: subject_key_bytes,
+            family_subject_digest: unsigned.family_subject.digest,
+            family_role_tag: role_tag,
+            effective_time_seconds,
+            signature,
+        }
+    }
+
+    fn wot_authorization_request(
+        root_principal_digests: Vec<Vec<u8>>,
+        attestations: Vec<VerifiedWebOfTrustAttestation>,
+        revocations: Vec<VerifiedWebOfTrustRevocation>,
+        subject_principal_digest: Vec<u8>,
+        threshold: usize,
+    ) -> VerifiedWebOfTrustUcanAuthorizationRequest {
+        VerifiedWebOfTrustUcanAuthorizationRequest {
+            token_envelope: TokenEnvelopeInput {
+                issuer_did: "did:key:zIssuer".to_owned(),
+                audience_did: "did:key:zAudience".to_owned(),
+                capabilities: vec![valid_capability(VALID_RESOURCE, VALID_ABILITY_CHILD)],
+                proofs: vec![b"bafy-proof".to_vec()],
+                expires_at_seconds: 100,
+                not_before_seconds: 0,
+            },
+            signature_valid: true,
+            now_seconds: 5,
+            tolerance_seconds: 0,
+            ability_allowed: true,
+            caveats_contained: true,
+            active_caveats: vec![VerifiedWebOfTrustCaveat::TimeBound { not_after_seconds: 50 }],
+            caveat_context: VerifiedWebOfTrustCaveatContext {
+                now_seconds: 5,
+                count_in_window: 0,
+            },
+            did_cid_linked: true,
+            root_principal_digests,
+            attestations,
+            revocations,
+            subject_principal_digest,
+            threshold,
+            depth: 1,
+            trust_time_seconds: 5,
         }
     }
 
