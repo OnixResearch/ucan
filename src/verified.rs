@@ -3,6 +3,7 @@ use core::fmt;
 use verified_logic::scope;
 use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
+use verified_logic::ucan_chain;
 use verified_logic::ucan_did;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
@@ -237,6 +238,34 @@ pub fn attenuation_chain_is_valid(
     Ok(ucan_token::check_attenuation_chain(&parent_capabilities, &child_capabilities))
 }
 
+/// Check whether a parent proof audience links to a child token issuer.
+///
+/// This is the two-entry proof-link slice of the verified UCAN chain checker;
+/// it does not perform proof resolution, signature verification, revocation, or
+/// temporal validation.
+#[must_use]
+pub fn proof_link_is_valid(parent_audience_did: &str, child_issuer_did: &str) -> bool {
+    let chain = vec![
+        ucan_chain::ChainEntry {
+            iss: Vec::new(),
+            aud: parent_audience_did.as_bytes().to_vec(),
+            att: Vec::new(),
+            exp: 0,
+            nbf: 0,
+            sig_valid: true,
+        },
+        ucan_chain::ChainEntry {
+            iss: child_issuer_did.as_bytes().to_vec(),
+            aud: Vec::new(),
+            att: Vec::new(),
+            exp: 0,
+            nbf: 0,
+            sig_valid: true,
+        },
+    ];
+    ucan_chain::check_chain_linked(&chain)
+}
+
 /// Validate a UCAN envelope using verified-logic's checked pipeline.
 ///
 /// # Errors
@@ -440,6 +469,7 @@ mod tests {
     use super::compose_time_window_chain;
     use super::derive_ed25519_public_key;
     use super::encode_ed25519_did_key;
+    use super::proof_link_is_valid;
     use super::sign_ed25519;
     use super::token_needs_refresh;
     use super::token_time_valid;
@@ -567,6 +597,16 @@ mod tests {
             .expect("attenuation chain should validate capability inputs");
 
         assert!(!valid);
+    }
+
+    #[test]
+    fn proof_link_uses_verified_chain_link_semantics() {
+        let parent_audience = "did:key:z6MkparentAudience";
+        let child_issuer = parent_audience;
+        let wrong_child_issuer = "did:key:z6MkotherIssuer";
+
+        assert!(proof_link_is_valid(parent_audience, child_issuer));
+        assert!(!proof_link_is_valid(parent_audience, wrong_child_issuer));
     }
 
     #[test]

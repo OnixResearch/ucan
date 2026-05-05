@@ -17,7 +17,7 @@ Use these entry points for consumer-facing UCAN flows:
 These helpers remain public as supporting APIs for advanced callers and tests, but README onboarding uses the token workflow above as the primary path:
 
 - `CapabilityDocument`, `load_capability_from_path`, `load_capability_from_reader`, and `write_capability_to_writer`: simple capability document I/O shell helpers.
-- `VerifiedCapability`, `attenuation_chain_is_valid`, and `compose_time_window_chain`: verified-logic bridge helpers for focused semantic checks, including delegated-capability containment and concrete-request ability admission.
+- `VerifiedCapability`, `attenuation_chain_is_valid`, `proof_link_is_valid`, and `compose_time_window_chain`: verified-logic bridge helpers for focused semantic checks, including delegated-capability containment, concrete-request ability admission, issuer/audience proof-link admission, and temporal intersection.
 - `Ed25519InMemorySigner`, `TokenSigner`, `SignerSignature`, `SignerError`, and `SignerResult`: signer-bound issuance primitives for callers that need explicit key-custody boundaries.
 - `derive_ed25519_public_key`, `encode_ed25519_did_key`, `sign_ed25519`, and `verify_ed25519_signature`: low-level Ed25519 / `did:key` primitives used by the token workflow.
 - `TokenEnvelopeInput`, `validate_token_envelope`, `token_time_valid`, `token_time_valid_at`, and `token_needs_refresh`: lower-level verified envelope and temporal helpers.

@@ -94,6 +94,7 @@ pub use verified::attenuation_chain_is_valid;
 pub use verified::compose_time_window_chain;
 pub use verified::derive_ed25519_public_key;
 pub use verified::encode_ed25519_did_key;
+pub use verified::proof_link_is_valid;
 pub use verified::sign_ed25519;
 pub use verified::token_needs_refresh;
 pub use verified::token_time_valid;

@@ -22,6 +22,7 @@ use crate::verified::VerifiedPrimitiveError;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
+use crate::verified::proof_link_is_valid;
 use crate::verified::sign_ed25519;
 use crate::verified::validate_token_envelope;
 use crate::verified::verify_ed25519_signature;
@@ -2280,7 +2281,7 @@ where
 
 fn verify_child_is_linked_to_parent_audience(child_issuer: &IssuerDid, parents: &[VerifiedToken]) -> TokenResult<()> {
     for parent in parents {
-        if parent.audience().as_str() != child_issuer.as_str() {
+        if !proof_link_is_valid(parent.audience().as_str(), child_issuer.as_str()) {
             return Err(TokenError::ProofChain {
                 message: "child issuer does not match parent audience".to_owned(),
             });
