@@ -32,6 +32,11 @@ REQUIRED_CONTROLLED = {
     "generic-consumer-integration-hooks",
     "caller-supplied-replay-admission",
     "verified-replay-admission-transcript",
+        "verified-backend-transcript-aggregation",
+        "verified-ability-helper-predicates",
+        "verified-core-structural-validators",
+        "verified-compact-token-codec-structure",
+        "verified-proof-traversal-orchestration",
     "opaque-caveat-policy-evaluation",
 }
 GENERIC_PRODUCTION_CLAIM = re.compile(r"\bproduction[- ]supported\b", re.IGNORECASE)

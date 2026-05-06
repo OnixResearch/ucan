@@ -38,6 +38,7 @@ This document records the current verified-logic bridge boundaries after the UCA
 - `web_of_trust_principal_digest`, `web_of_trust_principal_digest_is_valid`, and `web_of_trust_ucan_authorization` expose vendored finite WOT principal digest/admission and UCAN authorizer helpers over caller-supplied root/trust/caveat/revocation/identity facts; they do not perform DID/CID decoding, compact-token verification, cryptographic verification, proof fetching, key lookup, revocation-backend checks, trust-store discovery, caveat policy evaluation, storage/network access, persistence, replay protection, or ambient clock reads.
 
 These helpers do not fetch evidence, resolve DIDs, sign, persist data, consult registries, provide replay protection, install default caveat policies, or read ambient clocks.
+- The `verified-proof-traversal-orchestration`, `verified-compact-token-codec-structure`, `verified-core-structural-validators`, `verified-ability-helper-predicates`, and `verified-backend-transcript-aggregation` readiness surfaces summarize existing live-path bridges; they remain finite structural/transcript claims and do not promote parser, codec, crypto, backend, storage, or consumer-policy truth into verified logic.
 
 ## Shell-local boundaries retained intentionally
 

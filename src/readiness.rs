@@ -128,6 +128,36 @@ const SURFACES: &[ReadinessSurface] = &[
         boundary: "nonce uniqueness truth, request identity provenance, durable replay storage, crash consistency, backend freshness, and consumer envelope semantics are application-owned",
     },
     ReadinessSurface {
+        id: "verified-proof-traversal-orchestration",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "Proof traversal budget, cycle/visited-reference, proof-link, and effective-delegation transcript facts are routed through vendored verified finite traversal predicates before delegated authorization is accepted",
+        boundary: "proof-store truth, parser output, signature checks, revocation freshness, backend provenance, and runtime recursion remain caller/runtime-owned boundaries",
+    },
+    ReadinessSurface {
+        id: "verified-compact-token-codec-structure",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "Compact segment framing, exact signing-input/compact reconstruction, base64url segment admission, and decoded JSON object-envelope index discovery route through vendored verified structural predicates",
+        boundary: "base64url decoding, serde JSON semantics, duplicate-key behavior, canonicalization, UTF-8/string handling, and Ed25519 correctness remain runtime boundaries",
+    },
+    ReadinessSurface {
+        id: "verified-core-structural-validators",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "DID claim shape, required-claim presence, temporal order, proof-reference/capability/caveat list bounds, and parsed caveat payload shape route through vendored verified finite validators",
+        boundary: "serde extraction truth, runtime parser behavior, DID method semantics, clock truth, proof/backend truth, and consumer caveat policy remain outside the structural claim",
+    },
+    ReadinessSurface {
+        id: "verified-ability-helper-predicates",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "VerifiedCapability wildcard-segment and concrete-ability helpers route full-segment wildcard classification through vendored verified ability predicates",
+        boundary: "consumer-specific resource/action/session policy and mapping for Aspen, Clankers, or other integrations remain downstream-owned",
+    },
+    ReadinessSurface {
+        id: "verified-backend-transcript-aggregation",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "Key-resolution, proof-load, revocation-check, and replay-admission backend operation facts route through vendored verified transcript aggregation with first-failure semantics",
+        boundary: "actual key material, proof bytes, registry state, nonce-store freshness, storage durability, network availability, and backend authorization semantics are caller-owned",
+    },
+    ReadinessSurface {
         id: "opaque-caveat-policy-evaluation",
         level: SupportLevel::ControlledIntegrationReady,
         evidence: "CaveatPolicySet requires every caveat to have an explicit policy; missing or rejected policies deny authorization",

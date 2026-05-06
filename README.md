@@ -166,3 +166,5 @@ That script imports the committed `HEAD` revision from `../verified-logic`, igno
 ```bash
 verus verus/example_spec.rs
 ```
+
+Verified replay-admission transcript aggregation now gates `verify_invocation_with_replay` replay outcomes before allowing or denying replay-aware invocations; nonce-store truth and durability remain caller-owned. The remaining verified follow-up surfaces now cover proof traversal orchestration, compact-token codec structure, core structural validators, ability helper predicates, and backend transcript aggregation without expanding the claim to parser, crypto, backend, storage, or consumer-policy truth.

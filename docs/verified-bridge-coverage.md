@@ -86,7 +86,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `proof_reference_collection_is_valid` | `live-path` | `src/token.rs` reference |
 | `proof_reference_digest_is_valid` | `live-path` | `src/token.rs` reference |
 | `proof_store_result_is_valid` | `live-path` | `src/token.rs` reference |
-| `proof_traversal_transcript_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
+| `proof_traversal_transcript_is_valid` | `live-path` | `src/token.rs` proof-chain transcript emission and public export |
 | `receipt_execution_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `revocation_check_is_valid` | `live-path` | `src/token.rs` reference |
 | `revocation_reference_is_listed` | `live-path` | `src/token.rs` reference |
@@ -122,7 +122,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | Vendored module | Class | Notes |
 | --- | --- | --- |
 | `ucan_ability` | `live-path` | Imported by `src/verified.rs`; associated ability containment facts are routed by live attenuation/proof-link checks, and `VerifiedCapability::{has_wildcard_segment,is_concrete}` now route wildcard/concrete admission through this module. |
-| `ucan_backend_transcript` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
+| `ucan_backend_transcript` | `live-path` | Imported by `src/verified.rs`; live key-resolution/proof-load/revocation/replay backend facts route through transcript aggregation helpers. |
 | `ucan_base64url` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_capability_merge` | `public-helper` | Imported by `src/verified.rs` for explicit caller-supplied WOT helper APIs, not a live compact-token verifier guarantee by itself. |
 | `ucan_caveat` | `live-path` | Imported by `src/verified.rs`; live typed caveat payload-shape admission and satisfaction route through this module for the finite supported time/rate vocabulary. |

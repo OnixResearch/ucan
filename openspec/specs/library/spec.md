@@ -1321,3 +1321,122 @@ The library MUST route replay-admission outcome aggregation through a vendored v
 - GIVEN a replay-admission transcript admitted by verified logic
 - WHEN a consumer relies on nonce uniqueness, request identity, wall-clock freshness, crash recovery, or durable storage behavior
 - THEN the library MUST continue to document those facts as caller-owned runtime boundaries outside the verified replay transcript claim
+
+### Requirement: Verified proof traversal orchestration [r[library.verified-proof-traversal-orchestration]]
+The library MUST route proof traversal summaries through vendored verified-logic predicates for structural budgets, cycle rejection, proof-link shape, and effective-delegation provenance before accepting delegated authorization.
+
+#### Scenario: Traversal budget facts are verified [r[library.verified-proof-traversal-orchestration.scenario.budgets]]
+- GIVEN a proof-chain verification request with configured max depth, max proof count, and compact-token byte limits
+- WHEN the shell traverses proof references supplied by the proof store
+- THEN it MUST route depth/count/input-size admission facts through verified logic before accepting the traversal
+- AND traversal MUST fail closed when a configured budget is exceeded
+
+#### Scenario: Cycle and duplicate proof references are rejected [r[library.verified-proof-traversal-orchestration.scenario.cycles]]
+- GIVEN a proof traversal transcript containing visited proof references
+- WHEN the shell detects a cycle or duplicate traversal edge that would revisit a proof reference
+- THEN the shell MUST route the visited-reference facts through a verified structural predicate
+- AND the traversal MUST be denied rather than reporting an effective delegation
+
+#### Scenario: Effective delegation comes only from accepted chain [r[library.verified-proof-traversal-orchestration.scenario.effective-delegation-provenance]]
+- GIVEN a candidate effective delegation produced after parent proof traversal
+- WHEN the shell reports the delegated capability as authorized
+- THEN the shell MUST verify that the candidate was derived from an accepted traversal transcript whose links, temporal narrowing, and capability attenuation facts were admitted
+- AND a failed traversal stage MUST prevent effective delegation from being reported
+
+#### Scenario: Traversal verification keeps backend truth outside the claim [r[library.verified-proof-traversal-orchestration.scenario.boundary-limits]]
+- GIVEN a proof traversal transcript admitted by verified logic
+- WHEN a consumer relies on proof bytes, proof-store responses, token parser output, signature checks, revocation freshness, or backend provenance
+- THEN the library MUST continue to document those facts as runtime or caller-owned boundaries outside the traversal-orchestration claim
+
+### Requirement: Verified compact token codec structure [r[library.verified-compact-token-codec-structure]]
+The library MUST route compact-token segment structure, signing-input reconstruction, compact reconstruction, and decoded JSON object-envelope index discovery through vendored verified-logic predicates before accepting structural compact-token parsing.
+
+#### Scenario: Compact token segment structure is exact [r[library.verified-compact-token-codec-structure.scenario.segment-structure]]
+- GIVEN a compact token string split by the shell
+- WHEN the shell decides whether the compact framing is structurally admissible
+- THEN it MUST verify that the token has exactly header, payload, and signature segments
+- AND each accepted segment MUST be separator-free within the verified compact-framing predicate
+
+#### Scenario: Signing input provenance is verified [r[library.verified-compact-token-codec-structure.scenario.signing-input]]
+- GIVEN encoded header, payload, and signature segments
+- WHEN the shell constructs the signing input and compact reconstruction
+- THEN it MUST route the facts that signing input equals `header.payload` and compact token equals `header.payload.signature` through verified logic
+- AND signature verification MUST use only the admitted signing-input bytes
+
+#### Scenario: JSON object envelope index discovery is verified [r[library.verified-compact-token-codec-structure.scenario.json-envelope-indexes]]
+- GIVEN decoded header or payload bytes after runtime base64url decoding
+- WHEN the shell discovers the first and last significant JSON bytes for object-envelope admission
+- THEN the index discovery and object-envelope admission SHOULD move into a verified helper rather than relying on shell-supplied indexes
+- AND malformed or non-object decoded payloads MUST fail closed before serde-derived claims are accepted
+
+#### Scenario: Codec structure keeps codecs and parsers outside the claim [r[library.verified-compact-token-codec-structure.scenario.boundary-limits]]
+- GIVEN compact-token structural facts admitted by verified logic
+- WHEN the shell relies on base64url decoding, JSON parsing, duplicate-key behavior, canonicalization, UTF-8/string handling, or Ed25519 verification
+- THEN the library MUST continue to document those facts as runtime trust boundaries outside the compact-token structure claim
+
+### Requirement: Verified core structural validators [r[library.verified-core-structural-validators]]
+The library MUST provide verified-logic mirrors or bridge predicates for deterministic `ucan-core` structural validators that admit DID claim shape, capability/proof/caveat list bounds, required temporal fields, and temporal ordering.
+
+#### Scenario: DID and required-claim shape is verified [r[library.verified-core-structural-validators.scenario.did-and-required-claims]]
+- GIVEN decoded issuer and audience claim strings plus required claim-presence facts
+- WHEN core structural validation admits those claims
+- THEN the library MUST route present, non-empty, trimmed, and required-field facts through verified logic
+- AND invalid claim shape MUST fail closed before constructing accepted core claims
+
+#### Scenario: List and proof-reference bounds are verified [r[library.verified-core-structural-validators.scenario.list-and-proof-bounds]]
+- GIVEN decoded capability, caveat, and proof-reference collections
+- WHEN core validation enforces count, emptiness, and encoded-input bounds
+- THEN the library MUST route those finite collection-shape facts through verified logic
+- AND over-limit or malformed collections MUST fail closed before proof traversal or authorization
+
+#### Scenario: Temporal order admission is verified [r[library.verified-core-structural-validators.scenario.temporal-order]]
+- GIVEN decoded `nbf` and `exp` values and required-field presence facts
+- WHEN core validation checks temporal order
+- THEN the library MUST route `nbf < exp` and required-field admission through verified logic
+- AND wall-clock freshness and clock-source correctness MUST remain outside that structural claim
+
+#### Scenario: Core validator verification preserves no_std boundary [r[library.verified-core-structural-validators.scenario.no-std-boundary]]
+- GIVEN verified mirrors for core structural validators
+- WHEN the repository verifies and tests the core crate
+- THEN `ucan-core` MUST remain `#![no_std]`
+- AND verified mirrors MUST NOT introduce filesystem, network, clock, allocator, or consumer-specific dependencies into the core crate
+
+### Requirement: Verified ability helper predicates [r[library.verified-ability-helper-predicates]]
+The library MUST route wildcard-segment detection and concrete ability classification through vendored verified-logic helpers when those facts affect public validated wrappers or authorization helper behavior.
+
+#### Scenario: Wildcard segment detection is verified [r[library.verified-ability-helper-predicates.scenario.wildcard-segment]]
+- GIVEN an ability path represented as finite path segments
+- WHEN the shell or a public helper classifies whether the ability contains a wildcard segment
+- THEN the classification MUST route through a verified ability helper predicate
+- AND only a full `*` segment MUST be treated as a wildcard segment
+
+#### Scenario: Concrete ability classification is verified [r[library.verified-ability-helper-predicates.scenario.concrete-ability]]
+- GIVEN an ability path used for invocation or consumer adapter mapping
+- WHEN the library classifies the ability as concrete rather than wildcard-containing
+- THEN the classification MUST route through a verified helper
+- AND malformed wildcard substrings inside non-wildcard segments MUST NOT be treated as valid wildcard segments
+
+#### Scenario: Ability helpers keep consumer policy outside the claim [r[library.verified-ability-helper-predicates.scenario.boundary-limits]]
+- GIVEN ability-helper facts admitted by verified logic
+- WHEN Aspen, Clankers, or another consumer maps UCAN abilities into local authorization policy
+- THEN the library MUST document that consumer-specific resource/action/session semantics remain outside the verified helper claim and outside the `ucan` crate
+
+### Requirement: Verified backend transcript aggregation [r[library.verified-backend-transcript-aggregation]]
+The library MUST route backend-operation transcript aggregation through vendored verified-logic predicates before accepting verification stages that depend on caller-injected key resolution, proof loading, revocation checking, or replay admission.
+
+#### Scenario: Backend success transcript admits dependent stages [r[library.verified-backend-transcript-aggregation.scenario.success]]
+- GIVEN key-resolution, proof-load, revocation-check, and replay-admission operation facts emitted by the shell around caller-injected hooks
+- WHEN all required backend operation facts report success for the requested verification path
+- THEN the shell MUST route the transcript through verified logic before accepting the dependent verification or invocation stage
+- AND accepted backend transcript facts MUST be recorded without embedding backend payloads or secrets
+
+#### Scenario: First backend failure wins [r[library.verified-backend-transcript-aggregation.scenario.first-failure]]
+- GIVEN a backend transcript containing one or more missing, unsupported, malformed, stale, denied, duplicate, or backend-error outcomes
+- WHEN the shell maps the transcript into structured verification or invocation errors
+- THEN the first failed backend stage in documented order MUST determine the structured error class
+- AND later success facts MUST NOT override an earlier failed backend stage
+
+#### Scenario: Backend aggregation keeps backend truth outside the claim [r[library.verified-backend-transcript-aggregation.scenario.boundary-limits]]
+- GIVEN backend transcript aggregation accepted by verified logic
+- WHEN a consumer relies on actual key material, proof bytes, revocation registry state, nonce-store freshness, storage durability, network availability, or backend authorization semantics
+- THEN the library MUST continue to document those facts as caller-owned runtime boundaries outside the backend transcript aggregation claim
