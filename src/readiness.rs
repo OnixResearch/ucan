@@ -122,6 +122,12 @@ const SURFACES: &[ReadinessSurface] = &[
         boundary: "durable replay detection, crash recovery, backend corruption handling, and cross-process freshness are application-owned",
     },
     ReadinessSurface {
+        id: "verified-replay-admission-transcript",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "ReplayAdmission outcomes are routed through a vendored verified finite transcript that accepts only allowed outcomes and reports the first duplicate, stale, malformed, denied, backend, or unknown failure",
+        boundary: "nonce uniqueness truth, request identity provenance, durable replay storage, crash consistency, backend freshness, and consumer envelope semantics are application-owned",
+    },
+    ReadinessSurface {
         id: "opaque-caveat-policy-evaluation",
         level: SupportLevel::ControlledIntegrationReady,
         evidence: "CaveatPolicySet requires every caveat to have an explicit policy; missing or rejected policies deny authorization",

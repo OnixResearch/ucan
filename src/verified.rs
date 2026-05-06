@@ -26,6 +26,7 @@ use verified_logic::ucan_proof_reference_collection;
 use verified_logic::ucan_proof_reference_list_shape;
 use verified_logic::ucan_proof_store_result;
 use verified_logic::ucan_proof_traversal;
+use verified_logic::ucan_replay_admission;
 use verified_logic::ucan_revocation;
 use verified_logic::ucan_revocation_check;
 use verified_logic::ucan_signature;
@@ -117,6 +118,7 @@ pub enum TokenValidationFailure {
     InvalidCaveatPayloadAdmission,
     InvalidProofStoreResultTranscript,
     InvalidRevocationCheckTranscript,
+    InvalidReplayAdmissionTranscript,
     InvalidSigningInputProvenance,
     InvalidVerificationStageFlow,
     InvalidSignature,
@@ -143,6 +145,7 @@ impl fmt::Display for TokenValidationFailure {
             Self::InvalidCaveatPayloadAdmission => formatter.write_str("parsed caveat payload admission is invalid"),
             Self::InvalidProofStoreResultTranscript => formatter.write_str("proof-store result transcript is invalid"),
             Self::InvalidRevocationCheckTranscript => formatter.write_str("revocation-check transcript is invalid"),
+            Self::InvalidReplayAdmissionTranscript => formatter.write_str("replay-admission transcript is invalid"),
             Self::InvalidSigningInputProvenance => formatter.write_str("signing input byte provenance is invalid"),
             Self::InvalidVerificationStageFlow => formatter.write_str("verification stage flow is invalid"),
             Self::InvalidSignature => formatter.write_str("signature must verify"),
@@ -303,6 +306,62 @@ pub struct VerifiedRevocationCheckFact {
     pub reference_non_empty: bool,
     pub backend_succeeded: bool,
     pub not_revoked: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifiedReplayAdmissionOutcome {
+    Allowed,
+    Duplicate,
+    Stale,
+    Malformed,
+    Denied,
+    Backend,
+    Accepted,
+    Unknown { outcome: u8 },
+}
+
+impl VerifiedReplayAdmissionOutcome {
+    const fn to_verified_logic(self) -> u8 {
+        match self {
+            Self::Allowed => ucan_replay_admission::REPLAY_ALLOWED,
+            Self::Duplicate => ucan_replay_admission::REPLAY_DUPLICATE,
+            Self::Stale => ucan_replay_admission::REPLAY_STALE,
+            Self::Malformed => ucan_replay_admission::REPLAY_MALFORMED,
+            Self::Denied => ucan_replay_admission::REPLAY_DENIED,
+            Self::Backend => ucan_replay_admission::REPLAY_BACKEND,
+            Self::Accepted => ucan_replay_admission::REPLAY_ACCEPTED,
+            Self::Unknown { outcome } => outcome,
+        }
+    }
+
+    const fn from_verified_logic(outcome: u8) -> Self {
+        match outcome {
+            ucan_replay_admission::REPLAY_ALLOWED => Self::Allowed,
+            ucan_replay_admission::REPLAY_DUPLICATE => Self::Duplicate,
+            ucan_replay_admission::REPLAY_STALE => Self::Stale,
+            ucan_replay_admission::REPLAY_MALFORMED => Self::Malformed,
+            ucan_replay_admission::REPLAY_DENIED => Self::Denied,
+            ucan_replay_admission::REPLAY_BACKEND => Self::Backend,
+            ucan_replay_admission::REPLAY_ACCEPTED => Self::Accepted,
+            outcome => Self::Unknown { outcome },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedReplayAdmissionFact {
+    pub outcome: VerifiedReplayAdmissionOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedReplayAdmissionTranscript {
+    pub facts: Vec<VerifiedReplayAdmissionFact>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedReplayAdmissionTranscriptOutcome {
+    pub accepted: bool,
+    pub first_failed_outcome: VerifiedReplayAdmissionOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1086,6 +1145,54 @@ pub fn revocation_check_is_valid(fact: VerifiedRevocationCheckFact) -> bool {
         backend_succeeded: fact.backend_succeeded,
         not_revoked: fact.not_revoked,
     })
+}
+
+const fn to_replay_admission_fact(fact: VerifiedReplayAdmissionFact) -> ucan_replay_admission::ReplayAdmissionFact {
+    ucan_replay_admission::ReplayAdmissionFact {
+        outcome: fact.outcome.to_verified_logic(),
+    }
+}
+
+fn to_replay_admission_transcript(
+    transcript: &VerifiedReplayAdmissionTranscript,
+) -> ucan_replay_admission::ReplayAdmissionTranscript {
+    ucan_replay_admission::ReplayAdmissionTranscript {
+        facts: transcript.facts.iter().copied().map(to_replay_admission_fact).collect(),
+    }
+}
+
+/// Evaluate a finite replay-admission transcript through vendored verified logic.
+///
+/// This bridge consumes only caller/shell-supplied replay admission outcomes. It
+/// proves first-failure, fail-closed aggregation over the finite transcript. It
+/// does not prove nonce uniqueness truth, request identity provenance, durable
+/// replay storage, crash consistency, backend freshness, parser behavior,
+/// consumer envelope semantics, or clock correctness.
+#[must_use]
+pub fn replay_admission_transcript_outcome(
+    transcript: &VerifiedReplayAdmissionTranscript,
+) -> VerifiedReplayAdmissionTranscriptOutcome {
+    let transcript = to_replay_admission_transcript(transcript);
+    VerifiedReplayAdmissionTranscriptOutcome {
+        accepted: ucan_replay_admission::replay_admission_transcript_accepts(&transcript),
+        first_failed_outcome: VerifiedReplayAdmissionOutcome::from_verified_logic(
+            ucan_replay_admission::first_failed_replay_admission(&transcript),
+        ),
+    }
+}
+
+/// Return true exactly when the replay-admission transcript accepts.
+#[must_use]
+pub fn replay_admission_transcript_accepts(transcript: &VerifiedReplayAdmissionTranscript) -> bool {
+    replay_admission_transcript_outcome(transcript).accepted
+}
+
+/// Return the first failed replay-admission class, or accepted when no failure exists.
+#[must_use]
+pub fn replay_admission_transcript_first_failed_outcome(
+    transcript: &VerifiedReplayAdmissionTranscript,
+) -> VerifiedReplayAdmissionOutcome {
+    replay_admission_transcript_outcome(transcript).first_failed_outcome
 }
 
 /// Validate signing input byte provenance from already-encoded compact parts.
@@ -2091,6 +2198,9 @@ mod tests {
     use super::VerifiedProofTraversalEntry;
     use super::VerifiedProofTraversalTarget;
     use super::VerifiedProofTraversalTranscript;
+    use super::VerifiedReplayAdmissionFact;
+    use super::VerifiedReplayAdmissionOutcome;
+    use super::VerifiedReplayAdmissionTranscript;
     use super::VerifiedVerificationStage;
     use super::VerifiedVerificationStageTranscript;
     use super::VerifiedWebOfTrustAttestation;
@@ -2126,6 +2236,8 @@ mod tests {
     use super::proof_traversal_dag_transcript_is_valid;
     use super::proof_traversal_transcript_is_valid;
     use super::receipt_execution_is_valid;
+    use super::replay_admission_transcript_accepts;
+    use super::replay_admission_transcript_first_failed_outcome;
     use super::revocation_reference_is_listed;
     use super::sign_ed25519;
     use super::signer_algorithm_is_valid;
@@ -2217,6 +2329,39 @@ mod tests {
 
         assert!(!backend_transcript_accepts(&transcript));
         assert_eq!(backend_transcript_first_failed_operation(&transcript), Some(VerifiedBackendOperation::ProofLoad));
+    }
+
+    #[test]
+    fn replay_admission_transcript_accepts_allowed_fact() {
+        let transcript = VerifiedReplayAdmissionTranscript {
+            facts: vec![VerifiedReplayAdmissionFact {
+                outcome: VerifiedReplayAdmissionOutcome::Allowed,
+            }],
+        };
+
+        assert!(replay_admission_transcript_accepts(&transcript));
+        assert_eq!(
+            replay_admission_transcript_first_failed_outcome(&transcript),
+            VerifiedReplayAdmissionOutcome::Accepted
+        );
+    }
+
+    #[test]
+    fn replay_admission_transcript_is_fail_closed() {
+        for outcome in [
+            VerifiedReplayAdmissionOutcome::Duplicate,
+            VerifiedReplayAdmissionOutcome::Stale,
+            VerifiedReplayAdmissionOutcome::Malformed,
+            VerifiedReplayAdmissionOutcome::Denied,
+            VerifiedReplayAdmissionOutcome::Backend,
+            VerifiedReplayAdmissionOutcome::Unknown { outcome: 42 },
+        ] {
+            let transcript = VerifiedReplayAdmissionTranscript {
+                facts: vec![VerifiedReplayAdmissionFact { outcome }],
+            };
+            assert!(!replay_admission_transcript_accepts(&transcript));
+            assert_eq!(replay_admission_transcript_first_failed_outcome(&transcript), outcome);
+        }
     }
 
     #[test]

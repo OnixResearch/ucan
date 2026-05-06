@@ -31,6 +31,7 @@ REQUIRED_CONTROLLED = {
     "caller-supplied-revocation",
     "generic-consumer-integration-hooks",
     "caller-supplied-replay-admission",
+    "verified-replay-admission-transcript",
     "opaque-caveat-policy-evaluation",
 }
 GENERIC_PRODUCTION_CLAIM = re.compile(r"\bproduction[- ]supported\b", re.IGNORECASE)

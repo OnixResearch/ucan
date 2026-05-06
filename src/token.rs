@@ -48,6 +48,9 @@ use crate::verified::VerifiedProofTraversalBudget;
 use crate::verified::VerifiedProofTraversalDagTranscript;
 use crate::verified::VerifiedProofTraversalEntry;
 use crate::verified::VerifiedProofTraversalTarget;
+use crate::verified::VerifiedReplayAdmissionFact;
+use crate::verified::VerifiedReplayAdmissionOutcome;
+use crate::verified::VerifiedReplayAdmissionTranscript;
 use crate::verified::VerifiedRevocationCheckFact;
 use crate::verified::VerifiedSigningInputByteProvenance;
 use crate::verified::VerifiedVerificationStage;
@@ -80,6 +83,7 @@ use crate::verified::proof_reference_collection_is_valid;
 use crate::verified::proof_reference_digest_is_valid;
 use crate::verified::proof_store_result_is_valid;
 use crate::verified::proof_traversal_dag_transcript_is_valid;
+use crate::verified::replay_admission_transcript_outcome;
 use crate::verified::revocation_check_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
@@ -1191,12 +1195,62 @@ where A: ReplayAdmission + ?Sized {
     }
     let token_reference = proof_reference_for_token(request.token());
     match replay.admit_invocation(&token_reference, request.resource(), request.ability()) {
-        Ok(()) => result,
-        Err(error) => InvocationResult::Denied {
+        Ok(()) => verified_replay_invocation_result(result),
+        Err(error) => verified_replay_denial(&error),
+    }
+}
+
+fn verified_replay_invocation_result(result: InvocationResult) -> InvocationResult {
+    let transcript = replay_admission_transcript(VerifiedReplayAdmissionOutcome::Allowed);
+    let outcome = replay_admission_transcript_outcome(&transcript);
+    if outcome.accepted && outcome.first_failed_outcome == VerifiedReplayAdmissionOutcome::Accepted {
+        result
+    } else {
+        InvocationResult::Denied {
             reason: InvocationDenialReason::Replay {
-                message: error.to_string(),
+                message: VerifiedPrimitiveError::TokenValidation {
+                    failure: TokenValidationFailure::InvalidReplayAdmissionTranscript,
+                }
+                .to_string(),
             },
+        }
+    }
+}
+
+fn verified_replay_denial(error: &ReplayAdmissionError) -> InvocationResult {
+    let expected = replay_error_outcome(error);
+    let transcript = replay_admission_transcript(expected);
+    let outcome = replay_admission_transcript_outcome(&transcript);
+    if outcome.accepted || outcome.first_failed_outcome != expected {
+        return InvocationResult::Denied {
+            reason: InvocationDenialReason::Replay {
+                message: VerifiedPrimitiveError::TokenValidation {
+                    failure: TokenValidationFailure::InvalidReplayAdmissionTranscript,
+                }
+                .to_string(),
+            },
+        };
+    }
+    InvocationResult::Denied {
+        reason: InvocationDenialReason::Replay {
+            message: error.to_string(),
         },
+    }
+}
+
+fn replay_admission_transcript(outcome: VerifiedReplayAdmissionOutcome) -> VerifiedReplayAdmissionTranscript {
+    VerifiedReplayAdmissionTranscript {
+        facts: vec![VerifiedReplayAdmissionFact { outcome }],
+    }
+}
+
+const fn replay_error_outcome(error: &ReplayAdmissionError) -> VerifiedReplayAdmissionOutcome {
+    match error {
+        ReplayAdmissionError::Duplicate { .. } => VerifiedReplayAdmissionOutcome::Duplicate,
+        ReplayAdmissionError::Stale { .. } => VerifiedReplayAdmissionOutcome::Stale,
+        ReplayAdmissionError::Malformed { .. } => VerifiedReplayAdmissionOutcome::Malformed,
+        ReplayAdmissionError::Denied { .. } => VerifiedReplayAdmissionOutcome::Denied,
+        ReplayAdmissionError::Backend { .. } => VerifiedReplayAdmissionOutcome::Backend,
     }
 }
 
@@ -3150,6 +3204,7 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
             | TokenValidationFailure::InvalidCaveatPayloadAdmission
             | TokenValidationFailure::InvalidProofStoreResultTranscript
             | TokenValidationFailure::InvalidRevocationCheckTranscript
+            | TokenValidationFailure::InvalidReplayAdmissionTranscript
             | TokenValidationFailure::InvalidSigningInputProvenance
             | TokenValidationFailure::InvalidVerificationStageFlow => TokenError::VerifiedPrimitive {
                 source: VerifiedPrimitiveError::TokenValidation { failure },

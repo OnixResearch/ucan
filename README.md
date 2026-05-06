@@ -129,7 +129,7 @@ This crate is **controlled-integration ready**, not a turnkey production UCAN pl
 - Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
 - Proof-loading model: caller-supplied proof tokens only; the library does not fetch proofs from storage or the network.
 - Revocation model: caller-supplied `RevocationChecker` values can deny the leaf token or any proof-chain token by `ProofReference`; revocation registries, credential formats, replay stores, persistence, and remote fetches remain application-owned.
-- Replay model: caller-supplied `ReplayAdmission` values can admit or deny a verified invocation after caveat/policy authorization; durable nonce stores, crash recovery, duplicate semantics, and backend freshness remain application-owned.
+- Replay model: caller-supplied `ReplayAdmission` values can admit or deny a verified invocation after caveat/policy authorization; the finite replay outcome transcript is routed through vendored verified logic for allow/duplicate/stale/malformed/denied/backend fail-closed shape, while durable nonce stores, request identity provenance, crash recovery, duplicate semantics, and backend freshness remain application-owned.
 - Out-of-scope UCAN features in this release: remote DID resolution, network proof fetching, storage layers, caveat-specific attenuation rules beyond caller policy evaluation, registry-backed revocation, replay stores, and non-Ed25519 key types.
 
 ## Development

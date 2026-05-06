@@ -880,10 +880,13 @@ pub mod ucan_proof_reference_list_shape;
 pub mod ucan_proof_store_result;
 /// Verified UCAN proof traversal transcript primitives.
 pub mod ucan_proof_traversal;
+/// Verified UCAN replay-admission transcript admission.
+pub mod ucan_replay_admission;
 /// Verified UCAN revocation set checking and monotonicity.
 pub mod ucan_revocation;
 /// Verified UCAN revocation-check admission.
 pub mod ucan_revocation_check;
+/// Verified UCAN Ed25519 signature model and structural byte admission.
 pub mod ucan_signature;
 /// Verified UCAN time-bounded delegation composition.
 pub mod ucan_temporal;
