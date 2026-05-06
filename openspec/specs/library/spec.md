@@ -4,41 +4,21 @@
 TBD - created by archiving change make-ucan-library-usable. Update Purpose after archive.
 ## Requirements
 ### Requirement: End-to-end token round-trip
-The library MUST parse compact UCAN tokens only when compact framing, decoded JSON object envelopes, parsed header fields, parsed required-claims presence, including proof-list presence, and parsed temporal ordering are admitted before structural claim validation continues.
 
-#### Scenario: Parsed required claims presence uses verified bridge [r[library.compact-token.scenario.parsed-claims-presence-admission]]
-- GIVEN serde-decoded UCAN payload claims with optional issuer, audience, attenuation, proof-list, expiration, and not-before fields
-- WHEN the shell validates the decoded token
-- THEN it MUST route the parsed field-presence facts through a vendored verified parsed-claims-presence bridge before constructing core claim input
-- AND missing issuer, audience, attenuation, proof-list, expiration, or not-before presence MUST reject instead of authorizing the token
+The library MUST verify live token-verification stage-flow transcripts so emitted stage facts appear in the documented order and the first failed stage determines the structured verification failure before authorization returns.
 
-#### Scenario: Parsed claims presence keeps parser semantics outside the verified claim [r[library.compact-token.scenario.parsed-claims-presence-boundary-limits]]
-- GIVEN parsed claims presence facts admitted by the verified predicate
-- WHEN the shell continues into core claims, capability, proof, temporal, or signature validation
-- THEN the library MUST continue to document serde parsing, duplicate-key handling, field extraction correctness, string validation, capability parsing, proof-reference decoding, temporal ordering, signing-input construction, cryptography, and token provenance as outside the parsed-presence admission claim
+#### Scenario: Live verification flow uses verified stage bridge [r[library.compact-token.scenario.verification-stage-token-flow-admission]]
 
-#### Scenario: Parsed proof-list presence uses verified bridge [r[library.compact-token.scenario.parsed-proof-list-presence-admission]]
-- GIVEN serde-decoded UCAN payload claims with optional proof-list field `prf`
-- WHEN the shell validates the decoded token
-- THEN it MUST route proof-list presence together with the other required parsed claim presence facts through a vendored verified parsed-claims-presence bridge before constructing core claim input
-- AND a missing proof-list field MUST reject instead of authorizing the token
-- AND a present empty proof-list field MAY continue into structural validation
+- GIVEN a compact-token verification attempt that emits parse, structural, key, signature, proof/backend, revocation, and authorization stage facts
+- WHEN the shell decides the final verification result
+- THEN it MUST route ordered stage facts and first-failure facts through a vendored verified stage-flow bridge
+- AND a failed earlier stage MUST prevent later success from authorizing the token
 
-#### Scenario: Parsed proof-list presence keeps proof semantics outside the verified claim [r[library.compact-token.scenario.parsed-proof-list-presence-boundary-limits]]
-- GIVEN parsed proof-list presence facts admitted by the verified predicate
-- WHEN the shell continues into proof-reference decoding, proof traversal, backend resolution, revocation, temporal, or signature validation
-- THEN the library MUST continue to document proof-reference string decoding, base64url decoding, BLAKE3 proof-reference derivation, proof-store/resolver/revocation truth and freshness, signing-input construction, cryptography, and token provenance as outside the parsed-presence admission claim
+#### Scenario: Stage-flow admission keeps stage truth outside the verified claim [r[library.compact-token.scenario.verification-stage-token-flow-boundary-limits]]
 
-#### Scenario: Parsed temporal order uses verified bridge [r[library.compact-token.scenario.parsed-temporal-order-admission]]
-- GIVEN serde-decoded UCAN payload claims with present numeric `nbf` and `exp` values
-- WHEN the shell validates the decoded token
-- THEN it MUST route the parsed timestamp order fact through a vendored verified temporal-order bridge before constructing core claim input
-- AND `nbf >= exp` MUST reject instead of authorizing the token
-
-#### Scenario: Parsed temporal order keeps runtime time semantics outside the verified claim [r[library.compact-token.scenario.parsed-temporal-order-boundary-limits]]
-- GIVEN parsed timestamp order facts admitted by the verified predicate
-- WHEN the shell continues into current-time validation, proof traversal, backend resolution, revocation, or signature validation
-- THEN the library MUST continue to document JSON parsing, numeric deserialization, duplicate-key handling, wall-clock freshness, clock source correctness, expiration-at-now policy, proof/backend truth, signing-input construction, cryptography, and token provenance as outside the parsed-temporal-order admission claim
+- GIVEN verification stage-flow facts admitted by the verified predicate
+- WHEN the shell relies on parser, crypto, backend, revocation, or authorization checks
+- THEN the library MUST continue to document the truth of parser outputs, cryptographic verification, backend answers, revocation freshness, proof material provenance, caveat policies, and token provenance as outside the stage-flow admission claim
 
 ### Requirement: did:key Ed25519 issuance and verification
 

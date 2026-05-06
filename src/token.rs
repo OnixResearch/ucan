@@ -28,15 +28,27 @@ use crate::verified::VerifiedCaveatPreservation;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedJsonObjectBytes;
+use crate::verified::VerifiedParsedCapabilityListShape;
+use crate::verified::VerifiedParsedCapabilityShape;
+use crate::verified::VerifiedParsedCaveatListShape;
+use crate::verified::VerifiedParsedCaveatShape;
 use crate::verified::VerifiedParsedClaimsPresence;
 use crate::verified::VerifiedParsedHeader;
+use crate::verified::VerifiedParsedProofReferenceEntryShape;
+use crate::verified::VerifiedParsedProofReferenceListShape;
 use crate::verified::VerifiedParsedTemporalOrder;
 use crate::verified::VerifiedPrimitiveError;
+use crate::verified::VerifiedProofReferenceCollection;
 use crate::verified::VerifiedProofReferenceDigest;
+use crate::verified::VerifiedProofStoreResultFact;
 use crate::verified::VerifiedProofTraversalBudget;
 use crate::verified::VerifiedProofTraversalDagTranscript;
 use crate::verified::VerifiedProofTraversalEntry;
 use crate::verified::VerifiedProofTraversalTarget;
+use crate::verified::VerifiedRevocationCheckFact;
+use crate::verified::VerifiedSigningInputByteProvenance;
+use crate::verified::VerifiedVerificationStage;
+use crate::verified::VerifiedVerificationStageTranscript;
 use crate::verified::VerifiedWebOfTrustCaveat;
 use crate::verified::VerifiedWebOfTrustCaveatContext;
 use crate::verified::backend_transcript_accepts;
@@ -52,17 +64,25 @@ use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
 use crate::verified::json_object_bytes_are_valid;
+use crate::verified::parsed_capability_list_shape_is_valid;
+use crate::verified::parsed_caveat_list_shape_is_valid;
 use crate::verified::parsed_claims_presence_is_valid;
 use crate::verified::parsed_header_is_valid;
+use crate::verified::parsed_proof_reference_list_shape_is_valid;
 use crate::verified::parsed_temporal_order_is_valid;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
+use crate::verified::proof_reference_collection_is_valid;
 use crate::verified::proof_reference_digest_is_valid;
+use crate::verified::proof_store_result_is_valid;
 use crate::verified::proof_traversal_dag_transcript_is_valid;
+use crate::verified::revocation_check_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
+use crate::verified::signing_input_byte_provenance_is_valid;
 use crate::verified::typed_caveat_is_satisfied;
 use crate::verified::validate_token_envelope;
+use crate::verified::verification_stage_transcript_outcome;
 use crate::verified::verify_ed25519_signature;
 
 const COMPACT_TOKEN_PART_COUNT: usize = 3;
@@ -2271,6 +2291,11 @@ pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
         return Err(TokenError::CompactTokenFramingMismatch);
     }
     let signing_input = signing_input(parts[COMPACT_HEADER_INDEX], parts[COMPACT_PAYLOAD_INDEX]).into_bytes();
+    validate_signing_input_byte_provenance(
+        parts[COMPACT_HEADER_INDEX],
+        parts[COMPACT_PAYLOAD_INDEX],
+        signing_input.as_slice(),
+    )?;
     let envelope = VerifiedCompactTokenEnvelope {
         compact: token.as_str().as_bytes().to_vec(),
         parts: verified_parts,
@@ -2300,6 +2325,7 @@ pub fn validate_decoded_token(decoded: DecodedToken) -> TokenResult<Structurally
     validate_header(&decoded.header)?;
     validate_parsed_claims_presence(&decoded.claims)?;
     validate_parsed_temporal_order(&decoded.claims)?;
+    validate_parsed_capability_list_shape(&decoded.claims)?;
     let capability_inputs = decoded_capability_inputs(&decoded.claims)?;
     let proof_bytes = decoded_proof_references(&decoded.claims)?;
     let proof_inputs = proof_bytes.as_ref().map(|references| proof_reference_inputs(references.as_slice()));
@@ -2465,7 +2491,31 @@ where
         0,
     )?;
     traversal.verify_backend_transcript_accepts()?;
+    verify_successful_verification_stage_flow()?;
     Ok(verified)
+}
+
+fn verify_successful_verification_stage_flow() -> TokenResult<()> {
+    let transcript = VerifiedVerificationStageTranscript {
+        parse_ok: true,
+        structural_ok: true,
+        key_resolved: true,
+        signature_valid: true,
+        envelope_valid: true,
+        revocation_clear: true,
+        proofs_loaded: true,
+        proof_chain_valid: true,
+        authorized: true,
+    };
+    let outcome = verification_stage_transcript_outcome(&transcript);
+    if outcome.accepted && outcome.first_failed_stage == VerifiedVerificationStage::Accepted {
+        return Ok(());
+    }
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation {
+            failure: TokenValidationFailure::InvalidVerificationStageFlow,
+        },
+    })
 }
 
 fn verify_compact_token_with_traversal<R, S, V>(
@@ -2862,6 +2912,33 @@ fn verify_live_dag_proof_transcript(
     Ok(())
 }
 
+fn validate_proof_reference_collection(
+    references: &[ucan_core::token::ProofReference],
+    limits: VerificationLimits,
+) -> TokenResult<()> {
+    let collection = VerifiedProofReferenceCollection {
+        count: references.len(),
+        max_count: limits.max_proof_count(),
+        all_references_non_empty: references.iter().all(|reference| !reference.as_bytes().is_empty()),
+    };
+    if proof_reference_collection_is_valid(collection) {
+        return Ok(());
+    }
+    if references.len() > limits.max_proof_count() {
+        return Err(TokenError::LimitExceeded {
+            source: VerificationLimitError::ProofCountExceeded {
+                count: references.len(),
+                max_count: limits.max_proof_count(),
+            },
+        });
+    }
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation {
+            failure: TokenValidationFailure::InvalidProofReferenceCollection,
+        },
+    })
+}
+
 fn direct_proofs<S>(
     token: &StructurallyValidToken,
     proof_store: &S,
@@ -2871,12 +2948,25 @@ fn direct_proofs<S>(
 where
     S: ProofStore + ?Sized,
 {
+    validate_proof_reference_collection(token.claims.proofs(), limits)?;
     let mut proofs = Vec::with_capacity(token.claims.proofs().len());
     for reference in token.claims.proofs() {
         traversal.resolve_one_proof(limits)?;
         let reference = ProofReference::new(reference.as_bytes().to_vec());
         let proof = match proof_store.resolve_proof(&reference) {
             Ok(proof) => {
+                let result = VerifiedProofStoreResultFact {
+                    reference_non_empty: !reference.as_bytes().is_empty(),
+                    backend_succeeded: true,
+                    compact_token_present: !proof.as_str().is_empty(),
+                };
+                if !proof_store_result_is_valid(result) {
+                    return Err(TokenError::VerifiedPrimitive {
+                        source: VerifiedPrimitiveError::TokenValidation {
+                            failure: TokenValidationFailure::InvalidProofStoreResultTranscript,
+                        },
+                    });
+                }
                 traversal.record_backend_operation(VerifiedBackendOperation::ProofLoad, true);
                 proof
             }
@@ -2915,7 +3005,15 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
             | TokenValidationFailure::MissingProofs
             | TokenValidationFailure::MissingExpiration
             | TokenValidationFailure::MissingNotBefore
-            | TokenValidationFailure::InvalidTemporalOrder => TokenError::VerifiedPrimitive {
+            | TokenValidationFailure::InvalidTemporalOrder
+            | TokenValidationFailure::InvalidProofReferenceListShape
+            | TokenValidationFailure::InvalidProofReferenceCollection
+            | TokenValidationFailure::InvalidCapabilityListShape
+            | TokenValidationFailure::InvalidCaveatListShape
+            | TokenValidationFailure::InvalidProofStoreResultTranscript
+            | TokenValidationFailure::InvalidRevocationCheckTranscript
+            | TokenValidationFailure::InvalidSigningInputProvenance
+            | TokenValidationFailure::InvalidVerificationStageFlow => TokenError::VerifiedPrimitive {
                 source: VerifiedPrimitiveError::TokenValidation { failure },
             },
         },
@@ -3056,8 +3154,20 @@ where
             return Err(TokenError::Revocation { source });
         }
     };
-    if revoked {
-        return Err(TokenError::Revoked { reference });
+    let check = VerifiedRevocationCheckFact {
+        reference_non_empty: !reference.as_bytes().is_empty(),
+        backend_succeeded: true,
+        not_revoked: !revoked,
+    };
+    if !revocation_check_is_valid(check) {
+        if revoked {
+            return Err(TokenError::Revoked { reference });
+        }
+        return Err(TokenError::VerifiedPrimitive {
+            source: VerifiedPrimitiveError::TokenValidation {
+                failure: TokenValidationFailure::InvalidRevocationCheckTranscript,
+            },
+        });
     }
     Ok(())
 }
@@ -3300,6 +3410,22 @@ fn signing_input(header: &str, payload: &str) -> String {
     format!("{header}{COMPACT_SEPARATOR}{payload}")
 }
 
+fn validate_signing_input_byte_provenance(header: &str, payload: &str, signing_input: &[u8]) -> TokenResult<()> {
+    let provenance = VerifiedSigningInputByteProvenance {
+        header: header.as_bytes().to_vec(),
+        payload: payload.as_bytes().to_vec(),
+        signing_input: signing_input.to_vec(),
+    };
+    if signing_input_byte_provenance_is_valid(&provenance) {
+        return Ok(());
+    }
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation {
+            failure: TokenValidationFailure::InvalidSigningInputProvenance,
+        },
+    })
+}
+
 fn join_compact_parts(header: &str, payload: &str, signature: &str) -> String {
     format!("{header}{COMPACT_SEPARATOR}{payload}{COMPACT_SEPARATOR}{signature}")
 }
@@ -3358,6 +3484,27 @@ fn validate_parsed_temporal_order(claims: &DecodedClaims) -> TokenResult<()> {
     })
 }
 
+fn validate_parsed_capability_list_shape(claims: &DecodedClaims) -> TokenResult<()> {
+    let capabilities = claims.att.as_ref().map_or_else(Vec::new, |capabilities| {
+        capabilities
+            .iter()
+            .map(|capability| VerifiedParsedCapabilityShape {
+                resource_present: capability.resource.is_some(),
+                ability_present: capability.ability.is_some(),
+            })
+            .collect()
+    });
+    let shape = VerifiedParsedCapabilityListShape { capabilities };
+    if parsed_capability_list_shape_is_valid(&shape) {
+        return Ok(());
+    }
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation {
+            failure: TokenValidationFailure::InvalidCapabilityListShape,
+        },
+    })
+}
+
 fn decoded_capability_inputs(
     claims: &DecodedClaims,
 ) -> TokenResult<Option<Vec<ucan_core::token::CapabilityInput<'_>>>> {
@@ -3384,14 +3531,57 @@ fn decoded_proof_references(claims: &DecodedClaims) -> TokenResult<Option<Vec<Ve
     let Some(proofs) = claims.prf.as_ref() else {
         return Ok(None);
     };
-    proofs
-        .iter()
-        .map(|proof| decode_part(proof, CompactPart::Payload))
-        .collect::<TokenResult<Vec<_>>>()
-        .map(Some)
+    let mut decoded = Vec::with_capacity(proofs.len());
+    let mut entries = Vec::with_capacity(proofs.len());
+    for proof in proofs {
+        let encoded_base64url_no_pad =
+            crate::verified::base64url_segment_is_valid(&crate::verified::VerifiedBase64UrlSegment {
+                bytes: proof.as_bytes().to_vec(),
+            });
+        let reference = decode_part(proof, CompactPart::Payload)?;
+        entries.push(VerifiedParsedProofReferenceEntryShape {
+            encoded_non_empty: !proof.is_empty(),
+            encoded_base64url_no_pad,
+            decoded_non_empty: !reference.is_empty(),
+        });
+        decoded.push(reference);
+    }
+    let shape = VerifiedParsedProofReferenceListShape { entries };
+    if !parsed_proof_reference_list_shape_is_valid(&shape) {
+        return Err(TokenError::VerifiedPrimitive {
+            source: VerifiedPrimitiveError::TokenValidation {
+                failure: TokenValidationFailure::InvalidProofReferenceListShape,
+            },
+        });
+    }
+    Ok(Some(decoded))
+}
+
+fn validate_parsed_caveat_list_shape(capability: &DecodedCapability) -> TokenResult<()> {
+    let shape = VerifiedParsedCaveatListShape {
+        caveats: capability
+            .caveats
+            .iter()
+            .map(|caveat| VerifiedParsedCaveatShape {
+                domain_present: caveat.domain.is_some(),
+                caveat_type_present: caveat.caveat_type.is_some(),
+                key_present: caveat.key.is_some(),
+                payload_present: caveat.payload.is_some(),
+            })
+            .collect(),
+    };
+    if parsed_caveat_list_shape_is_valid(&shape) {
+        return Ok(());
+    }
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation {
+            failure: TokenValidationFailure::InvalidCaveatListShape,
+        },
+    })
 }
 
 fn decoded_caveat_inputs(capability: &DecodedCapability) -> TokenResult<Box<[ucan_core::token::CaveatInput<'_>]>> {
+    validate_parsed_caveat_list_shape(capability)?;
     let mut inputs = Vec::with_capacity(capability.caveats.len());
     for caveat in &capability.caveats {
         let domain = caveat.domain.as_deref().ok_or_else(|| TokenError::Capability {

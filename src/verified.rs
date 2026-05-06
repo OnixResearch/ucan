@@ -17,9 +17,15 @@ use verified_logic::ucan_did;
 use verified_logic::ucan_header;
 use verified_logic::ucan_invocation;
 use verified_logic::ucan_json;
+use verified_logic::ucan_parsed_capability_shape;
+use verified_logic::ucan_parsed_caveat_shape;
 use verified_logic::ucan_proof_reference;
+use verified_logic::ucan_proof_reference_collection;
+use verified_logic::ucan_proof_reference_list_shape;
+use verified_logic::ucan_proof_store_result;
 use verified_logic::ucan_proof_traversal;
 use verified_logic::ucan_revocation;
+use verified_logic::ucan_revocation_check;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
 use verified_logic::ucan_temporal_order;
@@ -102,6 +108,14 @@ pub enum TokenValidationFailure {
     MissingExpiration,
     MissingNotBefore,
     InvalidTemporalOrder,
+    InvalidProofReferenceListShape,
+    InvalidProofReferenceCollection,
+    InvalidCapabilityListShape,
+    InvalidCaveatListShape,
+    InvalidProofStoreResultTranscript,
+    InvalidRevocationCheckTranscript,
+    InvalidSigningInputProvenance,
+    InvalidVerificationStageFlow,
     InvalidSignature,
 }
 
@@ -118,6 +132,14 @@ impl fmt::Display for TokenValidationFailure {
             Self::MissingExpiration => formatter.write_str("expiration must be present"),
             Self::MissingNotBefore => formatter.write_str("not-before time must be present"),
             Self::InvalidTemporalOrder => formatter.write_str("not-before time must precede expiration"),
+            Self::InvalidProofReferenceListShape => formatter.write_str("parsed proof-reference list shape is invalid"),
+            Self::InvalidProofReferenceCollection => formatter.write_str("proof-reference collection is invalid"),
+            Self::InvalidCapabilityListShape => formatter.write_str("parsed capability list shape is invalid"),
+            Self::InvalidCaveatListShape => formatter.write_str("parsed caveat list shape is invalid"),
+            Self::InvalidProofStoreResultTranscript => formatter.write_str("proof-store result transcript is invalid"),
+            Self::InvalidRevocationCheckTranscript => formatter.write_str("revocation-check transcript is invalid"),
+            Self::InvalidSigningInputProvenance => formatter.write_str("signing input byte provenance is invalid"),
+            Self::InvalidVerificationStageFlow => formatter.write_str("verification stage flow is invalid"),
             Self::InvalidSignature => formatter.write_str("signature must verify"),
         }
     }
@@ -191,6 +213,71 @@ pub struct VerifiedParsedClaimsPresence {
 pub struct VerifiedParsedTemporalOrder {
     pub not_before_seconds: u64,
     pub expires_at_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedProofReferenceEntryShape {
+    pub encoded_non_empty: bool,
+    pub encoded_base64url_no_pad: bool,
+    pub decoded_non_empty: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedParsedProofReferenceListShape {
+    pub entries: Vec<VerifiedParsedProofReferenceEntryShape>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedProofReferenceCollection {
+    pub count: usize,
+    pub max_count: usize,
+    pub all_references_non_empty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedCapabilityShape {
+    pub resource_present: bool,
+    pub ability_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedParsedCapabilityListShape {
+    pub capabilities: Vec<VerifiedParsedCapabilityShape>,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedCaveatShape {
+    pub domain_present: bool,
+    pub caveat_type_present: bool,
+    pub key_present: bool,
+    pub payload_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedParsedCaveatListShape {
+    pub caveats: Vec<VerifiedParsedCaveatShape>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedProofStoreResultFact {
+    pub reference_non_empty: bool,
+    pub backend_succeeded: bool,
+    pub compact_token_present: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedRevocationCheckFact {
+    pub reference_non_empty: bool,
+    pub backend_succeeded: bool,
+    pub not_revoked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSigningInputByteProvenance {
+    pub header: Vec<u8>,
+    pub payload: Vec<u8>,
+    pub signing_input: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -821,6 +908,90 @@ pub fn parsed_temporal_order_is_valid(order: VerifiedParsedTemporalOrder) -> boo
         not_before_seconds: order.not_before_seconds,
         expires_at_seconds: order.expires_at_seconds,
     })
+}
+
+/// Validate parsed proof-reference list shape facts through vendored verified logic.
+#[must_use]
+pub fn parsed_proof_reference_list_shape_is_valid(shape: &VerifiedParsedProofReferenceListShape) -> bool {
+    let entries = shape
+        .entries
+        .iter()
+        .map(|entry| ucan_proof_reference_list_shape::ParsedProofReferenceEntryShape {
+            encoded_non_empty: entry.encoded_non_empty,
+            encoded_base64url_no_pad: entry.encoded_base64url_no_pad,
+            decoded_non_empty: entry.decoded_non_empty,
+        })
+        .collect::<Vec<_>>();
+    ucan_proof_reference_list_shape::proof_reference_list_shape_is_valid(&entries)
+}
+
+/// Validate proof-reference collection facts through vendored verified logic.
+#[must_use]
+pub fn proof_reference_collection_is_valid(collection: VerifiedProofReferenceCollection) -> bool {
+    ucan_proof_reference_collection::proof_reference_collection_is_valid(
+        ucan_proof_reference_collection::ProofReferenceCollectionFact {
+            count: collection.count,
+            max_count: collection.max_count,
+            all_references_non_empty: collection.all_references_non_empty,
+        },
+    )
+}
+
+/// Validate parsed capability-list shape facts through vendored verified logic.
+#[must_use]
+pub fn parsed_capability_list_shape_is_valid(shape: &VerifiedParsedCapabilityListShape) -> bool {
+    let capabilities = shape
+        .capabilities
+        .iter()
+        .map(|capability| ucan_parsed_capability_shape::ParsedCapabilityShapeFact {
+            resource_present: capability.resource_present,
+            ability_present: capability.ability_present,
+        })
+        .collect::<Vec<_>>();
+    ucan_parsed_capability_shape::capability_list_shape_is_valid(&capabilities)
+}
+
+/// Validate parsed caveat-list shape facts through vendored verified logic.
+#[must_use]
+pub fn parsed_caveat_list_shape_is_valid(shape: &VerifiedParsedCaveatListShape) -> bool {
+    let caveats = shape
+        .caveats
+        .iter()
+        .map(|caveat| ucan_parsed_caveat_shape::ParsedCaveatShapeFact {
+            domain_present: caveat.domain_present,
+            caveat_type_present: caveat.caveat_type_present,
+            key_present: caveat.key_present,
+            payload_present: caveat.payload_present,
+        })
+        .collect::<Vec<_>>();
+    ucan_parsed_caveat_shape::caveat_list_shape_is_valid(&caveats)
+}
+
+/// Validate proof-store result facts through vendored verified logic.
+#[must_use]
+pub fn proof_store_result_is_valid(fact: VerifiedProofStoreResultFact) -> bool {
+    ucan_proof_store_result::proof_store_result_is_valid(ucan_proof_store_result::ProofStoreResultFact {
+        reference_non_empty: fact.reference_non_empty,
+        backend_succeeded: fact.backend_succeeded,
+        compact_token_present: fact.compact_token_present,
+    })
+}
+
+/// Validate revocation-check facts through vendored verified logic.
+#[must_use]
+pub fn revocation_check_is_valid(fact: VerifiedRevocationCheckFact) -> bool {
+    ucan_revocation_check::revocation_check_is_valid(ucan_revocation_check::RevocationCheckFact {
+        reference_non_empty: fact.reference_non_empty,
+        backend_succeeded: fact.backend_succeeded,
+        not_revoked: fact.not_revoked,
+    })
+}
+
+/// Validate signing input byte provenance from already-encoded compact parts.
+#[must_use]
+pub fn signing_input_byte_provenance_is_valid(provenance: &VerifiedSigningInputByteProvenance) -> bool {
+    let expected = ucan_compact::compact_signing_input(&provenance.header, &provenance.payload);
+    ucan_compact::bytes_equal(&expected, &provenance.signing_input)
 }
 
 /// Exposes the vendored opaque caveat identifier preservation predicate.
@@ -2031,6 +2202,128 @@ mod tests {
             not_before_seconds: 3,
             expires_at_seconds: 2,
         }));
+    }
+
+    #[test]
+    fn parsed_proof_reference_list_shape_uses_verified_admission() {
+        let accepted = super::VerifiedParsedProofReferenceListShape {
+            entries: vec![super::VerifiedParsedProofReferenceEntryShape {
+                encoded_non_empty: true,
+                encoded_base64url_no_pad: true,
+                decoded_non_empty: true,
+            }],
+        };
+        assert!(super::parsed_proof_reference_list_shape_is_valid(&accepted));
+
+        let rejected = super::VerifiedParsedProofReferenceListShape {
+            entries: vec![super::VerifiedParsedProofReferenceEntryShape {
+                encoded_non_empty: true,
+                encoded_base64url_no_pad: false,
+                decoded_non_empty: true,
+            }],
+        };
+        assert!(!super::parsed_proof_reference_list_shape_is_valid(&rejected));
+    }
+
+    #[test]
+    fn proof_reference_collection_uses_verified_admission() {
+        assert!(super::proof_reference_collection_is_valid(super::VerifiedProofReferenceCollection {
+            count: 2,
+            max_count: 2,
+            all_references_non_empty: true,
+        }));
+        assert!(!super::proof_reference_collection_is_valid(super::VerifiedProofReferenceCollection {
+            count: 3,
+            max_count: 2,
+            all_references_non_empty: true,
+        }));
+        assert!(!super::proof_reference_collection_is_valid(super::VerifiedProofReferenceCollection {
+            count: 1,
+            max_count: 2,
+            all_references_non_empty: false,
+        }));
+    }
+
+    #[test]
+    fn parsed_capability_list_shape_uses_verified_admission() {
+        let accepted = super::VerifiedParsedCapabilityListShape {
+            capabilities: vec![super::VerifiedParsedCapabilityShape {
+                resource_present: true,
+                ability_present: true,
+            }],
+        };
+        assert!(super::parsed_capability_list_shape_is_valid(&accepted));
+
+        let rejected = super::VerifiedParsedCapabilityListShape {
+            capabilities: vec![super::VerifiedParsedCapabilityShape {
+                resource_present: true,
+                ability_present: false,
+            }],
+        };
+        assert!(!super::parsed_capability_list_shape_is_valid(&rejected));
+    }
+
+    #[test]
+    fn parsed_caveat_list_shape_uses_verified_admission() {
+        let accepted = super::VerifiedParsedCaveatListShape {
+            caveats: vec![super::VerifiedParsedCaveatShape {
+                domain_present: true,
+                caveat_type_present: true,
+                key_present: true,
+                payload_present: true,
+            }],
+        };
+        assert!(super::parsed_caveat_list_shape_is_valid(&accepted));
+
+        let rejected = super::VerifiedParsedCaveatListShape {
+            caveats: vec![super::VerifiedParsedCaveatShape {
+                domain_present: true,
+                caveat_type_present: true,
+                key_present: false,
+                payload_present: true,
+            }],
+        };
+        assert!(!super::parsed_caveat_list_shape_is_valid(&rejected));
+    }
+
+    #[test]
+    fn proof_store_result_and_revocation_check_use_verified_admission() {
+        assert!(super::proof_store_result_is_valid(super::VerifiedProofStoreResultFact {
+            reference_non_empty: true,
+            backend_succeeded: true,
+            compact_token_present: true,
+        }));
+        assert!(!super::proof_store_result_is_valid(super::VerifiedProofStoreResultFact {
+            reference_non_empty: true,
+            backend_succeeded: false,
+            compact_token_present: true,
+        }));
+        assert!(super::revocation_check_is_valid(super::VerifiedRevocationCheckFact {
+            reference_non_empty: true,
+            backend_succeeded: true,
+            not_revoked: true,
+        }));
+        assert!(!super::revocation_check_is_valid(super::VerifiedRevocationCheckFact {
+            reference_non_empty: true,
+            backend_succeeded: true,
+            not_revoked: false,
+        }));
+    }
+
+    #[test]
+    fn signing_input_byte_provenance_uses_verified_admission() {
+        let accepted = super::VerifiedSigningInputByteProvenance {
+            header: b"header".to_vec(),
+            payload: b"payload".to_vec(),
+            signing_input: b"header.payload".to_vec(),
+        };
+        assert!(super::signing_input_byte_provenance_is_valid(&accepted));
+
+        let rejected = super::VerifiedSigningInputByteProvenance {
+            signing_input: b"header-PAYLOAD".to_vec(),
+            ..accepted
+        };
+        assert!(!super::signing_input_byte_provenance_is_valid(&rejected));
     }
 
     #[test]

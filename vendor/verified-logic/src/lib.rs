@@ -860,14 +860,26 @@ pub mod ucan_header;
 pub mod ucan_invocation;
 /// Verified decoded UCAN JSON object byte admission.
 pub mod ucan_json;
+/// Verified UCAN parsed capability-list shape admission.
+pub mod ucan_parsed_capability_shape;
+/// Verified UCAN parsed caveat-list shape admission.
+pub mod ucan_parsed_caveat_shape;
 /// Verified bridge between UCAN did:key and web-of-trust principal fingerprints.
 pub mod ucan_principal_link;
 /// Verified UCAN proof-reference digest admission.
 pub mod ucan_proof_reference;
+/// Verified UCAN proof-reference collection admission.
+pub mod ucan_proof_reference_collection;
+/// Verified UCAN parsed proof-reference list-shape admission.
+pub mod ucan_proof_reference_list_shape;
+/// Verified UCAN proof-store result admission.
+pub mod ucan_proof_store_result;
 /// Verified UCAN proof traversal transcript primitives.
 pub mod ucan_proof_traversal;
 /// Verified UCAN revocation set checking and monotonicity.
 pub mod ucan_revocation;
+/// Verified UCAN revocation-check admission.
+pub mod ucan_revocation_check;
 pub mod ucan_signature;
 /// Verified UCAN time-bounded delegation composition.
 pub mod ucan_temporal;
