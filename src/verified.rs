@@ -10,6 +10,7 @@ use verified_logic::ucan_caveat;
 use verified_logic::ucan_caveat_evaluation;
 use verified_logic::ucan_caveat_preservation;
 use verified_logic::ucan_chain;
+use verified_logic::ucan_claims_presence;
 use verified_logic::ucan_compact;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
@@ -96,6 +97,8 @@ pub enum TokenValidationFailure {
     MissingIssuer,
     MissingAudience,
     MissingAttenuations,
+    MissingExpiration,
+    MissingNotBefore,
     InvalidSignature,
 }
 
@@ -108,6 +111,8 @@ impl fmt::Display for TokenValidationFailure {
             Self::MissingIssuer => formatter.write_str("issuer must be present"),
             Self::MissingAudience => formatter.write_str("audience must be present"),
             Self::MissingAttenuations => formatter.write_str("at least one capability must be present"),
+            Self::MissingExpiration => formatter.write_str("expiration must be present"),
+            Self::MissingNotBefore => formatter.write_str("not-before time must be present"),
             Self::InvalidSignature => formatter.write_str("signature must verify"),
         }
     }
@@ -164,6 +169,16 @@ pub struct VerifiedJsonObjectBytes {
 pub struct VerifiedParsedHeader {
     pub algorithm: Vec<u8>,
     pub token_type: Vec<u8>,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedClaimsPresence {
+    pub issuer_present: bool,
+    pub audience_present: bool,
+    pub attenuations_present: bool,
+    pub expiration_present: bool,
+    pub not_before_present: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -760,6 +775,24 @@ pub fn json_object_bytes_are_valid(object: &VerifiedJsonObjectBytes) -> bool {
 #[must_use]
 pub fn parsed_header_is_valid(header: &VerifiedParsedHeader) -> bool {
     ucan_header::parsed_header_admission_is_valid(&header.algorithm, &header.token_type)
+}
+
+/// Validate parsed UCAN claims presence facts through the vendored verified primitive.
+///
+/// This validates only caller- or serde-shell-supplied field-presence booleans
+/// for the required UCAN payload claims. It does not validate JSON parsing,
+/// duplicate-key behavior, field extraction correctness, strings, capabilities,
+/// proof references, temporal ordering, signing input construction, signatures,
+/// hashes, resolver state, or token provenance.
+#[must_use]
+pub fn parsed_claims_presence_is_valid(presence: VerifiedParsedClaimsPresence) -> bool {
+    ucan_claims_presence::parsed_claims_presence_is_valid(ucan_claims_presence::ParsedClaimsPresence {
+        issuer_present: presence.issuer_present,
+        audience_present: presence.audience_present,
+        attenuations_present: presence.attenuations_present,
+        expiration_present: presence.expiration_present,
+        not_before_present: presence.not_before_present,
+    })
 }
 
 /// Exposes the vendored opaque caveat identifier preservation predicate.
@@ -1729,6 +1762,7 @@ mod tests {
     use super::VerifiedCompactTokenParts;
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedJsonObjectBytes;
+    use super::VerifiedParsedClaimsPresence;
     use super::VerifiedParsedHeader;
     use super::VerifiedPrimitiveError;
     use super::VerifiedProofReferenceDigest;
@@ -1762,6 +1796,7 @@ mod tests {
     use super::invocation_chain_is_authorized;
     use super::invocation_request_is_authorized;
     use super::json_object_bytes_are_valid;
+    use super::parsed_claims_presence_is_valid;
     use super::parsed_header_is_valid;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
@@ -1913,6 +1948,31 @@ mod tests {
         assert!(!parsed_header_is_valid(&VerifiedParsedHeader {
             algorithm: b"EdDSA\0".to_vec(),
             token_type: b"JWT".to_vec(),
+        }));
+    }
+
+    #[test]
+    fn parsed_claims_presence_uses_verified_admission() {
+        assert!(parsed_claims_presence_is_valid(VerifiedParsedClaimsPresence {
+            issuer_present: true,
+            audience_present: true,
+            attenuations_present: true,
+            expiration_present: true,
+            not_before_present: true,
+        }));
+        assert!(!parsed_claims_presence_is_valid(VerifiedParsedClaimsPresence {
+            issuer_present: false,
+            audience_present: true,
+            attenuations_present: true,
+            expiration_present: true,
+            not_before_present: true,
+        }));
+        assert!(!parsed_claims_presence_is_valid(VerifiedParsedClaimsPresence {
+            issuer_present: true,
+            audience_present: true,
+            attenuations_present: true,
+            expiration_present: false,
+            not_before_present: true,
         }));
     }
 

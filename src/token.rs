@@ -28,6 +28,7 @@ use crate::verified::VerifiedCaveatPreservation;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedJsonObjectBytes;
+use crate::verified::VerifiedParsedClaimsPresence;
 use crate::verified::VerifiedParsedHeader;
 use crate::verified::VerifiedPrimitiveError;
 use crate::verified::VerifiedProofReferenceDigest;
@@ -50,6 +51,7 @@ use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
 use crate::verified::json_object_bytes_are_valid;
+use crate::verified::parsed_claims_presence_is_valid;
 use crate::verified::parsed_header_is_valid;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
@@ -2294,6 +2296,7 @@ pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
 /// Returns [`TokenError`] when the token header or decoded claim shape is invalid.
 pub fn validate_decoded_token(decoded: DecodedToken) -> TokenResult<StructurallyValidToken> {
     validate_header(&decoded.header)?;
+    validate_parsed_claims_presence(&decoded.claims)?;
     let capability_inputs = decoded_capability_inputs(&decoded.claims)?;
     let proof_bytes = decoded_proof_references(&decoded.claims)?;
     let proof_inputs = proof_bytes.as_ref().map(|references| proof_reference_inputs(references.as_slice()));
@@ -2905,7 +2908,9 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
             },
             TokenValidationFailure::MissingIssuer
             | TokenValidationFailure::MissingAudience
-            | TokenValidationFailure::MissingAttenuations => TokenError::VerifiedPrimitive {
+            | TokenValidationFailure::MissingAttenuations
+            | TokenValidationFailure::MissingExpiration
+            | TokenValidationFailure::MissingNotBefore => TokenError::VerifiedPrimitive {
                 source: VerifiedPrimitiveError::TokenValidation { failure },
             },
         },
@@ -3294,6 +3299,34 @@ fn join_compact_parts(header: &str, payload: &str, signature: &str) -> String {
     format!("{header}{COMPACT_SEPARATOR}{payload}{COMPACT_SEPARATOR}{signature}")
 }
 
+fn validate_parsed_claims_presence(claims: &DecodedClaims) -> TokenResult<()> {
+    let presence = VerifiedParsedClaimsPresence {
+        issuer_present: claims.iss.is_some(),
+        audience_present: claims.aud.is_some(),
+        attenuations_present: claims.att.is_some(),
+        expiration_present: claims.exp.is_some(),
+        not_before_present: claims.nbf.is_some(),
+    };
+    if parsed_claims_presence_is_valid(presence) {
+        return Ok(());
+    }
+
+    let failure = if !presence.issuer_present {
+        TokenValidationFailure::MissingIssuer
+    } else if !presence.audience_present {
+        TokenValidationFailure::MissingAudience
+    } else if !presence.attenuations_present {
+        TokenValidationFailure::MissingAttenuations
+    } else if !presence.expiration_present {
+        TokenValidationFailure::MissingExpiration
+    } else {
+        TokenValidationFailure::MissingNotBefore
+    };
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation { failure },
+    })
+}
+
 fn decoded_capability_inputs(
     claims: &DecodedClaims,
 ) -> TokenResult<Option<Vec<ucan_core::token::CapabilityInput<'_>>>> {
@@ -3484,6 +3517,38 @@ mod tests {
         assert_eq!(verified.capabilities().as_slice().len(), 1);
         assert!(verified.proofs().as_slice().is_empty());
         assert_eq!(verified.effective_delegation().time_bounds().not_before_seconds(), TOKEN_NOT_BEFORE_SECONDS);
+    }
+
+    #[test]
+    fn validate_decoded_token_routes_required_claim_presence_through_verified_bridge() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let decoded = parse_compact_token(&token).expect("token should parse");
+
+        let mut missing_issuer = decoded.clone();
+        missing_issuer.claims.iss = None;
+        assert_claim_presence_failure(missing_issuer, crate::verified::TokenValidationFailure::MissingIssuer);
+
+        let mut missing_audience = decoded.clone();
+        missing_audience.claims.aud = None;
+        assert_claim_presence_failure(missing_audience, crate::verified::TokenValidationFailure::MissingAudience);
+
+        let mut missing_attenuations = decoded.clone();
+        missing_attenuations.claims.att = None;
+        assert_claim_presence_failure(
+            missing_attenuations,
+            crate::verified::TokenValidationFailure::MissingAttenuations,
+        );
+
+        let mut missing_expiration = decoded.clone();
+        missing_expiration.claims.exp = None;
+        assert_claim_presence_failure(missing_expiration, crate::verified::TokenValidationFailure::MissingExpiration);
+
+        let mut missing_not_before = decoded;
+        missing_not_before.claims.nbf = None;
+        assert_claim_presence_failure(missing_not_before, crate::verified::TokenValidationFailure::MissingNotBefore);
     }
 
     #[test]
@@ -4236,12 +4301,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_required_claim_returns_core_error() {
+    fn missing_required_claim_fails_through_verified_presence_admission() {
         let token = token_with_payload(r#"{"aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#);
         let decoded = parse_compact_token(&token).expect("token should decode");
         let error = validate_decoded_token(decoded).expect_err("missing issuer should fail");
 
-        assert!(matches!(error, TokenError::CoreClaims { .. }));
+        assert!(matches!(error, TokenError::VerifiedPrimitive {
+            source: crate::verified::VerifiedPrimitiveError::TokenValidation {
+                failure: crate::verified::TokenValidationFailure::MissingIssuer
+            }
+        }));
     }
 
     #[test]
@@ -5248,6 +5317,15 @@ mod tests {
         fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
             Ok(SignerSignature::new(vec![0_u8; super::ED25519_SIGNATURE_BYTES]))
         }
+    }
+
+    fn assert_claim_presence_failure(decoded: super::DecodedToken, expected: crate::verified::TokenValidationFailure) {
+        assert!(matches!(
+            validate_decoded_token(decoded),
+            Err(TokenError::VerifiedPrimitive {
+                source: crate::verified::VerifiedPrimitiveError::TokenValidation { failure }
+            }) if failure == expected
+        ));
     }
 
     fn signing_key(byte: u8) -> Ed25519SigningKey {

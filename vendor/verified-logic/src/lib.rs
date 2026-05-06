@@ -844,6 +844,8 @@ pub mod ucan_caveat;
 pub mod ucan_caveat_evaluation;
 /// Verified UCAN opaque caveat identifier preservation.
 pub mod ucan_caveat_preservation;
+/// Verified UCAN parsed claims presence admission.
+pub mod ucan_claims_presence;
 
 pub mod ucan_compact;
 
