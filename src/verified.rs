@@ -4,6 +4,7 @@ use verified_logic::scope;
 use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
 use verified_logic::ucan_backend_transcript;
+use verified_logic::ucan_base64url;
 use verified_logic::ucan_capability_merge;
 use verified_logic::ucan_caveat;
 use verified_logic::ucan_chain;
@@ -140,6 +141,11 @@ pub struct VerifiedCompactTokenEnvelope {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedProofReferenceDigest {
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedBase64UrlSegment {
     pub bytes: Vec<u8>,
 }
 
@@ -677,6 +683,19 @@ pub fn compact_token_envelope_is_valid(envelope: &VerifiedCompactTokenEnvelope) 
         signature: envelope.parts.signature.clone(),
     };
     ucan_compact::compact_envelope_matches_parts(&envelope.compact, &parts, &envelope.signing_input)
+}
+
+/// Check encoded base64url-no-pad segment admission through vendored verified logic.
+///
+/// This bridge accepts only structural encoded-byte facts: URL-safe no-padding
+/// alphabet bytes and an unpadded length class that base64url can represent.
+/// It intentionally does not decode base64url, parse JSON, hash proof
+/// references, verify signatures, resolve proofs, query revocation backends,
+/// prove token provenance, access storage/network backends, persist state,
+/// replay-protect, or read an ambient clock.
+#[must_use]
+pub fn base64url_segment_is_valid(segment: &VerifiedBase64UrlSegment) -> bool {
+    ucan_base64url::base64url_no_pad_segment_is_valid(&segment.bytes)
 }
 
 /// Check proof-reference digest admission through vendored verified logic.
@@ -1588,6 +1607,7 @@ mod tests {
     use super::VerifiedBackendOperation;
     use super::VerifiedBackendOperationFact;
     use super::VerifiedBackendTranscript;
+    use super::VerifiedBase64UrlSegment;
     use super::VerifiedCapability;
     use super::VerifiedChainEntry;
     use super::VerifiedCompactTokenEnvelope;
@@ -1611,6 +1631,7 @@ mod tests {
     use super::attenuation_chain_is_valid;
     use super::backend_transcript_accepts;
     use super::backend_transcript_first_failed_operation;
+    use super::base64url_segment_is_valid;
     use super::capability_set_authorizes;
     use super::compact_token_envelope_is_valid;
     use super::compact_token_split_is_valid;
@@ -1733,6 +1754,24 @@ mod tests {
         };
         assert!(!compact_token_split_is_valid(b"header.pay.load.signature", &embedded_separator));
         assert!(!compact_token_split_is_valid(b"header.payload", &parts));
+    }
+
+    #[test]
+    fn base64url_segment_uses_verified_admission() {
+        assert!(base64url_segment_is_valid(&VerifiedBase64UrlSegment {
+            bytes: b"eyJhbGciOiJFZERTQSJ9".to_vec(),
+        }));
+        assert!(base64url_segment_is_valid(&VerifiedBase64UrlSegment { bytes: Vec::new() }));
+        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment {
+            bytes: b"abc=".to_vec()
+        }));
+        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment {
+            bytes: b"abc+".to_vec()
+        }));
+        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment {
+            bytes: b"abc/".to_vec()
+        }));
+        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment { bytes: b"A".to_vec() }));
     }
 
     #[test]

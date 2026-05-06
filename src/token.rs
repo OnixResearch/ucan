@@ -20,6 +20,7 @@ use crate::verified::TokenValidationFailure;
 use crate::verified::VerifiedBackendOperation;
 use crate::verified::VerifiedBackendOperationFact;
 use crate::verified::VerifiedBackendTranscript;
+use crate::verified::VerifiedBase64UrlSegment;
 use crate::verified::VerifiedCapability;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
@@ -33,6 +34,7 @@ use crate::verified::VerifiedWebOfTrustCaveat;
 use crate::verified::VerifiedWebOfTrustCaveatContext;
 use crate::verified::backend_transcript_accepts;
 use crate::verified::backend_transcript_first_failed_operation;
+use crate::verified::base64url_segment_is_valid;
 use crate::verified::compact_token_envelope_is_valid;
 use crate::verified::compact_token_split_is_valid;
 use crate::verified::compose_time_window_chain;
@@ -3200,6 +3202,15 @@ fn decode_json_part<T: DeserializeOwned>(part: &str, compact_part: CompactPart) 
 }
 
 fn decode_part(part: &str, compact_part: CompactPart) -> TokenResult<Vec<u8>> {
+    let segment = VerifiedBase64UrlSegment {
+        bytes: part.as_bytes().to_vec(),
+    };
+    if !base64url_segment_is_valid(&segment) {
+        return Err(TokenError::Base64Decode {
+            part: compact_part,
+            message: "failed verified base64url-no-pad structural admission".to_owned(),
+        });
+    }
     URL_SAFE_NO_PAD.decode(part).map_err(|error| TokenError::Base64Decode {
         part: compact_part,
         message: error.to_string(),
@@ -4071,6 +4082,20 @@ mod tests {
             part: super::CompactPart::Header,
             ..
         }));
+
+        let invalid_padding = CompactToken::new("abc=.eyJpc3.AAAA").expect("shape should wrap");
+        let padding_error = parse_compact_token(&invalid_padding).expect_err("padding should reject");
+        assert!(matches!(padding_error, TokenError::Base64Decode {
+            part: super::CompactPart::Header,
+            message,
+        } if message.contains("verified base64url-no-pad structural admission")));
+
+        let invalid_length = CompactToken::new("A.eyJpc3.AAAA").expect("shape should wrap");
+        let length_error = parse_compact_token(&invalid_length).expect_err("length class should reject");
+        assert!(matches!(length_error, TokenError::Base64Decode {
+            part: super::CompactPart::Header,
+            message,
+        } if message.contains("verified base64url-no-pad structural admission")));
 
         let invalid_json = CompactToken::new("bm90LWpzb24.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
         let json_error = parse_compact_token(&invalid_json).expect_err("header JSON should reject");

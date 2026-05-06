@@ -885,16 +885,17 @@ The library MUST preserve the existing caller-injected proof traversal behavior 
 - AND verified traversal primitives MUST NOT fetch proofs, resolve keys, verify signatures, access storage or network backends, persist state, replay-protect, sign, or read an ambient clock
 
 ### Requirement: Verified compact-token codec boundary [r[library.verified-compact-token-codec-boundary]]
+The library MUST route compact-token split, framing, proof-reference digest, and base64url segment structural admission through vendored verified-logic predicates before continuing into trusted runtime codec or cryptographic boundaries.
 
-The library MUST expose and use verified compact-token structural bridges for already-encoded compact token parts while continuing to distinguish trusted runtime codec, hash, and cryptographic boundaries from verified structural admission. The bridges MUST NOT claim base64url, serde JSON, BLAKE3, Ed25519, resolver, proof-store, revocation-backend, caveat-policy, filesystem, network, signing, persistence, or ambient-clock behavior is formally verified.
+#### Scenario: Base64url-no-pad segment admission rejects malformed encoded parts [r[library.verified-compact-token-codec-boundary.scenario.base64url-segment-admission]]
+- GIVEN an encoded compact-token segment containing a non URL-safe no-padding alphabet byte, padding byte, or impossible unpadded length class
+- WHEN the shell prepares to decode that segment
+- THEN the shell MUST reject it through the verified bridge before invoking or relying on decoded JSON/signature semantics
 
-#### Scenario: Compact split bridge rejects embedded separators [r[library.verified-compact-token-codec-boundary.scenario.compact-split-bridge]]
-
-- GIVEN shell-split encoded header, payload, and signature bytes plus the original compact-token bytes
-- WHEN any supplied part contains an embedded compact separator or the compact bytes do not equal exactly `header.payload.signature`
-- THEN the verified split bridge MUST reject the split facts
-- AND parse-time integration MUST fail closed with a structured compact-token error before base64url or JSON decoding
-- AND documentation MUST state that this proves only separator-free three-part byte framing, not runtime codec, hash, or cryptographic correctness
+#### Scenario: Base64url-no-pad segment admission preserves codec trust boundary [r[library.verified-compact-token-codec-boundary.scenario.base64url-boundary-limits]]
+- GIVEN an encoded compact-token segment admitted by the verified base64url-no-pad structural predicate
+- WHEN the shell decodes, parses JSON, hashes proof references, or verifies signatures
+- THEN the library MUST continue to document those runtime codec and cryptographic operations as outside the verified structural admission claim
 
 ### Requirement: Caveat-preserving attenuation invariant [r[library.verified-caveat-preserving-attenuation]]
 

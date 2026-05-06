@@ -835,6 +835,8 @@ pub mod typed_state;
 pub mod ucan_ability;
 /// Verified UCAN backend operation transcript admission.
 pub mod ucan_backend_transcript;
+/// Verified UCAN base64url-no-pad segment admission.
+pub mod ucan_base64url;
 /// Verified UCAN capability merge from multiple delegation paths.
 pub mod ucan_capability_merge;
 pub mod ucan_caveat;
