@@ -20,6 +20,23 @@ The library MUST verify live token-verification stage-flow transcripts so emitte
 - WHEN the shell relies on parser, crypto, backend, revocation, or authorization checks
 - THEN the library MUST continue to document the truth of parser outputs, cryptographic verification, backend answers, revocation freshness, proof material provenance, caveat policies, and token provenance as outside the stage-flow admission claim
 
+### Requirement: Parsed DID claim admission
+
+The library MUST verify parsed issuer and audience DID claim shape facts before decoded-token structural validation accepts those claims.
+
+#### Scenario: Parsed DID claim admission uses verified bridge [r[library.compact-token.scenario.parsed-did-claim-admission]]
+
+- GIVEN a compact-token payload whose decoded `iss` and `aud` fields have been extracted by the shell
+- WHEN decoded-token validation admits the issuer and audience claims before core claim construction
+- THEN the library MUST route issuer/audience presence, non-empty, and trimmed facts through a vendored verified DID-claim admission bridge
+- AND empty or untrimmed issuer/audience values MUST fail closed before the token is structurally accepted
+
+#### Scenario: Parsed DID claim admission keeps identity semantics outside the verified claim [r[library.compact-token.scenario.parsed-did-claim-boundary-limits]]
+
+- GIVEN parsed DID claim facts admitted by the verified predicate
+- WHEN the shell later resolves keys or relies on issuer/audience identity semantics
+- THEN the library MUST continue to document JSON parser correctness, UTF-8/string extraction, duplicate-key behavior, canonicalization, DID-method semantics, key-resolution truth, signature correctness, backend behavior, and token provenance as outside the parsed DID admission claim
+
 ### Requirement: did:key Ed25519 issuance and verification
 
 The first usable library surface MUST support issuing and verifying tokens whose issuer identity is a `did:key` derived from an Ed25519 keypair.

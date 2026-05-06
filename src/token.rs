@@ -33,6 +33,8 @@ use crate::verified::VerifiedParsedCapabilityShape;
 use crate::verified::VerifiedParsedCaveatListShape;
 use crate::verified::VerifiedParsedCaveatShape;
 use crate::verified::VerifiedParsedClaimsPresence;
+use crate::verified::VerifiedParsedDidClaim;
+use crate::verified::VerifiedParsedDidClaims;
 use crate::verified::VerifiedParsedHeader;
 use crate::verified::VerifiedParsedProofReferenceEntryShape;
 use crate::verified::VerifiedParsedProofReferenceListShape;
@@ -67,6 +69,7 @@ use crate::verified::json_object_bytes_are_valid;
 use crate::verified::parsed_capability_list_shape_is_valid;
 use crate::verified::parsed_caveat_list_shape_is_valid;
 use crate::verified::parsed_claims_presence_is_valid;
+use crate::verified::parsed_did_claims_are_valid;
 use crate::verified::parsed_header_is_valid;
 use crate::verified::parsed_proof_reference_list_shape_is_valid;
 use crate::verified::parsed_temporal_order_is_valid;
@@ -2324,6 +2327,7 @@ pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
 pub fn validate_decoded_token(decoded: DecodedToken) -> TokenResult<StructurallyValidToken> {
     validate_header(&decoded.header)?;
     validate_parsed_claims_presence(&decoded.claims)?;
+    validate_parsed_did_claims(&decoded.claims)?;
     validate_parsed_temporal_order(&decoded.claims)?;
     validate_parsed_capability_list_shape(&decoded.claims)?;
     let capability_inputs = decoded_capability_inputs(&decoded.claims)?;
@@ -3006,6 +3010,7 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
             | TokenValidationFailure::MissingExpiration
             | TokenValidationFailure::MissingNotBefore
             | TokenValidationFailure::InvalidTemporalOrder
+            | TokenValidationFailure::InvalidDidClaims
             | TokenValidationFailure::InvalidProofReferenceListShape
             | TokenValidationFailure::InvalidProofReferenceCollection
             | TokenValidationFailure::InvalidCapabilityListShape
@@ -3461,6 +3466,29 @@ fn validate_parsed_claims_presence(claims: &DecodedClaims) -> TokenResult<()> {
     })
 }
 
+fn did_claim_fact(value: Option<&str>) -> VerifiedParsedDidClaim {
+    VerifiedParsedDidClaim {
+        present: value.is_some(),
+        non_empty: value.is_some_and(|value| !value.is_empty()),
+        trimmed: value.is_some_and(|value| value.trim() == value),
+    }
+}
+
+fn validate_parsed_did_claims(claims: &DecodedClaims) -> TokenResult<()> {
+    let facts = VerifiedParsedDidClaims {
+        issuer: did_claim_fact(claims.iss.as_deref()),
+        audience: did_claim_fact(claims.aud.as_deref()),
+    };
+    if parsed_did_claims_are_valid(facts) {
+        return Ok(());
+    }
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation {
+            failure: TokenValidationFailure::InvalidDidClaims,
+        },
+    })
+}
+
 fn validate_parsed_temporal_order(claims: &DecodedClaims) -> TokenResult<()> {
     let order = VerifiedParsedTemporalOrder {
         not_before_seconds: claims.nbf.ok_or(TokenError::VerifiedPrimitive {
@@ -3774,6 +3802,31 @@ mod tests {
         let mut missing_not_before = decoded;
         missing_not_before.claims.nbf = None;
         assert_claim_presence_failure(missing_not_before, crate::verified::TokenValidationFailure::MissingNotBefore);
+    }
+
+    #[test]
+    fn validate_decoded_token_routes_parsed_did_claims_through_verified_bridge() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let decoded = parse_compact_token(&token).expect("token should parse");
+
+        let mut empty_issuer = decoded.clone();
+        empty_issuer.claims.iss = Some(String::new());
+        assert_claim_presence_failure(empty_issuer, crate::verified::TokenValidationFailure::InvalidDidClaims);
+
+        let mut untrimmed_issuer = decoded.clone();
+        untrimmed_issuer.claims.iss = untrimmed_issuer.claims.iss.map(|issuer| format!(" {issuer}"));
+        assert_claim_presence_failure(untrimmed_issuer, crate::verified::TokenValidationFailure::InvalidDidClaims);
+
+        let mut empty_audience = decoded.clone();
+        empty_audience.claims.aud = Some(String::new());
+        assert_claim_presence_failure(empty_audience, crate::verified::TokenValidationFailure::InvalidDidClaims);
+
+        let mut untrimmed_audience = decoded;
+        untrimmed_audience.claims.aud = untrimmed_audience.claims.aud.map(|audience| format!("{audience} "));
+        assert_claim_presence_failure(untrimmed_audience, crate::verified::TokenValidationFailure::InvalidDidClaims);
     }
 
     #[test]

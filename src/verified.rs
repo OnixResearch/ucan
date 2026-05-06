@@ -19,6 +19,7 @@ use verified_logic::ucan_invocation;
 use verified_logic::ucan_json;
 use verified_logic::ucan_parsed_capability_shape;
 use verified_logic::ucan_parsed_caveat_shape;
+use verified_logic::ucan_parsed_did_claim;
 use verified_logic::ucan_proof_reference;
 use verified_logic::ucan_proof_reference_collection;
 use verified_logic::ucan_proof_reference_list_shape;
@@ -108,6 +109,7 @@ pub enum TokenValidationFailure {
     MissingExpiration,
     MissingNotBefore,
     InvalidTemporalOrder,
+    InvalidDidClaims,
     InvalidProofReferenceListShape,
     InvalidProofReferenceCollection,
     InvalidCapabilityListShape,
@@ -132,6 +134,7 @@ impl fmt::Display for TokenValidationFailure {
             Self::MissingExpiration => formatter.write_str("expiration must be present"),
             Self::MissingNotBefore => formatter.write_str("not-before time must be present"),
             Self::InvalidTemporalOrder => formatter.write_str("not-before time must precede expiration"),
+            Self::InvalidDidClaims => formatter.write_str("parsed issuer and audience DID claims are invalid"),
             Self::InvalidProofReferenceListShape => formatter.write_str("parsed proof-reference list shape is invalid"),
             Self::InvalidProofReferenceCollection => formatter.write_str("proof-reference collection is invalid"),
             Self::InvalidCapabilityListShape => formatter.write_str("parsed capability list shape is invalid"),
@@ -213,6 +216,19 @@ pub struct VerifiedParsedClaimsPresence {
 pub struct VerifiedParsedTemporalOrder {
     pub not_before_seconds: u64,
     pub expires_at_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedDidClaim {
+    pub present: bool,
+    pub non_empty: bool,
+    pub trimmed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedDidClaims {
+    pub issuer: VerifiedParsedDidClaim,
+    pub audience: VerifiedParsedDidClaim,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -907,6 +923,28 @@ pub fn parsed_temporal_order_is_valid(order: VerifiedParsedTemporalOrder) -> boo
     ucan_temporal_order::parsed_temporal_order_is_valid(ucan_temporal_order::ParsedTemporalOrder {
         not_before_seconds: order.not_before_seconds,
         expires_at_seconds: order.expires_at_seconds,
+    })
+}
+
+/// Validate parsed issuer/audience DID claim shape facts through vendored verified logic.
+///
+/// This validates only shell-supplied booleans for presence, non-empty value,
+/// and already-trimmed value. It does not validate JSON parsing, UTF-8/string
+/// extraction correctness, duplicate-key behavior, canonicalization, DID method
+/// semantics, key resolution, signatures, backend state, or token provenance.
+#[must_use]
+pub fn parsed_did_claims_are_valid(claims: VerifiedParsedDidClaims) -> bool {
+    ucan_parsed_did_claim::did_claims_are_valid(ucan_parsed_did_claim::ParsedDidClaimsFact {
+        issuer: ucan_parsed_did_claim::ParsedDidClaimFact {
+            present: claims.issuer.present,
+            non_empty: claims.issuer.non_empty,
+            trimmed: claims.issuer.trimmed,
+        },
+        audience: ucan_parsed_did_claim::ParsedDidClaimFact {
+            present: claims.audience.present,
+            non_empty: claims.audience.non_empty,
+            trimmed: claims.audience.trimmed,
+        },
     })
 }
 
@@ -1962,6 +2000,8 @@ mod tests {
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedJsonObjectBytes;
     use super::VerifiedParsedClaimsPresence;
+    use super::VerifiedParsedDidClaim;
+    use super::VerifiedParsedDidClaims;
     use super::VerifiedParsedHeader;
     use super::VerifiedParsedTemporalOrder;
     use super::VerifiedPrimitiveError;
@@ -1997,6 +2037,7 @@ mod tests {
     use super::invocation_request_is_authorized;
     use super::json_object_bytes_are_valid;
     use super::parsed_claims_presence_is_valid;
+    use super::parsed_did_claims_are_valid;
     use super::parsed_header_is_valid;
     use super::parsed_temporal_order_is_valid;
     use super::proof_depth_within_budget;
@@ -2186,6 +2227,35 @@ mod tests {
             expiration_present: false,
             not_before_present: true,
         }));
+    }
+
+    #[test]
+    fn parsed_did_claims_use_verified_admission() {
+        let accepted = VerifiedParsedDidClaims {
+            issuer: VerifiedParsedDidClaim {
+                present: true,
+                non_empty: true,
+                trimmed: true,
+            },
+            audience: VerifiedParsedDidClaim {
+                present: true,
+                non_empty: true,
+                trimmed: true,
+            },
+        };
+        assert!(parsed_did_claims_are_valid(accepted));
+
+        let mut missing_issuer = accepted;
+        missing_issuer.issuer.present = false;
+        assert!(!parsed_did_claims_are_valid(missing_issuer));
+
+        let mut empty_audience = accepted;
+        empty_audience.audience.non_empty = false;
+        assert!(!parsed_did_claims_are_valid(empty_audience));
+
+        let mut untrimmed_issuer = accepted;
+        untrimmed_issuer.issuer.trimmed = false;
+        assert!(!parsed_did_claims_are_valid(untrimmed_issuer));
     }
 
     #[test]

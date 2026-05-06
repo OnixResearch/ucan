@@ -864,6 +864,8 @@ pub mod ucan_json;
 pub mod ucan_parsed_capability_shape;
 /// Verified UCAN parsed caveat-list shape admission.
 pub mod ucan_parsed_caveat_shape;
+/// Verified UCAN parsed DID claim admission.
+pub mod ucan_parsed_did_claim;
 /// Verified bridge between UCAN did:key and web-of-trust principal fingerprints.
 pub mod ucan_principal_link;
 /// Verified UCAN proof-reference digest admission.
