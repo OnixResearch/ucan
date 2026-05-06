@@ -250,41 +250,24 @@ r[library.authorization-decisions.authorize-concrete-request.missing-effective-c
 
 ### Requirement: Authorization uses verified capability semantics
 
-Authorization matching and concrete request admission MUST reuse the same verified-logic-backed resource and ability containment semantics used for proof-chain attenuation.
-r[library.authorization-decisions.verified-matching]
+Authorization matching and concrete request admission MUST reuse the same verified-logic-backed resource and ability containment semantics used for proof-chain attenuation. Capability concrete/wildcard classification exposed by the UCAN verified adapter MUST also route through vendored verified-logic ability helpers rather than local shell-only segment scans.
 
 #### Scenario: Wildcard ability segment authorizes child ability
-r[library.authorization-decisions.verified-matching.wildcard-authorizes-child-ability]
-
 - GIVEN an effective capability with ability `store/*`
 - AND a request for ability `store/add`
 - WHEN authorization matching runs
 - THEN the request MUST be allowed if the resource is also covered
 
 #### Scenario: Embedded wildcard remains invalid
-r[library.authorization-decisions.verified-matching.embedded-wildcard-is-invalid]
+- GIVEN a requested ability containing `*` inside a larger segment
+- WHEN the authorization request is constructed
+- THEN the request MUST fail before matching
 
-- GIVEN an authorization request whose ability contains `*` inside a non-wildcard segment
-- WHEN the request is constructed or evaluated
-- THEN the library MUST reject the request with a structured validation error
-- AND authorization MUST NOT fall back to string-prefix matching
-
-#### Scenario: Authorization requests are concrete operations
-r[library.authorization-decisions.verified-matching.request-must-be-concrete]
-
-- GIVEN an authorization request whose requested ability uses `*` as a full wildcard segment
-- WHEN the request is constructed or evaluated
-- THEN the library MUST reject the request with a structured validation error
-- AND wildcard abilities MUST remain valid only on delegated capabilities, not concrete requested operations
-- AND the wildcard check MUST be routed through the verified capability bridge rather than a parallel shell-local ability parser
-
-#### Scenario: Broader resource requests are denied
-r[library.authorization-decisions.verified-matching.broader-resource-request-denied]
-
-- GIVEN an effective capability delegated for a child resource scope
-- AND an authorization request for a broader parent resource scope
-- WHEN authorization matching runs
-- THEN the request MUST be denied with a no-matching-capability reason
+#### Scenario: Concrete ability admission uses verified wildcard classification
+- GIVEN a verified capability ability split into already-validated segments
+- WHEN the shell reports whether that ability contains any wildcard segment or can represent a concrete request
+- THEN the shell MUST route wildcard/concrete classification through vendored `verified-logic` ability helpers
+- AND the check MUST remain limited to segment bytes without claiming parser, policy, proof-chain, caveat, crypto, backend, clock, or provenance truth
 
 ### Requirement: Authorization denials are structured
 

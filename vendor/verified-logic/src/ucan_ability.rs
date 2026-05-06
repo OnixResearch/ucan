@@ -98,6 +98,26 @@ pub open spec fn ability_contains_spec2(parent: Ability, child: Ability) -> bool
     )
 }
 
+/// Whether an ability contains at least one glob wildcard segment.
+pub open spec fn ability_has_glob_segment_spec(segments: Seq<Seq<u8>>) -> bool {
+    exists|i: int| 0 <= i < segments.len() && is_glob_segment_spec(#[trigger] segments[i])
+}
+
+/// Whether an exec ability segment vector contains at least one glob wildcard segment.
+pub open spec fn ability_has_glob_segment_vec_spec(segments: Seq<Vec<u8>>) -> bool {
+    exists|i: int| 0 <= i < segments.len() && is_glob_segment_spec(#[trigger] segments[i]@)
+}
+
+/// Whether an ability has no glob segments and can represent a concrete request.
+pub open spec fn ability_is_concrete_spec(segments: Seq<Seq<u8>>) -> bool {
+    !ability_has_glob_segment_spec(segments)
+}
+
+/// Whether an exec ability segment vector has no glob segments.
+pub open spec fn ability_is_concrete_vec_spec(segments: Seq<Vec<u8>>) -> bool {
+    !ability_has_glob_segment_vec_spec(segments)
+}
+
 // --- Exec ---
 
 /// Check byte-segment equality with an extensional postcondition.
@@ -137,6 +157,34 @@ pub fn is_glob_segment(seg: &Vec<u8>) -> (result: bool)
     ensures result == is_glob_segment_spec(seg@),
 {
     seg.len() == 1 && seg[0] == 0x2au8
+}
+
+/// Check whether an ability contains any glob wildcard segment.
+pub fn ability_has_glob_segment(ability: &Ability) -> (result: bool)
+    ensures result == ability_has_glob_segment_vec_spec(ability.segments@),
+{
+    let mut i: usize = 0;
+    while i < ability.segments.len()
+        invariant
+            0 <= i <= ability.segments.len(),
+            forall|k: int| 0 <= k < i ==> !is_glob_segment_spec(#[trigger] ability.segments@[k]@),
+        decreases ability.segments.len() - i,
+    {
+        if is_glob_segment(&ability.segments[i]) {
+            assert(is_glob_segment_spec(ability.segments@[i as int]@));
+            return true;
+        }
+        i = i + 1;
+    }
+    assert(forall|k: int| 0 <= k < ability.segments@.len() ==> !is_glob_segment_spec(#[trigger] ability.segments@[k]@));
+    false
+}
+
+/// Check whether an ability has no glob wildcard segments.
+pub fn ability_is_concrete(ability: &Ability) -> (result: bool)
+    ensures result == ability_is_concrete_vec_spec(ability.segments@),
+{
+    !ability_has_glob_segment(ability)
 }
 
 proof fn top_ability_exec_equiv(pattern: Seq<Vec<u8>>)
@@ -514,6 +562,20 @@ mod tests {
         let crud = make_ability(&[b"crud", b"read"]);
         assert!(!ability_subsumes(&msg, &crud));
         assert!(!ability_subsumes(&crud, &msg));
+    }
+
+    #[test]
+    fn test_glob_and_concrete_admission() {
+        let concrete = make_ability(&[b"crud", b"read"]);
+        let scoped_wildcard = make_ability(&[b"crud", b"*"]);
+        let top = make_ability(&[b"*"]);
+
+        assert!(!ability_has_glob_segment(&concrete));
+        assert!(ability_is_concrete(&concrete));
+        assert!(ability_has_glob_segment(&scoped_wildcard));
+        assert!(!ability_is_concrete(&scoped_wildcard));
+        assert!(ability_has_glob_segment(&top));
+        assert!(!ability_is_concrete(&top));
     }
 
     #[test]

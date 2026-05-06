@@ -118,7 +118,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 
 | Vendored module | Class | Notes |
 | --- | --- | --- |
-| `ucan_ability` | `live-path` | Imported by `src/verified.rs`; associated ability containment facts are routed by live attenuation/proof-link checks where applicable. |
+| `ucan_ability` | `live-path` | Imported by `src/verified.rs`; associated ability containment facts are routed by live attenuation/proof-link checks, and `VerifiedCapability::{has_wildcard_segment,is_concrete}` now route wildcard/concrete admission through this module. |
 | `ucan_backend_transcript` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_base64url` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_capability_merge` | `public-helper` | Imported by `src/verified.rs` for explicit caller-supplied WOT helper APIs, not a live compact-token verifier guarantee by itself. |

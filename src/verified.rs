@@ -42,7 +42,6 @@ use verified_logic::web_of_trust_ucan_authorizer;
 use crate::shell::CapabilityDocument;
 
 const ABILITY_SEGMENT_SEPARATOR: char = '/';
-const WILDCARD_ABILITY_SEGMENT: &[u8] = b"*";
 const DEFAULT_CLOCK_SKEW_SECONDS: u64 = 60;
 
 pub type VerifiedResult<T> = std::result::Result<T, VerifiedPrimitiveError>;
@@ -577,13 +576,13 @@ impl VerifiedCapability {
     /// Return whether the verified ability contains a wildcard segment.
     #[must_use]
     pub fn has_wildcard_segment(&self) -> bool {
-        self.ability_segments.iter().any(|segment| segment.as_slice() == WILDCARD_ABILITY_SEGMENT)
+        ucan_ability::ability_has_glob_segment(&self.verified_ability())
     }
 
     /// Return whether this capability can represent a concrete operation request.
     #[must_use]
     pub fn is_concrete(&self) -> bool {
-        !self.has_wildcard_segment()
+        ucan_ability::ability_is_concrete(&self.verified_ability())
     }
 
     /// Check whether this capability authorizes a concrete resource/ability.
