@@ -2002,25 +2002,25 @@ fn build_signature(signature_bytes: &[u8]) -> VerifiedResult<ucan_signature::Ed2
     })
 }
 
-const fn validate_secret_key_length(secret_key_bytes: &[u8]) -> VerifiedResult<()> {
+fn validate_secret_key_length(secret_key_bytes: &[u8]) -> VerifiedResult<()> {
     let actual = secret_key_bytes.len();
-    if actual == ucan_signature::SECRET_KEY_LEN {
+    if ucan_signature::secret_key_len_is_valid(actual) {
         return Ok(());
     }
     Err(VerifiedPrimitiveError::InvalidSecretKeyLength { actual })
 }
 
-const fn validate_public_key_length(public_key_bytes: &[u8]) -> VerifiedResult<()> {
+fn validate_public_key_length(public_key_bytes: &[u8]) -> VerifiedResult<()> {
     let actual = public_key_bytes.len();
-    if actual == ucan_signature::PUBLIC_KEY_LEN {
+    if ucan_signature::public_key_len_is_valid(actual) {
         return Ok(());
     }
     Err(VerifiedPrimitiveError::InvalidPublicKeyLength { actual })
 }
 
-const fn validate_signature_length(signature_bytes: &[u8]) -> VerifiedResult<()> {
+fn validate_signature_length(signature_bytes: &[u8]) -> VerifiedResult<()> {
     let actual = signature_bytes.len();
-    if actual == ucan_signature::SIGNATURE_LEN {
+    if ucan_signature::signature_len_is_valid(actual) {
         return Ok(());
     }
     Err(VerifiedPrimitiveError::InvalidSignatureLength { actual })

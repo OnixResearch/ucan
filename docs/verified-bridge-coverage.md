@@ -146,7 +146,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `ucan_proof_traversal` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_revocation` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_revocation_check` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
-| `ucan_signature` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
+| `ucan_signature` | `live-path` | Imported by `src/verified.rs`; Ed25519 byte-length admission routes through `secret_key_len_is_valid`, `public_key_len_is_valid`, and `signature_len_is_valid`; associated signing/verification bridge facts are routed by live token issuance/verification paths where applicable. |
 | `ucan_temporal` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_temporal_order` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_token` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |

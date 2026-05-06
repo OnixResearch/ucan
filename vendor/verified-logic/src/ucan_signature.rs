@@ -110,11 +110,18 @@ pub open spec fn public_from_secret_spec(secret_key: Seq<u8>) -> Seq<u8> {
 // r[impl ucan-signature.round-trip]
 pub uninterp spec fn verify_spec(public_key: Seq<u8>, message: Seq<u8>, signature: Seq<u8>) -> bool;
 
+/// Well-formed secret key length: exactly 32 bytes.
+// r[impl ucan-signature.secret-key-length]
+// r[impl ucan-signature.round-trip]
+pub open spec fn secret_key_len_valid_spec(actual: nat) -> bool {
+    actual == SECRET_KEY_LEN
+}
+
 /// Well-formed secret key: exactly 32 bytes.
 // r[impl ucan-signature.secret-key-length]
 // r[impl ucan-signature.round-trip]
 pub open spec fn secret_key_bytes_valid_spec(bytes: Seq<u8>) -> bool {
-    bytes.len() == SECRET_KEY_LEN
+    secret_key_len_valid_spec(bytes.len())
 }
 
 /// Well-formed secret key: exactly 32 bytes.
@@ -124,10 +131,16 @@ pub open spec fn secret_key_valid_spec(sk: SecretKey) -> bool {
     secret_key_bytes_valid_spec(sk.bytes@)
 }
 
+/// Well-formed public-key byte length: exactly 32 bytes.
+// r[impl ucan-signature.public-key-length]
+pub open spec fn public_key_len_valid_spec(actual: nat) -> bool {
+    actual == PUBLIC_KEY_LEN
+}
+
 /// Well-formed public-key bytes: exactly 32 bytes.
 // r[impl ucan-signature.public-key-length]
 pub open spec fn public_key_bytes_valid_spec(bytes: Seq<u8>) -> bool {
-    bytes.len() == PUBLIC_KEY_LEN
+    public_key_len_valid_spec(bytes.len())
 }
 
 /// Well-formed public key: exactly 32 bytes.
@@ -136,10 +149,16 @@ pub open spec fn public_key_valid_spec(pk: PublicKey) -> bool {
     public_key_bytes_valid_spec(pk.bytes@)
 }
 
+/// Well-formed signature byte length: exactly 64 bytes.
+// r[impl ucan-signature.signature-length]
+pub open spec fn signature_len_valid_spec(actual: nat) -> bool {
+    actual == SIGNATURE_LEN
+}
+
 /// Well-formed signature bytes: exactly 64 bytes.
 // r[impl ucan-signature.signature-length]
 pub open spec fn signature_bytes_valid_spec(bytes: Seq<u8>) -> bool {
-    bytes.len() == SIGNATURE_LEN
+    signature_len_valid_spec(bytes.len())
 }
 
 /// Well-formed signature: exactly 64 bytes.
@@ -149,6 +168,33 @@ pub open spec fn signature_valid_spec(sig: Ed25519Signature) -> bool {
 }
 
 // --- Checked structural constructors ---
+
+/// Check whether an observed secret-key byte length is exactly 32 bytes.
+// r[impl ucan-signature.secret-key-length]
+// r[verify ucan-signature.secret-key-length]
+pub fn secret_key_len_is_valid(actual: usize) -> (result: bool)
+    ensures result == secret_key_len_valid_spec(actual as nat),
+{
+    actual == SECRET_KEY_LEN
+}
+
+/// Check whether an observed public-key byte length is exactly 32 bytes.
+// r[impl ucan-signature.public-key-length]
+// r[verify ucan-signature.public-key-length]
+pub fn public_key_len_is_valid(actual: usize) -> (result: bool)
+    ensures result == public_key_len_valid_spec(actual as nat),
+{
+    actual == PUBLIC_KEY_LEN
+}
+
+/// Check whether an observed Ed25519 signature byte length is exactly 64 bytes.
+// r[impl ucan-signature.signature-length]
+// r[verify ucan-signature.signature-length]
+pub fn signature_len_is_valid(actual: usize) -> (result: bool)
+    ensures result == signature_len_valid_spec(actual as nat),
+{
+    actual == SIGNATURE_LEN
+}
 
 /// Build a secret key only from exactly 32 bytes.
 // r[impl ucan-signature.secret-key-length]
@@ -466,6 +512,20 @@ mod tests {
         let sk = SecretKey { bytes: vec![55u8; 32] };
         let pk = public_from_secret(&sk);
         assert_eq!(pk.bytes.len(), 32);
+    }
+
+    // r[verify ucan-signature.checked-byte-inputs]
+    #[test]
+    fn test_byte_length_admission_helpers() {
+        assert!(secret_key_len_is_valid(SECRET_KEY_LEN));
+        assert!(!secret_key_len_is_valid(SECRET_KEY_LEN - 1));
+        assert!(!secret_key_len_is_valid(SECRET_KEY_LEN + 1));
+        assert!(public_key_len_is_valid(PUBLIC_KEY_LEN));
+        assert!(!public_key_len_is_valid(PUBLIC_KEY_LEN - 1));
+        assert!(!public_key_len_is_valid(PUBLIC_KEY_LEN + 1));
+        assert!(signature_len_is_valid(SIGNATURE_LEN));
+        assert!(!signature_len_is_valid(SIGNATURE_LEN - 1));
+        assert!(!signature_len_is_valid(SIGNATURE_LEN + 1));
     }
 
     // r[verify ucan-signature.checked-byte-inputs]

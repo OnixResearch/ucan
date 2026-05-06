@@ -25,7 +25,7 @@ reject_pattern() {
 require_pattern 'use verified_logic::ucan_ability|VerifiedCapability::from_document|\.contains\(|ability_has_glob_segment|ability_is_concrete' src
 require_pattern 'use verified_logic::ucan_capability_merge|capability_set_authorizes|check_authorized_by' src
 require_pattern 'use verified_logic::ucan_temporal|compose_time_window_chain' src
-require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sign_ed25519' src
+require_pattern 'use verified_logic::ucan_signature|verify_ed25519_signature|sign_ed25519|secret_key_len_is_valid|public_key_len_is_valid|signature_len_is_valid' src
 require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
 require_pattern 'use verified_logic::ucan_compact|compact_token_split_is_valid|compact_token_envelope_is_valid|compact_split_matches_parts|compact_envelope_matches_parts|VerifiedCompactTokenEnvelope' src
 require_pattern 'use verified_logic::ucan_base64url|base64url_segment_is_valid|base64url_no_pad_segment_is_valid|VerifiedBase64UrlSegment' src
@@ -87,6 +87,7 @@ require_pattern '\.has_wildcard_segment\(\)' src/verified.rs
 reject_pattern 'fn .*attenuat.*\{|fn .*temporal.*\{|fn .*signature.*\{' crates/ucan-core/src
 reject_pattern 'fn json_significant_byte_indexes|fn is_json_whitespace_byte|bytes\.iter\(\)\.position\(\|byte\| !is_json_whitespace_byte\(\*byte\)\)|bytes\.iter\(\)\.rposition\(\|byte\| !is_json_whitespace_byte\(\*byte\)\)' src/token.rs
 reject_pattern 'self\.ability_segments\.iter\(\)\.any\(|segment\.as_slice\(\) == b"\*"|WILDCARD_ABILITY_SEGMENT' src/verified.rs
+reject_pattern 'actual == ucan_signature::SECRET_KEY_LEN|actual == ucan_signature::PUBLIC_KEY_LEN|actual == ucan_signature::SIGNATURE_LEN' src/verified.rs
 reject_pattern 'parent\.audience\(\)\.as_str\(\) *!= *child_issuer\.as_str\(\)|child_issuer\.as_str\(\) *!= *parent\.audience\(\)\.as_str\(\)' src/token.rs
 reject_pattern 'self\.as_slice\(\)\.iter\(\)\.any\(\|candidate\| candidate == reference\)|candidate == reference\)\)|iter\(\)\.any\(\|existing\| existing == &reference\)' src/token.rs
 reject_pattern 'invoker: verified\.issuer\(\)\.clone\(\)' src/token.rs
