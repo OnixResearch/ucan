@@ -85,6 +85,12 @@
           fmt = craneLib.cargoFmt (commonArgs // {
             cargoExtraArgs = "--manifest-path Cargo.toml -p ucan -p ucan-core";
           });
+
+          production-readiness = pkgs.runCommand "ucan-production-readiness" { } ''
+            cd ${./.}
+            ${pkgs.python3}/bin/python scripts/check-production-readiness.py
+            touch $out
+          '';
         };
 
         devShells.default = craneLib.devShell {

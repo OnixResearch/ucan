@@ -2,7 +2,9 @@
 
 ## Primary token workflow
 
-Use these entry points for consumer-facing UCAN flows:
+Production-readiness labels for this API are tracked in `docs/production-readiness.md` and `docs/production-readiness.json`. The public `production_readiness_report()` API exposes the same crate-level `controlled-integration-ready` classification and per-surface support labels for integrators that need a machine-readable guardrail.
+
+New integrations should start with:
 
 - `issue_token_with_signer(&signer, ...)` for signer-bound compact token issuance without exposing raw secret bytes to the issuer pipeline.
 - `IssueRequest::builder()` plus `issue_token(&request)` for compatibility compact token issuance while downstream code migrates to signer-bound issuance. The positional `IssueRequest::new(...)` constructor remains for compatibility, but new code should prefer the named builder.

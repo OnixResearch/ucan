@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "crate_level": "controlled-integration-ready",
+  "integration_profile": {
+    "id": "caller-wired-controlled-integration",
+    "required_inputs": [
+      "KeyResolver or KeyResolutionContext",
+      "ProofStore or ProofCollection",
+      "RevocationChecker or NoRevocations",
+      "VerificationTime",
+      "VerificationLimits",
+      "CaveatPolicySet",
+      "TokenSigner and caller-owned key custody"
+    ],
+    "fail_closed_inputs": [
+      "key-resolution backend errors",
+      "proof-store missing, stale, oversized, cyclic, or backend errors",
+      "revocation denial or backend errors",
+      "missing or rejected caveat policy",
+      "unsupported DID method, signing algorithm, or key type",
+      "verification limit overflow"
+    ]
+  },
+  "surfaces": [
+    {
+      "id": "ed25519-did-key-compact-token",
+      "level": "controlled-integration-ready",
+      "evidence": "issue/parse/verify APIs, signer abstraction, examples, tests, and nix flake checks cover Ed25519 did:key compact tokens",
+      "boundary": "caller owns key custody, key provenance, request policy, and deployment hardening"
+    },
+    {
+      "id": "caller-supplied-key-resolution",
+      "level": "controlled-integration-ready",
+      "evidence": "KeyResolver injection and KeyResolutionContext support deterministic local resolution; backend errors fail closed",
+      "boundary": "remote DID method support, trust roots, freshness, and cache behavior are application-owned"
+    },
+    {
+      "id": "caller-supplied-proof-store",
+      "level": "controlled-integration-ready",
+      "evidence": "ProofStore injection, ProofCollection, bounded traversal, proof-link checks, and cycle/limit failures are tested",
+      "boundary": "network, filesystem, database, IPFS, content-addressed freshness, and proof provenance are application-owned"
+    },
+    {
+      "id": "caller-supplied-revocation",
+      "level": "controlled-integration-ready",
+      "evidence": "RevocationChecker injection, NoRevocations, RevocationList, and leaf/proof-chain denial failures are covered",
+      "boundary": "registry truth, persistence, duplicate semantics, freshness, and backend availability are application-owned"
+    },
+    {
+      "id": "opaque-caveat-policy-evaluation",
+      "level": "controlled-integration-ready",
+      "evidence": "CaveatPolicySet requires every caveat to have an explicit policy; missing or rejected policies deny authorization",
+      "boundary": "arbitrary caveat vocabulary semantics, clocks, counters, and external policy truth are application-owned"
+    },
+    {
+      "id": "finite-typed-caveat-helpers",
+      "level": "preview",
+      "evidence": "verified finite time-bound and rate-limit helper predicates are exposed for advanced callers",
+      "boundary": "adopting those helpers as a production vocabulary requires integration-specific policy and provenance evidence"
+    },
+    {
+      "id": "web-of-trust-helpers",
+      "level": "preview",
+      "evidence": "finite WOT evidence, threshold, and UCAN authorization helpers are exposed below the compact-token shell",
+      "boundary": "DID/CID decoding, evidence fetching, trust-store discovery, revocation freshness, and persistence are not supplied"
+    },
+    {
+      "id": "remote-did-resolution",
+      "level": "unsupported",
+      "evidence": "no built-in remote resolver is provided",
+      "boundary": "integrators must supply resolver trust, method admission, freshness, cache, and fail-closed behavior"
+    },
+    {
+      "id": "proof-transport-backends",
+      "level": "unsupported",
+      "evidence": "no built-in network, filesystem, database, IPFS, or content-addressed proof transport is provided",
+      "boundary": "integrators must supply proof provenance, freshness, bounds, and reference matching"
+    },
+    {
+      "id": "registry-backed-revocation",
+      "level": "unsupported",
+      "evidence": "no built-in registry client or persistence layer is provided",
+      "boundary": "integrators must supply registry truth, freshness, duplicate handling, and outage behavior"
+    },
+    {
+      "id": "replay-persistence-store",
+      "level": "unsupported",
+      "evidence": "receipt validation helpers do not store receipts or reject duplicate invocations across restarts",
+      "boundary": "integrators must supply durable replay detection, recovery, corruption handling, and freshness policy"
+    },
+    {
+      "id": "non-ed25519-key-algorithms",
+      "level": "unsupported",
+      "evidence": "compact-token signing and verification admit Ed25519 did:key with EdDSA only",
+      "boundary": "future algorithms need parsing, admission, mismatch, signature, and unsupported-algorithm evidence"
+    }
+  ]
+}

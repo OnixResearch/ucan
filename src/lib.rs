@@ -4,12 +4,18 @@
 pub use ucan_core as core;
 
 pub mod error;
+pub mod readiness;
 pub mod shell;
 pub mod token;
 pub mod verified;
 
 pub use error::Error;
 pub use error::Result;
+pub use readiness::IntegrationProfile;
+pub use readiness::ProductionReadinessReport;
+pub use readiness::ReadinessSurface;
+pub use readiness::SupportLevel;
+pub use readiness::production_readiness_report;
 pub use shell::CapabilityDocument;
 pub use shell::CaveatDocument;
 pub use shell::load_capability_from_path;

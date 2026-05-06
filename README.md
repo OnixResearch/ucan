@@ -122,6 +122,8 @@ or read ambient clocks.
 
 ## Support limits
 
+This crate is **controlled-integration ready**, not a turnkey production UCAN platform. The machine-readable and operator-facing support report is maintained in [`docs/production-readiness.md`](docs/production-readiness.md) and exposed in Rust through `production_readiness_report()`.
+
 - Production-oriented issuance should use `TokenSigner` / `issue_token_with_signer`; `IssueRequest` remains as a compatibility wrapper around the in-memory Ed25519 signer path.
 - Supported DID methods: `did:key` for Ed25519 public keys; `decode_did_key` is a structural byte decoder only and does not resolve DIDs or verify signatures.
 - Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
