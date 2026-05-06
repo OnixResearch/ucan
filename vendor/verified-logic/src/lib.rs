@@ -871,6 +871,8 @@ pub mod ucan_revocation;
 pub mod ucan_signature;
 /// Verified UCAN time-bounded delegation composition.
 pub mod ucan_temporal;
+/// Verified UCAN parsed temporal-order admission.
+pub mod ucan_temporal_order;
 pub mod ucan_token;
 pub mod ucan_verification_stage;
 pub mod vector_clock;

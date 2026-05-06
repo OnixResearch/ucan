@@ -30,6 +30,7 @@ use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedJsonObjectBytes;
 use crate::verified::VerifiedParsedClaimsPresence;
 use crate::verified::VerifiedParsedHeader;
+use crate::verified::VerifiedParsedTemporalOrder;
 use crate::verified::VerifiedPrimitiveError;
 use crate::verified::VerifiedProofReferenceDigest;
 use crate::verified::VerifiedProofTraversalBudget;
@@ -53,6 +54,7 @@ use crate::verified::invocation_request_is_authorized;
 use crate::verified::json_object_bytes_are_valid;
 use crate::verified::parsed_claims_presence_is_valid;
 use crate::verified::parsed_header_is_valid;
+use crate::verified::parsed_temporal_order_is_valid;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
 use crate::verified::proof_reference_digest_is_valid;
@@ -2297,6 +2299,7 @@ pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
 pub fn validate_decoded_token(decoded: DecodedToken) -> TokenResult<StructurallyValidToken> {
     validate_header(&decoded.header)?;
     validate_parsed_claims_presence(&decoded.claims)?;
+    validate_parsed_temporal_order(&decoded.claims)?;
     let capability_inputs = decoded_capability_inputs(&decoded.claims)?;
     let proof_bytes = decoded_proof_references(&decoded.claims)?;
     let proof_inputs = proof_bytes.as_ref().map(|references| proof_reference_inputs(references.as_slice()));
@@ -2911,7 +2914,8 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
             | TokenValidationFailure::MissingAttenuations
             | TokenValidationFailure::MissingProofs
             | TokenValidationFailure::MissingExpiration
-            | TokenValidationFailure::MissingNotBefore => TokenError::VerifiedPrimitive {
+            | TokenValidationFailure::MissingNotBefore
+            | TokenValidationFailure::InvalidTemporalOrder => TokenError::VerifiedPrimitive {
                 source: VerifiedPrimitiveError::TokenValidation { failure },
             },
         },
@@ -3331,6 +3335,29 @@ fn validate_parsed_claims_presence(claims: &DecodedClaims) -> TokenResult<()> {
     })
 }
 
+fn validate_parsed_temporal_order(claims: &DecodedClaims) -> TokenResult<()> {
+    let order = VerifiedParsedTemporalOrder {
+        not_before_seconds: claims.nbf.ok_or(TokenError::VerifiedPrimitive {
+            source: VerifiedPrimitiveError::TokenValidation {
+                failure: TokenValidationFailure::MissingNotBefore,
+            },
+        })?,
+        expires_at_seconds: claims.exp.ok_or(TokenError::VerifiedPrimitive {
+            source: VerifiedPrimitiveError::TokenValidation {
+                failure: TokenValidationFailure::MissingExpiration,
+            },
+        })?,
+    };
+    if parsed_temporal_order_is_valid(order) {
+        return Ok(());
+    }
+    Err(TokenError::VerifiedPrimitive {
+        source: VerifiedPrimitiveError::TokenValidation {
+            failure: TokenValidationFailure::InvalidTemporalOrder,
+        },
+    })
+}
+
 fn decoded_capability_inputs(
     claims: &DecodedClaims,
 ) -> TokenResult<Option<Vec<ucan_core::token::CapabilityInput<'_>>>> {
@@ -3557,6 +3584,23 @@ mod tests {
         let mut missing_not_before = decoded;
         missing_not_before.claims.nbf = None;
         assert_claim_presence_failure(missing_not_before, crate::verified::TokenValidationFailure::MissingNotBefore);
+    }
+
+    #[test]
+    fn validate_decoded_token_routes_parsed_temporal_order_through_verified_bridge() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let decoded = parse_compact_token(&token).expect("token should parse");
+
+        let mut equal_bounds = decoded.clone();
+        equal_bounds.claims.nbf = equal_bounds.claims.exp;
+        assert_claim_presence_failure(equal_bounds, crate::verified::TokenValidationFailure::InvalidTemporalOrder);
+
+        let mut reversed_bounds = decoded;
+        reversed_bounds.claims.nbf = reversed_bounds.claims.exp.map(|expires_at| expires_at + 1);
+        assert_claim_presence_failure(reversed_bounds, crate::verified::TokenValidationFailure::InvalidTemporalOrder);
     }
 
     #[test]

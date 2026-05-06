@@ -22,6 +22,7 @@ use verified_logic::ucan_proof_traversal;
 use verified_logic::ucan_revocation;
 use verified_logic::ucan_signature;
 use verified_logic::ucan_temporal;
+use verified_logic::ucan_temporal_order;
 use verified_logic::ucan_token;
 use verified_logic::ucan_verification_stage;
 use verified_logic::web_of_trust_attestation;
@@ -100,6 +101,7 @@ pub enum TokenValidationFailure {
     MissingProofs,
     MissingExpiration,
     MissingNotBefore,
+    InvalidTemporalOrder,
     InvalidSignature,
 }
 
@@ -115,6 +117,7 @@ impl fmt::Display for TokenValidationFailure {
             Self::MissingProofs => formatter.write_str("proof list must be present"),
             Self::MissingExpiration => formatter.write_str("expiration must be present"),
             Self::MissingNotBefore => formatter.write_str("not-before time must be present"),
+            Self::InvalidTemporalOrder => formatter.write_str("not-before time must precede expiration"),
             Self::InvalidSignature => formatter.write_str("signature must verify"),
         }
     }
@@ -182,6 +185,12 @@ pub struct VerifiedParsedClaimsPresence {
     pub proofs_present: bool,
     pub expiration_present: bool,
     pub not_before_present: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedTemporalOrder {
+    pub not_before_seconds: u64,
+    pub expires_at_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -796,6 +805,21 @@ pub fn parsed_claims_presence_is_valid(presence: VerifiedParsedClaimsPresence) -
         proofs_present: presence.proofs_present,
         expiration_present: presence.expiration_present,
         not_before_present: presence.not_before_present,
+    })
+}
+
+/// Validate parsed UCAN temporal ordering through the vendored verified primitive.
+///
+/// This validates only caller- or serde-shell-supplied numeric timestamp values
+/// and accepts exactly when `nbf < exp`. It does not validate JSON parsing,
+/// numeric deserialization correctness, wall-clock freshness, clock source
+/// correctness, expiration-at-now policy, signing input construction, signatures,
+/// resolver state, proof truth, or token provenance.
+#[must_use]
+pub fn parsed_temporal_order_is_valid(order: VerifiedParsedTemporalOrder) -> bool {
+    ucan_temporal_order::parsed_temporal_order_is_valid(ucan_temporal_order::ParsedTemporalOrder {
+        not_before_seconds: order.not_before_seconds,
+        expires_at_seconds: order.expires_at_seconds,
     })
 }
 
@@ -1768,6 +1792,7 @@ mod tests {
     use super::VerifiedJsonObjectBytes;
     use super::VerifiedParsedClaimsPresence;
     use super::VerifiedParsedHeader;
+    use super::VerifiedParsedTemporalOrder;
     use super::VerifiedPrimitiveError;
     use super::VerifiedProofReferenceDigest;
     use super::VerifiedProofTraversalBudget;
@@ -1802,6 +1827,7 @@ mod tests {
     use super::json_object_bytes_are_valid;
     use super::parsed_claims_presence_is_valid;
     use super::parsed_header_is_valid;
+    use super::parsed_temporal_order_is_valid;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
     use super::proof_reference_digest_is_valid;
@@ -1988,6 +2014,22 @@ mod tests {
             proofs_present: true,
             expiration_present: false,
             not_before_present: true,
+        }));
+    }
+
+    #[test]
+    fn parsed_temporal_order_uses_verified_admission() {
+        assert!(parsed_temporal_order_is_valid(VerifiedParsedTemporalOrder {
+            not_before_seconds: 1,
+            expires_at_seconds: 2,
+        }));
+        assert!(!parsed_temporal_order_is_valid(VerifiedParsedTemporalOrder {
+            not_before_seconds: 2,
+            expires_at_seconds: 2,
+        }));
+        assert!(!parsed_temporal_order_is_valid(VerifiedParsedTemporalOrder {
+            not_before_seconds: 3,
+            expires_at_seconds: 2,
         }));
     }
 
