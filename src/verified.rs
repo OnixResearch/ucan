@@ -18,6 +18,7 @@ use verified_logic::ucan_header;
 use verified_logic::ucan_invocation;
 use verified_logic::ucan_json;
 use verified_logic::ucan_parsed_capability_shape;
+use verified_logic::ucan_parsed_caveat_payload;
 use verified_logic::ucan_parsed_caveat_shape;
 use verified_logic::ucan_parsed_did_claim;
 use verified_logic::ucan_proof_reference;
@@ -114,6 +115,7 @@ pub enum TokenValidationFailure {
     InvalidProofReferenceCollection,
     InvalidCapabilityListShape,
     InvalidCaveatListShape,
+    InvalidCaveatPayloadAdmission,
     InvalidProofStoreResultTranscript,
     InvalidRevocationCheckTranscript,
     InvalidSigningInputProvenance,
@@ -139,6 +141,7 @@ impl fmt::Display for TokenValidationFailure {
             Self::InvalidProofReferenceCollection => formatter.write_str("proof-reference collection is invalid"),
             Self::InvalidCapabilityListShape => formatter.write_str("parsed capability list shape is invalid"),
             Self::InvalidCaveatListShape => formatter.write_str("parsed caveat list shape is invalid"),
+            Self::InvalidCaveatPayloadAdmission => formatter.write_str("parsed caveat payload admission is invalid"),
             Self::InvalidProofStoreResultTranscript => formatter.write_str("proof-store result transcript is invalid"),
             Self::InvalidRevocationCheckTranscript => formatter.write_str("revocation-check transcript is invalid"),
             Self::InvalidSigningInputProvenance => formatter.write_str("signing input byte provenance is invalid"),
@@ -273,6 +276,20 @@ pub struct VerifiedParsedCaveatShape {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedParsedCaveatListShape {
     pub caveats: Vec<VerifiedParsedCaveatShape>,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedParsedCaveatPayloadFact {
+    pub payload_present: bool,
+    pub encoded_non_empty: bool,
+    pub encoded_base64url_no_pad: bool,
+    pub decoded_non_empty: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedParsedCaveatPayloadList {
+    pub payloads: Vec<VerifiedParsedCaveatPayloadFact>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1003,6 +1020,22 @@ pub fn parsed_caveat_list_shape_is_valid(shape: &VerifiedParsedCaveatListShape) 
         })
         .collect::<Vec<_>>();
     ucan_parsed_caveat_shape::caveat_list_shape_is_valid(&caveats)
+}
+
+/// Validate parsed caveat payload facts through vendored verified logic.
+#[must_use]
+pub fn parsed_caveat_payloads_are_valid(payloads: &VerifiedParsedCaveatPayloadList) -> bool {
+    let facts = payloads
+        .payloads
+        .iter()
+        .map(|payload| ucan_parsed_caveat_payload::ParsedCaveatPayloadFact {
+            payload_present: payload.payload_present,
+            encoded_non_empty: payload.encoded_non_empty,
+            encoded_base64url_no_pad: payload.encoded_base64url_no_pad,
+            decoded_non_empty: payload.decoded_non_empty,
+        })
+        .collect::<Vec<_>>();
+    ucan_parsed_caveat_payload::caveat_payload_list_is_valid(&facts)
 }
 
 /// Validate proof-store result facts through vendored verified logic.
@@ -2354,6 +2387,39 @@ mod tests {
             }],
         };
         assert!(!super::parsed_caveat_list_shape_is_valid(&rejected));
+    }
+
+    #[test]
+    fn parsed_caveat_payloads_use_verified_admission() {
+        let accepted = super::VerifiedParsedCaveatPayloadList {
+            payloads: vec![super::VerifiedParsedCaveatPayloadFact {
+                payload_present: true,
+                encoded_non_empty: true,
+                encoded_base64url_no_pad: true,
+                decoded_non_empty: true,
+            }],
+        };
+        assert!(super::parsed_caveat_payloads_are_valid(&accepted));
+
+        let invalid_encoding = super::VerifiedParsedCaveatPayloadList {
+            payloads: vec![super::VerifiedParsedCaveatPayloadFact {
+                payload_present: true,
+                encoded_non_empty: true,
+                encoded_base64url_no_pad: false,
+                decoded_non_empty: true,
+            }],
+        };
+        assert!(!super::parsed_caveat_payloads_are_valid(&invalid_encoding));
+
+        let empty_decoded = super::VerifiedParsedCaveatPayloadList {
+            payloads: vec![super::VerifiedParsedCaveatPayloadFact {
+                payload_present: true,
+                encoded_non_empty: true,
+                encoded_base64url_no_pad: true,
+                decoded_non_empty: false,
+            }],
+        };
+        assert!(!super::parsed_caveat_payloads_are_valid(&empty_decoded));
     }
 
     #[test]

@@ -31,6 +31,8 @@ use crate::verified::VerifiedJsonObjectBytes;
 use crate::verified::VerifiedParsedCapabilityListShape;
 use crate::verified::VerifiedParsedCapabilityShape;
 use crate::verified::VerifiedParsedCaveatListShape;
+use crate::verified::VerifiedParsedCaveatPayloadFact;
+use crate::verified::VerifiedParsedCaveatPayloadList;
 use crate::verified::VerifiedParsedCaveatShape;
 use crate::verified::VerifiedParsedClaimsPresence;
 use crate::verified::VerifiedParsedDidClaim;
@@ -68,6 +70,7 @@ use crate::verified::invocation_request_is_authorized;
 use crate::verified::json_object_bytes_are_valid;
 use crate::verified::parsed_capability_list_shape_is_valid;
 use crate::verified::parsed_caveat_list_shape_is_valid;
+use crate::verified::parsed_caveat_payloads_are_valid;
 use crate::verified::parsed_claims_presence_is_valid;
 use crate::verified::parsed_did_claims_are_valid;
 use crate::verified::parsed_header_is_valid;
@@ -3015,6 +3018,7 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
             | TokenValidationFailure::InvalidProofReferenceCollection
             | TokenValidationFailure::InvalidCapabilityListShape
             | TokenValidationFailure::InvalidCaveatListShape
+            | TokenValidationFailure::InvalidCaveatPayloadAdmission
             | TokenValidationFailure::InvalidProofStoreResultTranscript
             | TokenValidationFailure::InvalidRevocationCheckTranscript
             | TokenValidationFailure::InvalidSigningInputProvenance
@@ -3610,8 +3614,37 @@ fn validate_parsed_caveat_list_shape(capability: &DecodedCapability) -> TokenRes
 
 fn decoded_caveat_inputs(capability: &DecodedCapability) -> TokenResult<Box<[ucan_core::token::CaveatInput<'_>]>> {
     validate_parsed_caveat_list_shape(capability)?;
-    let mut inputs = Vec::with_capacity(capability.caveats.len());
+    let mut decoded_payloads = Vec::with_capacity(capability.caveats.len());
+    let mut payload_facts = Vec::with_capacity(capability.caveats.len());
     for caveat in &capability.caveats {
+        let payload = caveat.payload.as_deref().ok_or_else(|| TokenError::Capability {
+            message: "caveat is missing payload".to_owned(),
+        })?;
+        let encoded_base64url_no_pad = base64url_segment_is_valid(&VerifiedBase64UrlSegment {
+            bytes: payload.as_bytes().to_vec(),
+        });
+        let decoded_payload = decode_part(payload, CompactPart::Payload)?;
+        payload_facts.push(VerifiedParsedCaveatPayloadFact {
+            payload_present: true,
+            encoded_non_empty: !payload.is_empty(),
+            encoded_base64url_no_pad,
+            decoded_non_empty: !decoded_payload.is_empty(),
+        });
+        decoded_payloads.push(decoded_payload);
+    }
+    let payloads = VerifiedParsedCaveatPayloadList {
+        payloads: payload_facts,
+    };
+    if !parsed_caveat_payloads_are_valid(&payloads) {
+        return Err(TokenError::VerifiedPrimitive {
+            source: VerifiedPrimitiveError::TokenValidation {
+                failure: TokenValidationFailure::InvalidCaveatPayloadAdmission,
+            },
+        });
+    }
+
+    let mut inputs = Vec::with_capacity(capability.caveats.len());
+    for (caveat, payload) in capability.caveats.iter().zip(decoded_payloads) {
         let domain = caveat.domain.as_deref().ok_or_else(|| TokenError::Capability {
             message: "caveat is missing domain".to_owned(),
         })?;
@@ -3621,10 +3654,6 @@ fn decoded_caveat_inputs(capability: &DecodedCapability) -> TokenResult<Box<[uca
         let key = caveat.key.as_deref().ok_or_else(|| TokenError::Capability {
             message: "caveat is missing key".to_owned(),
         })?;
-        let payload = caveat.payload.as_deref().ok_or_else(|| TokenError::Capability {
-            message: "caveat is missing payload".to_owned(),
-        })?;
-        let payload = decode_part(payload, CompactPart::Payload)?;
         inputs.push(ucan_core::token::CaveatInput::new(domain, caveat_type, key, payload.leak()));
     }
     Ok(inputs.into_boxed_slice())

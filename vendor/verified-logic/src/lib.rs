@@ -862,6 +862,8 @@ pub mod ucan_invocation;
 pub mod ucan_json;
 /// Verified UCAN parsed capability-list shape admission.
 pub mod ucan_parsed_capability_shape;
+/// Verified UCAN parsed caveat-payload admission.
+pub mod ucan_parsed_caveat_payload;
 /// Verified UCAN parsed caveat-list shape admission.
 pub mod ucan_parsed_caveat_shape;
 /// Verified UCAN parsed DID claim admission.
