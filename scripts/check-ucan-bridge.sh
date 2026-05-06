@@ -91,4 +91,51 @@ reject_pattern 'self\.as_slice\(\)\.iter\(\)\.any\(\|candidate\| candidate == re
 reject_pattern 'invoker: verified\.issuer\(\)\.clone\(\)' src/token.rs
 reject_pattern 'if depth > limits\.max_proof_depth\(\)|depth > limits\.max_proof_depth\(\)|chain_len - 1 <= max_depth' src/token.rs
 reject_pattern 'OnceLock|lazy_static|thread_local!|std::env|reqwest|ureq|hyper|process-global|global resolver|global proof|default resolver|default proof store|filesystem fallback|network fallback' src
+
+python3 - <<'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path.cwd()
+coverage = (root / 'docs/verified-bridge-coverage.md').read_text()
+lib = (root / 'src/lib.rs').read_text()
+exports = re.findall(r'pub use verified::([A-Za-z0-9_]+);', lib)
+valid_classes = {'live-path', 'public-helper', 'candidate', 'documented-boundary'}
+missing = []
+for name in exports:
+    row = re.search(rf'^\| `{re.escape(name)}` \| `([^`]+)` \|', coverage, re.MULTILINE)
+    if row is None:
+        missing.append(f'missing export coverage row: {name}')
+    elif row.group(1) not in valid_classes:
+        missing.append(f'invalid export coverage class for {name}: {row.group(1)}')
+
+modules = sorted(
+    p.stem for pattern in ('ucan*.rs', 'web_of_trust*.rs')
+    for p in (root / 'vendor/verified-logic/src').glob(pattern)
+)
+for module in modules:
+    row = re.search(rf'^\| `{re.escape(module)}` \| `([^`]+)` \|', coverage, re.MULTILINE)
+    if row is None:
+        missing.append(f'missing vendored module coverage row: {module}')
+    elif row.group(1) not in valid_classes:
+        missing.append(f'invalid vendored module coverage class for {module}: {row.group(1)}')
+
+for boundary in ('ucan_cid', 'ucan_principal_link'):
+    row = re.search(rf'^\| `{boundary}` \| `([^`]+)` \|', coverage, re.MULTILINE)
+    if row is None or row.group(1) != 'documented-boundary':
+        missing.append(f'{boundary} must remain documented-boundary until exact executable bridge exists')
+
+if 'source_repo=' in coverage:
+    missing.append('coverage inventory must not preserve vendored source_repo metadata')
+
+if re.search(r'^\| `[^`]+` \| `candidate` \|', coverage, re.MULTILINE):
+    missing.append('coverage inventory must not retain candidate rows after the sweep')
+
+if missing:
+    for item in missing:
+        print(item, file=sys.stderr)
+    sys.exit(1)
+PY
+
 "$repo_root/scripts/check-ucan-core-no-std.sh"

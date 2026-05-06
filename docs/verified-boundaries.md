@@ -1,6 +1,6 @@
 # Verified UCAN boundary audit
 
-This document records the current verified-logic bridge boundaries after the UCAN audit OpenSpec drain. "Verified" means routed through the vendored `verified-logic` primitives; ordinary Rust shell orchestration remains tested and bounded, but not formally verified in this crate.
+This document records the current verified-logic bridge boundaries after the UCAN audit OpenSpec drain. "Verified" means routed through the vendored `verified-logic` primitives; ordinary Rust shell orchestration remains tested and bounded, but not formally verified in this crate. `docs/verified-bridge-coverage.md` is the guard-readable inventory that classifies each public verified export and vendored UCAN/WOT module as `live-path`, `public-helper`, `candidate`, or `documented-boundary`.
 
 ## Newly exposed exact bridge seams
 
