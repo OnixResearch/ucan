@@ -850,6 +850,8 @@ pub mod ucan_delegation_depth;
 pub mod ucan_did;
 /// Verified UCAN invocation and receipt model.
 pub mod ucan_invocation;
+/// Verified decoded UCAN JSON object byte admission.
+pub mod ucan_json;
 /// Verified bridge between UCAN did:key and web-of-trust principal fingerprints.
 pub mod ucan_principal_link;
 /// Verified UCAN proof-reference digest admission.

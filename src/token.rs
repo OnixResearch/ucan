@@ -24,6 +24,7 @@ use crate::verified::VerifiedBase64UrlSegment;
 use crate::verified::VerifiedCapability;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
+use crate::verified::VerifiedJsonObjectBytes;
 use crate::verified::VerifiedPrimitiveError;
 use crate::verified::VerifiedProofReferenceDigest;
 use crate::verified::VerifiedProofTraversalBudget;
@@ -41,6 +42,7 @@ use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
+use crate::verified::json_object_bytes_are_valid;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
 use crate::verified::proof_reference_digest_is_valid;
@@ -3195,10 +3197,42 @@ fn encode_json_part<T: Serialize>(value: &T) -> TokenResult<String> {
 
 fn decode_json_part<T: DeserializeOwned>(part: &str, compact_part: CompactPart) -> TokenResult<T> {
     let bytes = decode_part(part, compact_part)?;
+    validate_decoded_json_object_bytes(bytes.as_slice(), compact_part)?;
     serde_json::from_slice(bytes.as_slice()).map_err(|error| TokenError::JsonDecode {
         part: compact_part,
         message: error.to_string(),
     })
+}
+
+fn validate_decoded_json_object_bytes(bytes: &[u8], compact_part: CompactPart) -> TokenResult<()> {
+    let Some((first_significant_index, last_significant_index)) = json_significant_byte_indexes(bytes) else {
+        return Err(TokenError::JsonDecode {
+            part: compact_part,
+            message: "decoded JSON part must contain a top-level object".to_owned(),
+        });
+    };
+    let object = VerifiedJsonObjectBytes {
+        bytes: bytes.to_vec(),
+        first_significant_index,
+        last_significant_index,
+    };
+    if json_object_bytes_are_valid(&object) {
+        return Ok(());
+    }
+    Err(TokenError::JsonDecode {
+        part: compact_part,
+        message: "failed verified decoded JSON object structural admission".to_owned(),
+    })
+}
+
+fn json_significant_byte_indexes(bytes: &[u8]) -> Option<(usize, usize)> {
+    let first = bytes.iter().position(|byte| !is_json_whitespace_byte(*byte))?;
+    let last = bytes.iter().rposition(|byte| !is_json_whitespace_byte(*byte))?;
+    Some((first, last))
+}
+
+const fn is_json_whitespace_byte(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\n' | b'\r' | b'\t')
 }
 
 fn decode_part(part: &str, compact_part: CompactPart) -> TokenResult<Vec<u8>> {
@@ -4083,14 +4117,14 @@ mod tests {
             ..
         }));
 
-        let invalid_padding = CompactToken::new("abc=.eyJpc3.AAAA").expect("shape should wrap");
+        let invalid_padding = CompactToken::new("abc=.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
         let padding_error = parse_compact_token(&invalid_padding).expect_err("padding should reject");
         assert!(matches!(padding_error, TokenError::Base64Decode {
             part: super::CompactPart::Header,
             message,
         } if message.contains("verified base64url-no-pad structural admission")));
 
-        let invalid_length = CompactToken::new("A.eyJpc3.AAAA").expect("shape should wrap");
+        let invalid_length = CompactToken::new("A.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
         let length_error = parse_compact_token(&invalid_length).expect_err("length class should reject");
         assert!(matches!(length_error, TokenError::Base64Decode {
             part: super::CompactPart::Header,
@@ -4103,6 +4137,32 @@ mod tests {
             part: super::CompactPart::Header,
             ..
         }));
+    }
+
+    #[test]
+    fn compact_json_object_admission_rejects_non_object_decoded_header_and_payload() {
+        let array_header = CompactToken::new("W10.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
+        let array_error = parse_compact_token(&array_header).expect_err("array header should reject");
+        assert!(matches!(array_error, TokenError::JsonDecode {
+            part: super::CompactPart::Header,
+            message,
+        } if message.contains("verified decoded JSON object structural admission")));
+
+        let scalar_payload =
+            CompactToken::new("IHsiYWxnIjoiRWREU0EiLCJ0eXAiOiJKV1QifSA.dHJ1ZQ.AAAA").expect("shape should wrap");
+        let scalar_error = parse_compact_token(&scalar_payload).expect_err("scalar payload should reject");
+        assert!(matches!(scalar_error, TokenError::JsonDecode {
+            part: super::CompactPart::Payload,
+            message,
+        } if message.contains("verified decoded JSON object structural admission")));
+
+        let whitespace_payload =
+            CompactToken::new("IHsiYWxnIjoiRWREU0EiLCJ0eXAiOiJKV1QifSA.ICAg.AAAA").expect("shape should wrap");
+        let whitespace_error = parse_compact_token(&whitespace_payload).expect_err("whitespace payload should reject");
+        assert!(matches!(whitespace_error, TokenError::JsonDecode {
+            part: super::CompactPart::Payload,
+            message,
+        } if message.contains("top-level object")));
     }
 
     #[test]

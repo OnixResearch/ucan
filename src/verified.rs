@@ -12,6 +12,7 @@ use verified_logic::ucan_compact;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
 use verified_logic::ucan_invocation;
+use verified_logic::ucan_json;
 use verified_logic::ucan_proof_reference;
 use verified_logic::ucan_proof_traversal;
 use verified_logic::ucan_revocation;
@@ -147,6 +148,13 @@ pub struct VerifiedProofReferenceDigest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedBase64UrlSegment {
     pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedJsonObjectBytes {
+    pub bytes: Vec<u8>,
+    pub first_significant_index: usize,
+    pub last_significant_index: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -698,7 +706,25 @@ pub fn base64url_segment_is_valid(segment: &VerifiedBase64UrlSegment) -> bool {
     ucan_base64url::base64url_no_pad_segment_is_valid(&segment.bytes)
 }
 
-/// Check proof-reference digest admission through vendored verified logic.
+/// Validate decoded JSON object byte-envelope facts before callers rely on
+/// serde-derived header or claim semantics.
+///
+/// This proves only finite byte-level object-envelope admission using
+/// caller/shell-supplied significant-byte indexes. It does not parse JSON,
+/// verify UTF-8 or canonicalization, validate claim/header fields, decode
+/// base64url, hash, sign, verify cryptographic signatures, prove token
+/// provenance, access storage/network backends, persist state, replay-protect,
+/// or read an ambient clock.
+#[must_use]
+pub fn json_object_bytes_are_valid(object: &VerifiedJsonObjectBytes) -> bool {
+    ucan_json::json_object_admission_is_valid(
+        &object.bytes,
+        object.first_significant_index,
+        object.last_significant_index,
+    )
+}
+
+/// Validate that a shell-computed proof reference uses the supported fixed digest
 ///
 /// This bridge accepts only fixed-width BLAKE3 digest bytes and exact
 /// reference/digest byte equality. It intentionally does not compute or verify
@@ -1613,6 +1639,7 @@ mod tests {
     use super::VerifiedCompactTokenEnvelope;
     use super::VerifiedCompactTokenParts;
     use super::VerifiedInvocationChainRequest;
+    use super::VerifiedJsonObjectBytes;
     use super::VerifiedPrimitiveError;
     use super::VerifiedProofReferenceDigest;
     use super::VerifiedProofTraversalBudget;
@@ -1641,6 +1668,7 @@ mod tests {
     use super::encode_ed25519_did_key;
     use super::invocation_chain_is_authorized;
     use super::invocation_request_is_authorized;
+    use super::json_object_bytes_are_valid;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
     use super::proof_reference_digest_is_valid;
@@ -1772,6 +1800,31 @@ mod tests {
             bytes: b"abc/".to_vec()
         }));
         assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment { bytes: b"A".to_vec() }));
+    }
+
+    #[test]
+    fn json_object_bytes_use_verified_admission() {
+        let object = br#"{"alg":"EdDSA","typ":"JWT"}"#.to_vec();
+        assert!(json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
+            first_significant_index: 0,
+            last_significant_index: object.len() - 1,
+            bytes: object,
+        }));
+        assert!(json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
+            bytes: b" \n\t{}\r\n".to_vec(),
+            first_significant_index: 3,
+            last_significant_index: 4,
+        }));
+        assert!(!json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
+            bytes: b"[]".to_vec(),
+            first_significant_index: 0,
+            last_significant_index: 1,
+        }));
+        assert!(!json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
+            bytes: b" {} ".to_vec(),
+            first_significant_index: 0,
+            last_significant_index: 2,
+        }));
     }
 
     #[test]
