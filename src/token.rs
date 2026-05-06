@@ -24,6 +24,7 @@ use crate::verified::VerifiedCapability;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedPrimitiveError;
+use crate::verified::VerifiedProofReferenceDigest;
 use crate::verified::VerifiedProofTraversalBudget;
 use crate::verified::VerifiedProofTraversalDagTranscript;
 use crate::verified::VerifiedProofTraversalEntry;
@@ -40,6 +41,7 @@ use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
+use crate::verified::proof_reference_digest_is_valid;
 use crate::verified::proof_traversal_dag_transcript_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
@@ -3145,7 +3147,11 @@ fn proof_reference_for_token(token: &CompactToken) -> ProofReference {
     let digest = blake3::hash(token.as_str().as_bytes());
     let bytes = digest.as_bytes();
     debug_assert_eq!(bytes.len(), PROOF_REFERENCE_DIGEST_LEN);
-    ProofReference::new(bytes.to_vec())
+    let reference = ProofReference::new(bytes.to_vec());
+    let verified_digest = VerifiedProofReferenceDigest { bytes: bytes.to_vec() };
+    let admitted = proof_reference_digest_is_valid(reference.as_bytes(), &verified_digest);
+    debug_assert!(admitted);
+    reference
 }
 
 fn compact_parts(token: &str) -> TokenResult<Vec<&str>> {

@@ -11,6 +11,7 @@ use verified_logic::ucan_compact;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
 use verified_logic::ucan_invocation;
+use verified_logic::ucan_proof_reference;
 use verified_logic::ucan_proof_traversal;
 use verified_logic::ucan_revocation;
 use verified_logic::ucan_signature;
@@ -135,6 +136,11 @@ pub struct VerifiedCompactTokenEnvelope {
     pub compact: Vec<u8>,
     pub parts: VerifiedCompactTokenParts,
     pub signing_input: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedProofReferenceDigest {
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -671,6 +677,23 @@ pub fn compact_token_envelope_is_valid(envelope: &VerifiedCompactTokenEnvelope) 
         signature: envelope.parts.signature.clone(),
     };
     ucan_compact::compact_envelope_matches_parts(&envelope.compact, &parts, &envelope.signing_input)
+}
+
+/// Check proof-reference digest admission through vendored verified logic.
+///
+/// This bridge accepts only fixed-width BLAKE3 digest bytes and exact
+/// reference/digest byte equality. It intentionally does not compute or verify
+/// BLAKE3, parse compact tokens, decode base64url, parse JSON, verify
+/// signatures, resolve proofs, query revocation backends, prove token
+/// provenance, access storage/network backends, persist state, replay-protect,
+/// or read an ambient clock.
+#[must_use]
+pub fn proof_reference_digest_is_valid(reference: &[u8], digest: &VerifiedProofReferenceDigest) -> bool {
+    let digest_bytes = digest.bytes.clone();
+    let Some(digest) = ucan_proof_reference::proof_reference_digest_from_bytes(&digest_bytes) else {
+        return false;
+    };
+    ucan_proof_reference::proof_reference_admits_digest(&reference.to_vec(), &digest)
 }
 
 /// Evaluate a finite verification-stage transcript through vendored verified logic.
@@ -1571,6 +1594,7 @@ mod tests {
     use super::VerifiedCompactTokenParts;
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedPrimitiveError;
+    use super::VerifiedProofReferenceDigest;
     use super::VerifiedProofTraversalBudget;
     use super::VerifiedProofTraversalDagTranscript;
     use super::VerifiedProofTraversalEntry;
@@ -1598,6 +1622,7 @@ mod tests {
     use super::invocation_request_is_authorized;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
+    use super::proof_reference_digest_is_valid;
     use super::proof_traversal_dag_transcript_is_valid;
     use super::proof_traversal_transcript_is_valid;
     use super::receipt_execution_is_valid;
@@ -1708,6 +1733,18 @@ mod tests {
         };
         assert!(!compact_token_split_is_valid(b"header.pay.load.signature", &embedded_separator));
         assert!(!compact_token_split_is_valid(b"header.payload", &parts));
+    }
+
+    #[test]
+    fn proof_reference_digest_uses_verified_admission() {
+        let digest = VerifiedProofReferenceDigest { bytes: vec![42u8; 32] };
+        assert!(proof_reference_digest_is_valid(digest.bytes.as_slice(), &digest));
+
+        let short_digest = VerifiedProofReferenceDigest { bytes: vec![42u8; 31] };
+        assert!(!proof_reference_digest_is_valid(short_digest.bytes.as_slice(), &short_digest));
+
+        let mismatched_reference = vec![7u8; 32];
+        assert!(!proof_reference_digest_is_valid(mismatched_reference.as_slice(), &digest));
     }
 
     #[test]

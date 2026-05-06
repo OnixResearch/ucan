@@ -48,50 +48,16 @@ r[library.did-key-ed25519.signature-mismatch-is-rejected]
 
 ### Requirement: Delegation proof chains are verified end to end
 
-The library MUST verify delegation proof chains across parent tokens, including issuer/audience linkage, temporal narrowing, and capability attenuation. Issuer/audience proof-link admission MUST route through the vendored verified-chain bridge rather than a shell-local direct semantic comparison.
-r[library.delegation-chain]
+The library MUST verify delegation proof chains across parent tokens, including issuer/audience linkage, temporal narrowing, and capability attenuation. Issuer/audience proof-link admission MUST route through the vendored verified-chain bridge rather than a shell-local direct semantic comparison. Proof-reference construction from shell-computed digest bytes MUST route through a vendored verified proof-reference digest admission bridge before the reference is used for proof-store lookup, cycle detection, traversal transcripts, or revocation checks.
 
-#### Scenario: Narrower child token is accepted
-r[library.delegation-chain.narrower-child-token-is-accepted]
+#### Scenario: Proof reference digest admission uses verified bridge [r[library.delegation-chain.proof-reference-digest-admission-uses-verified-bridge]]
 
-- GIVEN a parent token and a child token whose proof links to the parent
-- AND the child issuer matches the parent audience
-- AND the child capability set is no broader than the parent capability set
-- AND the child time window is no wider than the parent time window
-- WHEN the library verifies the child token and its proof chain
-- THEN verification MUST succeed
-- AND the result MUST expose the effective delegation constraints
-
-#### Scenario: Broken proof chain is rejected
-r[library.delegation-chain.broken-proof-chain-is-rejected]
-
-- GIVEN a token whose proof list omits a required parent, links to the wrong parent, or breaks the issuer/audience chain
-- WHEN the library verifies the proof chain
-- THEN verification MUST fail with a proof-chain error
-- AND the token MUST not be treated as authorized
-
-#### Scenario: Over-broad child delegation is rejected
-r[library.delegation-chain.over-broad-child-delegation-is-rejected]
-
-- GIVEN a child token whose capability set or expiration exceeds what its parent token delegates
-- WHEN the library verifies the proof chain
-- THEN verification MUST fail with an attenuation or temporal error
-- AND the token MUST not be treated as authorized
-
-#### Scenario: Self-delegation is rejected
-r[library.delegation-chain.self-delegation-is-rejected]
-
-- GIVEN a token whose issuer and audience are the same DID
-- WHEN the `ucan` shell verifies the token or any proof chain containing it
-- THEN verification MUST fail with a structured self-delegation error
-- AND the token MUST not be treated as authorized
-
-#### Scenario: Proof link uses verified chain semantics [r[library.delegation-chain.proof-link-uses-verified-chain-semantics]]
-
-- GIVEN a parent token audience DID and a child token issuer DID
-- WHEN the shell verifies proof-chain linkage
-- THEN the parent-audience/child-issuer check MUST pass through the verified-chain bridge helper
-- AND a mismatch MUST still fail with a proof-chain error
+- GIVEN compact token bytes and the shell-computed proof-reference digest bytes
+- WHEN the shell constructs a proof reference for proof traversal, proof-store lookup, cycle detection, or revocation checks
+- THEN the digest bytes MUST be admitted through the vendored verified proof-reference bridge
+- AND admission MUST require the digest to have the supported fixed digest length
+- AND admission MUST require the proof-reference bytes to exactly match the digest bytes
+- AND the bridge MUST NOT claim to verify BLAKE3 correctness, compact-token canonicalization, token provenance, base64url decoding, JSON parsing, signature verification, backend truth, or revocation freshness
 
 ### Requirement: Functional core and imperative shell stay separate
 

@@ -850,6 +850,8 @@ pub mod ucan_did;
 pub mod ucan_invocation;
 /// Verified bridge between UCAN did:key and web-of-trust principal fingerprints.
 pub mod ucan_principal_link;
+/// Verified UCAN proof-reference digest admission.
+pub mod ucan_proof_reference;
 /// Verified UCAN proof traversal transcript primitives.
 pub mod ucan_proof_traversal;
 /// Verified UCAN revocation set checking and monotonicity.
