@@ -7,6 +7,7 @@ use verified_logic::ucan_backend_transcript;
 use verified_logic::ucan_base64url;
 use verified_logic::ucan_capability_merge;
 use verified_logic::ucan_caveat;
+use verified_logic::ucan_caveat_evaluation;
 use verified_logic::ucan_caveat_preservation;
 use verified_logic::ucan_chain;
 use verified_logic::ucan_compact;
@@ -169,6 +170,17 @@ pub struct VerifiedParsedHeader {
 pub struct VerifiedCaveatPreservation {
     pub parent_caveat_ids: Vec<Vec<u8>>,
     pub child_caveat_ids: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedCaveatEvaluationFact {
+    pub policy_present: bool,
+    pub satisfied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedCaveatEvaluationTranscript {
+    pub facts: Vec<VerifiedCaveatEvaluationFact>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -763,6 +775,39 @@ pub fn caveat_preservation_is_valid(preservation: &VerifiedCaveatPreservation) -
         &preservation.parent_caveat_ids,
         &preservation.child_caveat_ids,
     )
+}
+
+const fn to_caveat_evaluation_fact(fact: VerifiedCaveatEvaluationFact) -> ucan_caveat_evaluation::CaveatEvaluationFact {
+    ucan_caveat_evaluation::CaveatEvaluationFact {
+        policy_present: fact.policy_present,
+        satisfied: fact.satisfied,
+    }
+}
+
+fn to_caveat_evaluation_facts(
+    transcript: &VerifiedCaveatEvaluationTranscript,
+) -> Vec<ucan_caveat_evaluation::CaveatEvaluationFact> {
+    transcript.facts.iter().copied().map(to_caveat_evaluation_fact).collect()
+}
+
+/// Admit a finite shell-emitted caveat evaluation transcript through the
+/// vendored verified fail-closed aggregation predicate.
+///
+/// This proves only that every supplied fact has `policy_present=true` and
+/// `satisfied=true`. It does not verify policy lookup truth, arbitrary policy
+/// correctness, typed caveat parsing, clocks, counters, freshness, token
+/// provenance, or cryptography.
+#[must_use]
+pub fn caveat_evaluation_transcript_accepts(transcript: &VerifiedCaveatEvaluationTranscript) -> bool {
+    ucan_caveat_evaluation::caveat_evaluation_transcript_accepts(&to_caveat_evaluation_facts(transcript))
+}
+
+/// Return the first missing-policy or unsatisfied caveat index in a finite
+/// shell-emitted caveat evaluation transcript, or the transcript length when all
+/// supplied facts accept.
+#[must_use]
+pub fn caveat_evaluation_first_failed_index(transcript: &VerifiedCaveatEvaluationTranscript) -> usize {
+    ucan_caveat_evaluation::first_failed_caveat_index(&to_caveat_evaluation_facts(transcript))
 }
 
 /// Validate that a shell-computed proof reference uses the supported fixed digest
@@ -1676,6 +1721,8 @@ mod tests {
     use super::VerifiedBackendTranscript;
     use super::VerifiedBase64UrlSegment;
     use super::VerifiedCapability;
+    use super::VerifiedCaveatEvaluationFact;
+    use super::VerifiedCaveatEvaluationTranscript;
     use super::VerifiedCaveatPreservation;
     use super::VerifiedChainEntry;
     use super::VerifiedCompactTokenEnvelope;
@@ -1703,6 +1750,8 @@ mod tests {
     use super::backend_transcript_first_failed_operation;
     use super::base64url_segment_is_valid;
     use super::capability_set_authorizes;
+    use super::caveat_evaluation_first_failed_index;
+    use super::caveat_evaluation_transcript_accepts;
     use super::caveat_preservation_is_valid;
     use super::compact_token_envelope_is_valid;
     use super::compact_token_split_is_valid;
@@ -1886,6 +1935,48 @@ mod tests {
             child_caveat_ids: vec![b"A".to_vec()],
         };
         assert!(!caveat_preservation_is_valid(&changed_bytes));
+    }
+
+    #[test]
+    fn caveat_evaluation_transcript_uses_verified_admission() {
+        let accepted = VerifiedCaveatEvaluationTranscript {
+            facts: vec![
+                VerifiedCaveatEvaluationFact {
+                    policy_present: true,
+                    satisfied: true,
+                },
+                VerifiedCaveatEvaluationFact {
+                    policy_present: true,
+                    satisfied: true,
+                },
+            ],
+        };
+        assert!(caveat_evaluation_transcript_accepts(&accepted));
+        assert_eq!(caveat_evaluation_first_failed_index(&accepted), accepted.facts.len());
+
+        let missing = VerifiedCaveatEvaluationTranscript {
+            facts: vec![
+                VerifiedCaveatEvaluationFact {
+                    policy_present: true,
+                    satisfied: true,
+                },
+                VerifiedCaveatEvaluationFact {
+                    policy_present: false,
+                    satisfied: false,
+                },
+            ],
+        };
+        assert!(!caveat_evaluation_transcript_accepts(&missing));
+        assert_eq!(caveat_evaluation_first_failed_index(&missing), 1);
+
+        let rejected = VerifiedCaveatEvaluationTranscript {
+            facts: vec![VerifiedCaveatEvaluationFact {
+                policy_present: true,
+                satisfied: false,
+            }],
+        };
+        assert!(!caveat_evaluation_transcript_accepts(&rejected));
+        assert_eq!(caveat_evaluation_first_failed_index(&rejected), 0);
     }
 
     #[test]

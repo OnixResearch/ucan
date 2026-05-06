@@ -840,6 +840,8 @@ pub mod ucan_base64url;
 /// Verified UCAN capability merge from multiple delegation paths.
 pub mod ucan_capability_merge;
 pub mod ucan_caveat;
+/// Verified UCAN caveat evaluation transcript admission.
+pub mod ucan_caveat_evaluation;
 /// Verified UCAN opaque caveat identifier preservation.
 pub mod ucan_caveat_preservation;
 

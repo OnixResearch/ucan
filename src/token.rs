@@ -22,6 +22,8 @@ use crate::verified::VerifiedBackendOperationFact;
 use crate::verified::VerifiedBackendTranscript;
 use crate::verified::VerifiedBase64UrlSegment;
 use crate::verified::VerifiedCapability;
+use crate::verified::VerifiedCaveatEvaluationFact;
+use crate::verified::VerifiedCaveatEvaluationTranscript;
 use crate::verified::VerifiedCaveatPreservation;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
@@ -38,6 +40,8 @@ use crate::verified::VerifiedWebOfTrustCaveatContext;
 use crate::verified::backend_transcript_accepts;
 use crate::verified::backend_transcript_first_failed_operation;
 use crate::verified::base64url_segment_is_valid;
+use crate::verified::caveat_evaluation_first_failed_index;
+use crate::verified::caveat_evaluation_transcript_accepts;
 use crate::verified::caveat_preservation_is_valid;
 use crate::verified::compact_token_envelope_is_valid;
 use crate::verified::compact_token_split_is_valid;
@@ -2086,14 +2090,35 @@ fn evaluate_capability_caveats(
     request: &AuthorizationRequest,
     policies: &dyn CaveatPolicySet,
 ) -> Option<AuthorizationDenialReason> {
+    let mut transcript = VerifiedCaveatEvaluationTranscript {
+        facts: Vec::with_capacity(capability.caveats.as_slice().len()),
+    };
+
     for caveat in capability.caveats.as_slice() {
         let identifier = CaveatIdentifier::from(caveat);
         let Some(policy) = policies.policy_for(&identifier) else {
+            transcript.facts.push(VerifiedCaveatEvaluationFact {
+                policy_present: false,
+                satisfied: false,
+            });
+            debug_assert_eq!(caveat_evaluation_first_failed_index(&transcript), transcript.facts.len() - 1);
+            debug_assert!(!caveat_evaluation_transcript_accepts(&transcript));
             return Some(AuthorizationDenialReason::CaveatPolicyMissing { caveat: identifier });
         };
         match policy.evaluate(caveat, request) {
-            CaveatDecision::Satisfied => {}
+            CaveatDecision::Satisfied => {
+                transcript.facts.push(VerifiedCaveatEvaluationFact {
+                    policy_present: true,
+                    satisfied: true,
+                });
+            }
             CaveatDecision::Rejected { message } => {
+                transcript.facts.push(VerifiedCaveatEvaluationFact {
+                    policy_present: true,
+                    satisfied: false,
+                });
+                debug_assert_eq!(caveat_evaluation_first_failed_index(&transcript), transcript.facts.len() - 1);
+                debug_assert!(!caveat_evaluation_transcript_accepts(&transcript));
                 return Some(AuthorizationDenialReason::CaveatRejected {
                     caveat: identifier,
                     message,
@@ -2101,6 +2126,7 @@ fn evaluate_capability_caveats(
             }
         }
     }
+    debug_assert!(caveat_evaluation_transcript_accepts(&transcript));
     None
 }
 
