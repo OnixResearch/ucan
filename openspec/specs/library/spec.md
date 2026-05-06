@@ -1,7 +1,9 @@
 # library Specification
 
 ## Purpose
-TBD - created by archiving change make-ucan-library-usable. Update Purpose after archive.
+
+This specification defines the UCAN library's public token issuance, parsing, verification, authorization, caveat, proof-chain, revocation, and verified-logic bridge behavior. It records which finite data-only predicates are routed through vendored `verified-logic` helpers and which parser, codec, cryptographic, backend, runtime, and caller-policy surfaces remain explicit shell trust boundaries.
+
 ## Requirements
 ### Requirement: End-to-end token round-trip
 
@@ -893,7 +895,7 @@ The library MUST expose opt-in deterministic typed caveat helper bridges only fo
 
 ### Requirement: Verified proof traversal model [r[library.verified-proof-traversal-model]]
 
-The library MUST preserve the existing caller-injected proof traversal behavior while defining any future verified traversal bridge over finite resolved proof data and traversal transcripts rather than hidden resolver, proof-store, network, filesystem, cryptographic, revocation-backend, or ambient-clock side effects.
+The library MUST preserve the existing caller-injected proof traversal behavior while defining verified traversal bridges over finite resolved proof data and traversal transcripts rather than hidden resolver, proof-store, network, filesystem, cryptographic, revocation-backend, or ambient-clock side effects.
 
 #### Scenario: Resolved traversal model preserves success semantics [r[library.verified-proof-traversal-model.scenario.success-semantics]]
 
@@ -948,7 +950,7 @@ The library MUST preserve the invariant that a child capability is authorized by
 
 ### Requirement: Finite verified proof traversal primitives [r[library.verified-proof-traversal-primitives]]
 
-The library MUST define future proof traversal verification in terms of finite, deterministic, data-only primitives that consume already-resolved structural inputs or shell-produced traversal transcripts, rather than resolver, proof-store, parser, cryptographic, storage, network, signing, persistence, replay, or ambient-clock side effects.
+The library MUST define proof traversal verification in terms of finite, deterministic, data-only primitives that consume already-resolved structural inputs or shell-produced traversal transcripts, rather than resolver, proof-store, parser, cryptographic, storage, network, signing, persistence, replay, or ambient-clock side effects.
 
 #### Scenario: Proof graph well-formedness is data-only [r[library.verified-proof-traversal-primitives.scenario.graph-well-formedness]]
 
@@ -1003,12 +1005,12 @@ The UCAN shell MUST emit and verify an internal finite proof traversal transcrip
 - THEN the shell MUST adapt the already available token facts into a parent-to-child transcript
 - AND the shell MUST call the vendored proof traversal transcript bridge before returning success
 
-#### Scenario: Multi-parent DAG remains explicit boundary [r[library.live-linear-proof-traversal-transcript.multi-parent-boundary]]
+#### Scenario: Multi-parent DAG is handled by the DAG bridge [r[library.live-linear-proof-traversal-transcript.multi-parent-boundary]]
 
 - GIVEN a token with multiple direct parent proofs
-- WHEN the current linear transcript primitive cannot represent the proof graph exactly
-- THEN the shell MUST leave that DAG on existing shell validation semantics
-- AND documentation MUST state that a future verified DAG primitive is required before claiming bridge coverage for multi-parent proof graphs
+- WHEN the proof graph is representable as a finite topologically ordered DAG transcript
+- THEN the shell MUST route that DAG transcript through the verified DAG traversal bridge before returning a verified token
+- AND documentation MUST state that parser, resolver, proof-store, revocation, cryptographic, freshness, and runtime orchestration behavior remain outside the DAG transcript claim
 
 #### Scenario: Bridge rejection fails closed [r[library.live-linear-proof-traversal-transcript.bridge-rejection-fails-closed]]
 
