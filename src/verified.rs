@@ -97,6 +97,7 @@ pub enum TokenValidationFailure {
     MissingIssuer,
     MissingAudience,
     MissingAttenuations,
+    MissingProofs,
     MissingExpiration,
     MissingNotBefore,
     InvalidSignature,
@@ -111,6 +112,7 @@ impl fmt::Display for TokenValidationFailure {
             Self::MissingIssuer => formatter.write_str("issuer must be present"),
             Self::MissingAudience => formatter.write_str("audience must be present"),
             Self::MissingAttenuations => formatter.write_str("at least one capability must be present"),
+            Self::MissingProofs => formatter.write_str("proof list must be present"),
             Self::MissingExpiration => formatter.write_str("expiration must be present"),
             Self::MissingNotBefore => formatter.write_str("not-before time must be present"),
             Self::InvalidSignature => formatter.write_str("signature must verify"),
@@ -177,6 +179,7 @@ pub struct VerifiedParsedClaimsPresence {
     pub issuer_present: bool,
     pub audience_present: bool,
     pub attenuations_present: bool,
+    pub proofs_present: bool,
     pub expiration_present: bool,
     pub not_before_present: bool,
 }
@@ -782,7 +785,7 @@ pub fn parsed_header_is_valid(header: &VerifiedParsedHeader) -> bool {
 /// This validates only caller- or serde-shell-supplied field-presence booleans
 /// for the required UCAN payload claims. It does not validate JSON parsing,
 /// duplicate-key behavior, field extraction correctness, strings, capabilities,
-/// proof references, temporal ordering, signing input construction, signatures,
+/// proof-reference decoding, temporal ordering, signing input construction, signatures,
 /// hashes, resolver state, or token provenance.
 #[must_use]
 pub fn parsed_claims_presence_is_valid(presence: VerifiedParsedClaimsPresence) -> bool {
@@ -790,6 +793,7 @@ pub fn parsed_claims_presence_is_valid(presence: VerifiedParsedClaimsPresence) -
         issuer_present: presence.issuer_present,
         audience_present: presence.audience_present,
         attenuations_present: presence.attenuations_present,
+        proofs_present: presence.proofs_present,
         expiration_present: presence.expiration_present,
         not_before_present: presence.not_before_present,
     })
@@ -1957,6 +1961,7 @@ mod tests {
             issuer_present: true,
             audience_present: true,
             attenuations_present: true,
+            proofs_present: true,
             expiration_present: true,
             not_before_present: true,
         }));
@@ -1964,6 +1969,7 @@ mod tests {
             issuer_present: false,
             audience_present: true,
             attenuations_present: true,
+            proofs_present: true,
             expiration_present: true,
             not_before_present: true,
         }));
@@ -1971,6 +1977,15 @@ mod tests {
             issuer_present: true,
             audience_present: true,
             attenuations_present: true,
+            proofs_present: false,
+            expiration_present: true,
+            not_before_present: true,
+        }));
+        assert!(!parsed_claims_presence_is_valid(VerifiedParsedClaimsPresence {
+            issuer_present: true,
+            audience_present: true,
+            attenuations_present: true,
+            proofs_present: true,
             expiration_present: false,
             not_before_present: true,
         }));

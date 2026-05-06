@@ -2909,6 +2909,7 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
             TokenValidationFailure::MissingIssuer
             | TokenValidationFailure::MissingAudience
             | TokenValidationFailure::MissingAttenuations
+            | TokenValidationFailure::MissingProofs
             | TokenValidationFailure::MissingExpiration
             | TokenValidationFailure::MissingNotBefore => TokenError::VerifiedPrimitive {
                 source: VerifiedPrimitiveError::TokenValidation { failure },
@@ -3304,6 +3305,7 @@ fn validate_parsed_claims_presence(claims: &DecodedClaims) -> TokenResult<()> {
         issuer_present: claims.iss.is_some(),
         audience_present: claims.aud.is_some(),
         attenuations_present: claims.att.is_some(),
+        proofs_present: claims.prf.is_some(),
         expiration_present: claims.exp.is_some(),
         not_before_present: claims.nbf.is_some(),
     };
@@ -3317,6 +3319,8 @@ fn validate_parsed_claims_presence(claims: &DecodedClaims) -> TokenResult<()> {
         TokenValidationFailure::MissingAudience
     } else if !presence.attenuations_present {
         TokenValidationFailure::MissingAttenuations
+    } else if !presence.proofs_present {
+        TokenValidationFailure::MissingProofs
     } else if !presence.expiration_present {
         TokenValidationFailure::MissingExpiration
     } else {
@@ -3541,6 +3545,10 @@ mod tests {
             missing_attenuations,
             crate::verified::TokenValidationFailure::MissingAttenuations,
         );
+
+        let mut missing_proofs = decoded.clone();
+        missing_proofs.claims.prf = None;
+        assert_claim_presence_failure(missing_proofs, crate::verified::TokenValidationFailure::MissingProofs);
 
         let mut missing_expiration = decoded.clone();
         missing_expiration.claims.exp = None;
