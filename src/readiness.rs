@@ -70,6 +70,7 @@ const REQUIRED_INPUTS: &[&str] = &[
     "VerificationTime",
     "VerificationLimits",
     "CaveatPolicySet",
+    "ReplayAdmission or caller-owned replay admission policy",
     "TokenSigner and caller-owned key custody",
 ];
 
@@ -77,6 +78,7 @@ const FAIL_CLOSED_INPUTS: &[&str] = &[
     "key-resolution backend errors",
     "proof-store missing, stale, oversized, cyclic, or backend errors",
     "revocation denial or backend errors",
+    "replay admission duplicate, stale, malformed, denied, or backend errors",
     "missing or rejected caveat policy",
     "unsupported DID method, signing algorithm, or key type",
     "verification limit overflow",
@@ -106,6 +108,18 @@ const SURFACES: &[ReadinessSurface] = &[
         level: SupportLevel::ControlledIntegrationReady,
         evidence: "RevocationChecker injection, NoRevocations, RevocationList, and leaf/proof-chain denial failures are covered",
         boundary: "registry truth, persistence, duplicate semantics, freshness, and backend availability are application-owned",
+    },
+    ReadinessSurface {
+        id: "generic-consumer-integration-hooks",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "generic KeyResolver, ProofStore, RevocationChecker, and ReplayAdmission hooks are public and tested without consumer-specific adapters",
+        boundary: "consumer-specific resource, ability, identity, envelope, backend, freshness, retry, and persistence semantics are application-owned",
+    },
+    ReadinessSurface {
+        id: "caller-supplied-replay-admission",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "ReplayAdmission and verify_invocation_with_replay allow caller-owned duplicate, stale, malformed, denial, and backend policies to fail closed",
+        boundary: "durable replay detection, crash recovery, backend corruption handling, and cross-process freshness are application-owned",
     },
     ReadinessSurface {
         id: "opaque-caveat-policy-evaluation",
@@ -219,6 +233,7 @@ mod tests {
             "KeyResolver or KeyResolutionContext",
             "ProofStore or ProofCollection",
             "RevocationChecker or NoRevocations",
+            "ReplayAdmission or caller-owned replay admission policy",
             "VerificationTime",
             "VerificationLimits",
             "CaveatPolicySet",

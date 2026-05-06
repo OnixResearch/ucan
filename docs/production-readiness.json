@@ -10,12 +10,14 @@
       "VerificationTime",
       "VerificationLimits",
       "CaveatPolicySet",
+      "ReplayAdmission or caller-owned replay admission policy",
       "TokenSigner and caller-owned key custody"
     ],
     "fail_closed_inputs": [
       "key-resolution backend errors",
       "proof-store missing, stale, oversized, cyclic, or backend errors",
       "revocation denial or backend errors",
+      "replay admission duplicate, stale, malformed, denied, or backend errors",
       "missing or rejected caveat policy",
       "unsupported DID method, signing algorithm, or key type",
       "verification limit overflow"
@@ -45,6 +47,18 @@
       "level": "controlled-integration-ready",
       "evidence": "RevocationChecker injection, NoRevocations, RevocationList, and leaf/proof-chain denial failures are covered",
       "boundary": "registry truth, persistence, duplicate semantics, freshness, and backend availability are application-owned"
+    },
+    {
+      "id": "generic-consumer-integration-hooks",
+      "level": "controlled-integration-ready",
+      "evidence": "generic KeyResolver, ProofStore, RevocationChecker, and ReplayAdmission hooks are public and tested without consumer-specific adapters",
+      "boundary": "consumer-specific resource, ability, identity, envelope, backend, freshness, retry, and persistence semantics are application-owned"
+    },
+    {
+      "id": "caller-supplied-replay-admission",
+      "level": "controlled-integration-ready",
+      "evidence": "ReplayAdmission and verify_invocation_with_replay allow caller-owned duplicate, stale, malformed, denial, and backend policies to fail closed",
+      "boundary": "durable replay detection, crash recovery, backend corruption handling, and cross-process freshness are application-owned"
     },
     {
       "id": "opaque-caveat-policy-evaluation",

@@ -29,6 +29,8 @@ REQUIRED_CONTROLLED = {
     "caller-supplied-key-resolution",
     "caller-supplied-proof-store",
     "caller-supplied-revocation",
+    "generic-consumer-integration-hooks",
+    "caller-supplied-replay-admission",
     "opaque-caveat-policy-evaluation",
 }
 GENERIC_PRODUCTION_CLAIM = re.compile(r"\bproduction[- ]supported\b", re.IGNORECASE)
@@ -81,6 +83,7 @@ def check_profile(report: dict) -> None:
         "KeyResolver or KeyResolutionContext",
         "ProofStore or ProofCollection",
         "RevocationChecker or NoRevocations",
+        "ReplayAdmission or caller-owned replay admission policy",
         "VerificationTime",
         "VerificationLimits",
         "CaveatPolicySet",
@@ -88,8 +91,10 @@ def check_profile(report: dict) -> None:
     ]:
         if required not in required_inputs:
             fail(f"integration profile missing required input {required}")
-    if len(fail_closed_inputs) < 6:
-        fail("integration profile must enumerate fail-closed backend/policy classes")
+    if len(fail_closed_inputs) < 7:
+        fail("integration profile must enumerate fail-closed backend/policy/replay classes")
+    if "replay admission duplicate, stale, malformed, denied, or backend errors" not in fail_closed_inputs:
+        fail("integration profile missing fail-closed replay admission policy")
 
 
 def check_surface_levels(surfaces: dict[str, dict]) -> None:
@@ -102,6 +107,11 @@ def check_surface_levels(surfaces: dict[str, dict]) -> None:
     promoted = [surface_id for surface_id, surface in surfaces.items() if surface["level"] == "production-supported"]
     if promoted:
         fail(f"no surfaces may be production-supported in this gate without promotion evidence: {promoted}")
+    hook_boundaries = " ".join(
+        surfaces[surface_id]["boundary"] for surface_id in ["generic-consumer-integration-hooks", "caller-supplied-replay-admission"]
+    )
+    if "application-owned" not in hook_boundaries:
+        fail("hook readiness surfaces must state concrete backend semantics are application-owned")
 
 
 def check_docs(surfaces: dict[str, dict]) -> None:

@@ -343,6 +343,9 @@ impl From<VerifiedPrimitiveError> for TokenError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyResolverError {
     MissingKey { issuer: String },
+    UnsupportedMethod { issuer: String, message: String },
+    Malformed { issuer: String, message: String },
+    Stale { issuer: String, message: String },
     Backend { issuer: String, message: String },
 }
 
@@ -350,6 +353,15 @@ impl fmt::Display for KeyResolverError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingKey { issuer } => write!(formatter, "missing verification key for issuer {issuer}"),
+            Self::UnsupportedMethod { issuer, message } => {
+                write!(formatter, "unsupported DID method for issuer {issuer}: {message}")
+            }
+            Self::Malformed { issuer, message } => {
+                write!(formatter, "malformed verification key for issuer {issuer}: {message}")
+            }
+            Self::Stale { issuer, message } => {
+                write!(formatter, "stale verification key for issuer {issuer}: {message}")
+            }
             Self::Backend { issuer, message } => {
                 write!(formatter, "backend failed resolving issuer {issuer}: {message}")
             }
@@ -362,6 +374,8 @@ impl std::error::Error for KeyResolverError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofStoreError {
     MissingProof { reference: ProofReference },
+    Stale { reference: ProofReference, message: String },
+    Malformed { reference: ProofReference, message: String },
     Backend { reference: ProofReference, message: String },
 }
 
@@ -369,6 +383,12 @@ impl fmt::Display for ProofStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingProof { reference } => write!(formatter, "missing proof token {reference}"),
+            Self::Stale { reference, message } => {
+                write!(formatter, "stale proof token {reference}: {message}")
+            }
+            Self::Malformed { reference, message } => {
+                write!(formatter, "malformed proof token {reference}: {message}")
+            }
             Self::Backend { reference, message } => {
                 write!(formatter, "backend failed resolving proof {reference}: {message}")
             }
@@ -380,12 +400,20 @@ impl std::error::Error for ProofStoreError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RevocationError {
+    Stale { reference: ProofReference, message: String },
+    Malformed { reference: ProofReference, message: String },
     Backend { reference: ProofReference, message: String },
 }
 
 impl fmt::Display for RevocationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Stale { reference, message } => {
+                write!(formatter, "stale revocation state for {reference}: {message}")
+            }
+            Self::Malformed { reference, message } => {
+                write!(formatter, "malformed revocation state for {reference}: {message}")
+            }
             Self::Backend { reference, message } => {
                 write!(formatter, "backend failed checking revocation for {reference}: {message}")
             }
@@ -394,6 +422,39 @@ impl fmt::Display for RevocationError {
 }
 
 impl std::error::Error for RevocationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplayAdmissionError {
+    Duplicate { reference: ProofReference },
+    Stale { reference: ProofReference, message: String },
+    Malformed { reference: ProofReference, message: String },
+    Denied { reference: ProofReference, message: String },
+    Backend { reference: ProofReference, message: String },
+}
+
+impl fmt::Display for ReplayAdmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Duplicate { reference } => {
+                write!(formatter, "replay admission rejected duplicate invocation {reference}")
+            }
+            Self::Stale { reference, message } => {
+                write!(formatter, "replay admission rejected stale invocation {reference}: {message}")
+            }
+            Self::Malformed { reference, message } => {
+                write!(formatter, "replay admission rejected malformed invocation {reference}: {message}")
+            }
+            Self::Denied { reference, message } => {
+                write!(formatter, "replay admission denied invocation {reference}: {message}")
+            }
+            Self::Backend { reference, message } => {
+                write!(formatter, "backend failed admitting invocation {reference}: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReplayAdmissionError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerificationLimitError {
@@ -981,6 +1042,26 @@ impl<'a> InvocationRequest<'a> {
             policies,
         }
     }
+
+    #[must_use]
+    pub const fn token(&self) -> &CompactToken {
+        self.token
+    }
+
+    #[must_use]
+    pub const fn context(&self) -> &VerificationContext {
+        self.context
+    }
+
+    #[must_use]
+    pub const fn resource(&self) -> &str {
+        self.resource.as_str()
+    }
+
+    #[must_use]
+    pub const fn ability(&self) -> &str {
+        self.ability.as_str()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1019,6 +1100,7 @@ impl InvocationAllowed {
 pub enum InvocationDenialReason {
     Authorization { reason: AuthorizationDenialReason },
     Verification { message: String },
+    Replay { message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1100,6 +1182,24 @@ pub fn verify_invocation(request: &InvocationRequest<'_>) -> InvocationResult {
     }
 }
 
+#[must_use]
+pub fn verify_invocation_with_replay<A>(request: &InvocationRequest<'_>, replay: &A) -> InvocationResult
+where A: ReplayAdmission + ?Sized {
+    let result = verify_invocation(request);
+    if !result.is_allowed() {
+        return result;
+    }
+    let token_reference = proof_reference_for_token(request.token());
+    match replay.admit_invocation(&token_reference, request.resource(), request.ability()) {
+        Ok(()) => result,
+        Err(error) => InvocationResult::Denied {
+            reason: InvocationDenialReason::Replay {
+                message: error.to_string(),
+            },
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorizationDecision {
     Allowed { matched_capability: CapabilityDocument },
@@ -1129,7 +1229,7 @@ impl AuthorizationDecision {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProofReference(Vec<u8>);
 
 impl ProofReference {
@@ -1161,8 +1261,8 @@ pub trait KeyResolver {
     ///
     /// # Errors
     ///
-    /// Returns [`KeyResolverError`] when the issuer key is missing or the
-    /// resolver backend fails.
+    /// Returns [`KeyResolverError`] when the issuer key is missing, unsupported,
+    /// malformed, stale, or the resolver backend fails.
     fn resolve_key(&self, issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError>;
 }
 
@@ -1172,8 +1272,8 @@ pub trait ProofStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ProofStoreError`] when the proof is missing or the store
-    /// backend fails. Implementations should return serialized compact tokens
+    /// Returns [`ProofStoreError`] when the proof is missing, stale, malformed,
+    /// or the store backend fails. Implementations should return serialized compact tokens
     /// so verification can enforce size limits before parsing.
     fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError>;
 }
@@ -1231,6 +1331,36 @@ pub struct NoRevocations;
 impl RevocationChecker for NoRevocations {
     fn is_revoked(&self, _reference: &ProofReference) -> std::result::Result<bool, RevocationError> {
         Ok(false)
+    }
+}
+
+/// Synchronous shell-owned replay/nonce admission hook used by invocation authorization.
+pub trait ReplayAdmission {
+    /// Admit a verified invocation exactly once according to caller-owned replay policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReplayAdmissionError`] when the invocation is a duplicate, stale,
+    /// malformed for the caller policy, explicitly denied, or the backend cannot answer.
+    fn admit_invocation(
+        &self,
+        token_reference: &ProofReference,
+        resource: &str,
+        ability: &str,
+    ) -> std::result::Result<(), ReplayAdmissionError>;
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AllowAllReplayAdmission;
+
+impl ReplayAdmission for AllowAllReplayAdmission {
+    fn admit_invocation(
+        &self,
+        _token_reference: &ProofReference,
+        _resource: &str,
+        _ability: &str,
+    ) -> std::result::Result<(), ReplayAdmissionError> {
+        Ok(())
     }
 }
 
@@ -2379,7 +2509,7 @@ where
     let issuer = IssuerDid::new(token.claims.issuer_did().to_owned())?;
     let public_key = resolver.resolve_key(&issuer).map_err(|source| match source {
         KeyResolverError::MissingKey { issuer } => TokenError::MissingVerificationKey { issuer },
-        source @ KeyResolverError::Backend { .. } => TokenError::KeyResolver { source },
+        source => TokenError::KeyResolver { source },
     })?;
     let valid =
         verify_ed25519_signature(public_key.as_bytes(), token.signing_input.as_slice(), token.signature.as_slice())?;
@@ -2409,7 +2539,7 @@ where
             traversal.record_backend_operation(VerifiedBackendOperation::KeyResolution, false);
             return Err(match source {
                 KeyResolverError::MissingKey { issuer } => TokenError::MissingVerificationKey { issuer },
-                source @ KeyResolverError::Backend { .. } => TokenError::KeyResolver { source },
+                source => TokenError::KeyResolver { source },
             });
         }
     };
@@ -3679,9 +3809,13 @@ fn copy_public_key(bytes: &[u8]) -> TokenResult<[u8; ED25519_PUBLIC_KEY_BYTES]> 
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+
     use base64::Engine;
     use serde_json::Value;
 
+    use super::AllowAllReplayAdmission;
     use super::AudienceDid;
     use super::AuthorizationDecision;
     use super::AuthorizationDenialReason;
@@ -3711,6 +3845,8 @@ mod tests {
     use super::ProofReference;
     use super::ProofStore;
     use super::ProofStoreError;
+    use super::ReplayAdmission;
+    use super::ReplayAdmissionError;
     use super::RevocationChecker;
     use super::RevocationError;
     use super::RevocationList;
@@ -3736,6 +3872,7 @@ mod tests {
     use super::validate_decoded_token;
     use super::verify_compact_token;
     use super::verify_compact_token_with_resolvers_and_revocations;
+    use super::verify_invocation_with_replay;
     use crate::shell::CapabilityDocument;
     use crate::shell::CaveatDocument;
 
@@ -4261,6 +4398,85 @@ mod tests {
         assert!(matches!(verified_bad, InvocationResult::Denied {
             reason: InvocationDenialReason::Verification { .. }
         }));
+    }
+
+    #[derive(Debug, Default)]
+    struct InMemoryReplayAdmission {
+        admitted: RefCell<HashSet<(ProofReference, String, String)>>,
+    }
+
+    impl ReplayAdmission for InMemoryReplayAdmission {
+        fn admit_invocation(
+            &self,
+            token_reference: &ProofReference,
+            resource: &str,
+            ability: &str,
+        ) -> std::result::Result<(), ReplayAdmissionError> {
+            let entry = (token_reference.clone(), resource.to_owned(), ability.to_owned());
+            if self.admitted.borrow_mut().insert(entry) {
+                Ok(())
+            } else {
+                Err(ReplayAdmissionError::Duplicate {
+                    reference: token_reference.clone(),
+                })
+            }
+        }
+    }
+
+    #[test]
+    fn invocation_replay_admission_accepts_first_and_denies_duplicate() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_capability(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            "did:key:z6Mkresource",
+            "store/add",
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let request = InvocationRequest::new(
+            &token,
+            &context,
+            "did:key:z6Mkresource/photos",
+            "store/add",
+            &super::DenyUnknownCaveats,
+        );
+        let replay = InMemoryReplayAdmission::default();
+
+        let first = verify_invocation_with_replay(&request, &replay);
+        let second = verify_invocation_with_replay(&request, &replay);
+
+        assert!(first.is_allowed());
+        assert!(matches!(second, InvocationResult::Denied {
+            reason: InvocationDenialReason::Replay { .. }
+        }));
+    }
+
+    #[test]
+    fn allow_all_replay_admission_preserves_allowed_invocation_result() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request_with_capability(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            "did:key:z6Mkresource",
+            "store/add",
+        ))
+        .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        let request = InvocationRequest::new(
+            &token,
+            &context,
+            "did:key:z6Mkresource/photos",
+            "store/add",
+            &super::DenyUnknownCaveats,
+        );
+
+        assert!(verify_invocation_with_replay(&request, &AllowAllReplayAdmission).is_allowed());
+        assert!(verify_invocation_with_replay(&request, &AllowAllReplayAdmission).is_allowed());
     }
 
     #[test]

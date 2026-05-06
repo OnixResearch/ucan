@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::error::Error;
 
 use ucan::AudienceDid;
@@ -14,12 +16,15 @@ use ucan::InvocationRequest;
 use ucan::InvocationResult;
 use ucan::KeyResolutionContext;
 use ucan::ProofCollection;
+use ucan::ProofReference;
+use ucan::ReplayAdmission;
+use ucan::ReplayAdmissionError;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
 use ucan::VerificationContext;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
-use ucan::verify_invocation;
+use ucan::verify_invocation_with_replay;
 
 const ISSUER_KEY_BYTE: u8 = 7;
 const AUDIENCE_KEY_BYTE: u8 = 9;
@@ -42,6 +47,29 @@ impl CaveatPolicy for PayloadEqualsPolicy {
 struct ExamplePolicies {
     identity: CaveatIdentifier,
     policy: PayloadEqualsPolicy,
+}
+
+#[derive(Default)]
+struct ExampleReplayAdmission {
+    seen: RefCell<HashSet<(ProofReference, String, String)>>,
+}
+
+impl ReplayAdmission for ExampleReplayAdmission {
+    fn admit_invocation(
+        &self,
+        token_reference: &ProofReference,
+        resource: &str,
+        ability: &str,
+    ) -> Result<(), ReplayAdmissionError> {
+        let key = (token_reference.clone(), resource.to_owned(), ability.to_owned());
+        if self.seen.borrow_mut().insert(key) {
+            Ok(())
+        } else {
+            Err(ReplayAdmissionError::Duplicate {
+                reference: token_reference.clone(),
+            })
+        }
+    }
 }
 
 impl CaveatPolicySet for ExamplePolicies {
@@ -81,13 +109,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         identity: CaveatIdentifier::new("example", "payload-equals", "gate")?,
         policy: PayloadEqualsPolicy,
     };
-    let result = verify_invocation(&InvocationRequest::new(
-        &token,
-        &context,
-        "did:key:z6Mkresource/photos",
-        "store/add",
-        &policies,
-    ));
+    let replay = ExampleReplayAdmission::default();
+    let result = verify_invocation_with_replay(
+        &InvocationRequest::new(&token, &context, "did:key:z6Mkresource/photos", "store/add", &policies),
+        &replay,
+    );
 
     match result {
         InvocationResult::Allowed { invocation } => {
