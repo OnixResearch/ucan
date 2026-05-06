@@ -74,10 +74,29 @@ pub fn supported_token_type_bytes() -> (bytes: Vec<u8>)
     vec![HEADER_TYP_J, HEADER_TYP_W, HEADER_TYP_T]
 }
 
+/// Signer algorithm admission over shell/signer-supplied field bytes.
+// r[impl ucan-compact.signer-algorithm-admission]
+pub open spec fn supported_algorithm_admission_spec(algorithm: Seq<u8>) -> bool {
+    algorithm == supported_algorithm_spec()
+}
+
+/// Check exact supported UCAN signer algorithm admission.
+///
+/// This does not prove signer honesty, signer I/O, key provenance, signing,
+/// verify cryptographic signatures, or token provenance.
+// r[impl ucan-compact.signer-algorithm-admission]
+// r[verify ucan-compact.signer-algorithm-admission]
+pub fn supported_algorithm_is_valid(algorithm: &Vec<u8>) -> (result: bool)
+    ensures result == supported_algorithm_admission_spec(algorithm@),
+{
+    let expected_algorithm = supported_algorithm_bytes();
+    bytes_equal(algorithm, &expected_algorithm)
+}
+
 /// Parsed header admission over shell/serde-supplied field bytes.
 // r[impl ucan-compact.parsed-header-admission]
 pub open spec fn parsed_header_admission_spec(algorithm: Seq<u8>, token_type: Seq<u8>) -> bool {
-    algorithm == supported_algorithm_spec() && token_type == supported_token_type_spec()
+    supported_algorithm_admission_spec(algorithm) && token_type == supported_token_type_spec()
 }
 
 /// Check exact parsed UCAN header field admission.
@@ -105,6 +124,18 @@ pub fn parsed_header_admission_is_valid(algorithm: &Vec<u8>, token_type: &Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supported_algorithm_admission_accepts_eddsa() {
+        assert!(supported_algorithm_is_valid(&b"EdDSA".to_vec()));
+    }
+
+    #[test]
+    fn supported_algorithm_admission_rejects_other_algorithms() {
+        assert!(!supported_algorithm_is_valid(&b"ES256".to_vec()));
+        assert!(!supported_algorithm_is_valid(&b"eddsa".to_vec()));
+        assert!(!supported_algorithm_is_valid(&b"EdDSA\0".to_vec()));
+    }
 
     #[test]
     fn parsed_header_admission_accepts_supported_fields() {

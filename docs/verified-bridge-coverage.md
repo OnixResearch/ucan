@@ -91,6 +91,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `revocation_check_is_valid` | `live-path` | `src/token.rs` reference |
 | `revocation_reference_is_listed` | `live-path` | `src/token.rs` reference |
 | `sign_ed25519` | `live-path` | `src/token.rs` reference |
+| `signer_algorithm_is_valid` | `live-path` | `src/token.rs` reference before signer identity/key checks; routes exact `EdDSA` byte admission through `verified_logic::ucan_header::supported_algorithm_is_valid`. |
 | `signing_input_byte_provenance_is_valid` | `live-path` | `src/token.rs` reference |
 | `structural_chain_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `structural_chain_not_revoked_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |

@@ -161,6 +161,7 @@ pub use verified::receipt_execution_is_valid;
 pub use verified::revocation_check_is_valid;
 pub use verified::revocation_reference_is_listed;
 pub use verified::sign_ed25519;
+pub use verified::signer_algorithm_is_valid;
 pub use verified::signing_input_byte_provenance_is_valid;
 pub use verified::structural_chain_is_valid;
 pub use verified::structural_chain_not_revoked_is_valid;

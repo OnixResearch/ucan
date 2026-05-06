@@ -83,6 +83,7 @@ use crate::verified::proof_traversal_dag_transcript_is_valid;
 use crate::verified::revocation_check_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
+use crate::verified::signer_algorithm_is_valid;
 use crate::verified::signing_input_byte_provenance_is_valid;
 use crate::verified::typed_caveat_ascii_decimal_payload_is_valid;
 use crate::verified::typed_caveat_is_satisfied;
@@ -3245,7 +3246,7 @@ where S: TokenSigner + ?Sized {
 }
 
 fn validate_signer_algorithm(algorithm: &str) -> SignerResult<()> {
-    if algorithm == TOKEN_ALGORITHM_EDDSA {
+    if signer_algorithm_is_valid(algorithm) {
         return Ok(());
     }
     Err(SignerError::UnsupportedAlgorithm {
@@ -4428,9 +4429,11 @@ mod tests {
         )
         .expect_err("unsupported algorithm should fail");
 
-        assert!(matches!(error, TokenError::Signer {
-            source: SignerError::UnsupportedAlgorithm { .. }
-        }));
+        assert_eq!(error, TokenError::Signer {
+            source: SignerError::UnsupportedAlgorithm {
+                algorithm: UNSUPPORTED_TEST_ALGORITHM.to_owned()
+            }
+        });
     }
 
     #[test]

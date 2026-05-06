@@ -929,6 +929,16 @@ pub fn parsed_header_is_valid(header: &VerifiedParsedHeader) -> bool {
     ucan_header::parsed_header_admission_is_valid(&header.algorithm, &header.token_type)
 }
 
+/// Validate signer-reported algorithm admission before signer-based issuance.
+///
+/// This proves only exact byte equality over shell/signer-supplied algorithm
+/// bytes: `EdDSA`. It does not prove signer honesty, signer I/O, key provenance,
+/// public-key derivation, signing, verify cryptographic signatures, or token provenance.
+#[must_use]
+pub fn signer_algorithm_is_valid(algorithm: &str) -> bool {
+    ucan_header::supported_algorithm_is_valid(&algorithm.as_bytes().to_vec())
+}
+
 /// Validate parsed UCAN claims presence facts through the vendored verified primitive.
 ///
 /// This validates only caller- or serde-shell-supplied field-presence booleans
@@ -2118,6 +2128,7 @@ mod tests {
     use super::receipt_execution_is_valid;
     use super::revocation_reference_is_listed;
     use super::sign_ed25519;
+    use super::signer_algorithm_is_valid;
     use super::structural_chain_is_valid;
     use super::structural_chain_not_revoked_is_valid;
     use super::token_needs_refresh;
@@ -2262,6 +2273,14 @@ mod tests {
             algorithm: b"EdDSA\0".to_vec(),
             token_type: b"JWT".to_vec(),
         }));
+    }
+
+    #[test]
+    fn signer_algorithm_uses_verified_admission() {
+        assert!(signer_algorithm_is_valid("EdDSA"));
+        assert!(!signer_algorithm_is_valid("ES256"));
+        assert!(!signer_algorithm_is_valid("eddsa"));
+        assert!(!signer_algorithm_is_valid("EdDSA\0"));
     }
 
     #[test]
