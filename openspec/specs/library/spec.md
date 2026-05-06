@@ -911,17 +911,22 @@ The library MUST preserve the existing caller-injected proof traversal behavior 
 - AND verified traversal primitives MUST NOT fetch proofs, resolve keys, verify signatures, access storage or network backends, persist state, replay-protect, sign, or read an ambient clock
 
 ### Requirement: Verified compact-token codec boundary [r[library.verified-compact-token-codec-boundary]]
-The library MUST route compact-token split, framing, proof-reference digest, base64url segment, decoded JSON object structural admission, and parsed header field admission through vendored verified-logic predicates before continuing into trusted runtime codec, JSON parser, structural-validation, or cryptographic boundaries.
 
-#### Scenario: Parsed header admission rejects unsupported algorithm or type [r[library.verified-compact-token-codec-boundary.scenario.parsed-header-admission]]
-- GIVEN a compact header deserialized into parsed `alg` and `typ` fields
-- WHEN either parsed field differs byte-for-byte from the supported `EdDSA` / `JWT` constants
-- THEN the shell MUST reject the token through the verified parsed-header bridge before structural validation or signature verification continues
+The library MUST route compact-token split, framing, proof-reference digest, base64url segment, decoded JSON object structural admission, decoded JSON object significant-index discovery, and parsed header field admission through vendored verified-logic predicates before continuing into trusted runtime codec, JSON parser, structural-validation, or cryptographic boundaries.
 
-#### Scenario: Parsed header admission preserves parser and crypto trust boundaries [r[library.verified-compact-token-codec-boundary.scenario.parsed-header-boundary-limits]]
-- GIVEN parsed header fields admitted by the verified predicate
-- WHEN the shell relies on serde field extraction, canonical signing input, or Ed25519 verification
-- THEN the library MUST continue to document those parser, canonicalization, and cryptographic operations as outside the verified parsed-header admission claim
+#### Scenario: Decoded JSON object admission discovers significant indexes with verified logic [r[library.verified-compact-token-codec-boundary.scenario.json-significant-index-discovery]]
+
+- GIVEN decoded compact-token header or payload bytes with leading and trailing RFC-8259 JSON whitespace around a top-level object envelope
+- WHEN the library checks decoded JSON object structural admission before serde parsing
+- THEN the library MUST route first/last significant-byte discovery and object-envelope admission through vendored verified logic
+- AND the library MUST NOT rely on UCAN-local unverified significant-index discovery as the admitted fact
+- AND the library MUST continue to reject empty, whitespace-only, array, scalar, or non-object-envelope decoded bytes before serde parsing
+
+#### Scenario: JSON index discovery keeps parser and codec non-claims explicit [r[library.verified-compact-token-codec-boundary.scenario.json-index-discovery-non-claims]]
+
+- GIVEN decoded JSON object bytes that pass the verified significant-index and envelope predicate
+- WHEN the library subsequently parses JSON fields, decodes base64url segments, validates signatures, derives proof references, resolves proofs, evaluates caveats, checks revocations, or reads evaluation time
+- THEN the library MUST continue to document JSON parser correctness, UTF-8/string extraction, duplicate-key behavior, canonicalization, base64url decoder correctness, cryptographic correctness, backend truth/freshness, caveat policy truth, clock provenance, and token provenance as outside the verified JSON index-discovery claim
 
 ### Requirement: Caveat-preserving attenuation invariant [r[library.verified-caveat-preserving-attenuation]]
 
@@ -1140,39 +1145,11 @@ The library MUST verify parsed caveat payload shape facts before decoded-token s
 
 ### Requirement: Verified bridge coverage sweep [r[library.verified-bridge-coverage-sweep]]
 
-The library MUST maintain an auditable classification for every UCAN verified bridge export and vendored UCAN verified-logic module that distinguishes live verifier routing, public helper exposure, implementation-ready exact candidates, and intentionally documented boundaries.
+The repository MUST keep a guard-readable inventory of public verified exports, live verifier bridge calls, and vendored UCAN/WOT verified-logic modules, and MUST classify each item as `live-path`, `public-helper`, `candidate`, or `documented-boundary`. Exact executable deterministic/data-only candidates MUST either be routed into the appropriate live path or intentionally documented as boundaries before the sweep is complete, and the repository MUST NOT preserve vendored source repository metadata, credentials, compact token values, private keys, bearer tokens, or other secret material in the inventory.
 
-#### Scenario: Bridge coverage inventory is complete [r[library.verified-bridge-coverage-sweep.scenario.complete-inventory]]
+#### Scenario: JSON index-discovery bridge is tracked as live path [r[library.verified-bridge-coverage-sweep.scenario.json-index-discovery-live-path]]
 
-- GIVEN the public verified exports in `src/lib.rs`, bridge implementations in `src/verified.rs`, live verification calls in `src/token.rs`, and vendored UCAN modules under `vendor/verified-logic/src`
-- WHEN the bridge coverage sweep is performed
-- THEN every relevant bridge or vendored module MUST be classified as live-path, public-helper, candidate, or documented-boundary
-- AND the classification MUST NOT include secret source repository metadata, tokens, private keys, credentials, or compact UCAN token values
-
-#### Scenario: Live verifier claims require exact routing [r[library.verified-bridge-coverage-sweep.scenario.live-claims-require-routing]]
-
-- GIVEN a documentation or specification claim that a verified bridge protects live token verification
-- WHEN the claim is checked against the implementation
-- THEN the live verifier MUST call the exact executable vendored predicate through the UCAN bridge before accepting the corresponding token fact
-- AND parser, codec, cryptographic, resolver, proof-store, revocation backend, freshness, provenance, wall-clock, DID-method, CID, principal-link, arbitrary caveat-policy, and runtime orchestration behavior MUST remain outside the verified claim unless an exact executable bridge covers that behavior
-
-#### Scenario: Public helper coverage is not overclaimed [r[library.verified-bridge-coverage-sweep.scenario.public-helper-boundary]]
-
-- GIVEN a verified helper that consumes caller-supplied finite facts but is not called by the live verifier
-- WHEN docs, specs, or guard scripts describe the helper
-- THEN they MUST identify it as public-helper coverage rather than live verifier coverage
-- AND they MUST state that callers remain responsible for fact truth, freshness, provenance, backend behavior, parser behavior, cryptography, and policy semantics
-
-#### Scenario: Unsupported vendored modules remain documented boundaries [r[library.verified-bridge-coverage-sweep.scenario.unsupported-vendored-boundary]]
-
-- GIVEN a vendored UCAN verified-logic module whose surface is proof-only, spec-only, modeled with uninterpreted hash or identity functions, or otherwise lacks an exact executable runtime bridge for UCAN shell facts
-- WHEN the bridge sweep evaluates whether to expose or route it
-- THEN the module MUST remain a documented-boundary rather than being exposed or described as live verified coverage
-- AND any future routing MUST require a separate exact executable bridge or follow-up OpenSpec
-
-#### Scenario: Bridge guard detects drift [r[library.verified-bridge-coverage-sweep.scenario.guard-detects-drift]]
-
-- GIVEN the expected bridge names and coverage classes after the sweep
-- WHEN the bridge guard or equivalent validation runs
-- THEN it MUST fail if required bridge exports, live-path calls, or boundary-documentation entries drift from the recorded classification
-- AND it MUST preserve explicit non-claims for parser, codec, cryptographic, backend, runtime, and caller-policy behavior
+- GIVEN the vendored verified-logic snapshot includes an executable decoded JSON significant-index discovery or direct object-envelope admission helper
+- WHEN UCAN routes decoded header/payload JSON admission through that helper before serde parsing
+- THEN the bridge coverage inventory MUST classify the public UCAN bridge and vendored module coverage as `live-path`
+- AND the bridge guard MUST fail if the new public bridge or vendored UCAN JSON module coverage disappears from the inventory

@@ -27,7 +27,6 @@ use crate::verified::VerifiedCaveatEvaluationTranscript;
 use crate::verified::VerifiedCaveatPreservation;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
-use crate::verified::VerifiedJsonObjectBytes;
 use crate::verified::VerifiedParsedCapabilityListShape;
 use crate::verified::VerifiedParsedCapabilityShape;
 use crate::verified::VerifiedParsedCaveatListShape;
@@ -67,7 +66,6 @@ use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
-use crate::verified::json_object_bytes_are_valid;
 use crate::verified::parsed_capability_list_shape_is_valid;
 use crate::verified::parsed_caveat_list_shape_is_valid;
 use crate::verified::parsed_caveat_payloads_are_valid;
@@ -89,6 +87,7 @@ use crate::verified::signing_input_byte_provenance_is_valid;
 use crate::verified::typed_caveat_is_satisfied;
 use crate::verified::validate_token_envelope;
 use crate::verified::verification_stage_transcript_outcome;
+use crate::verified::verified_json_object_bytes;
 use crate::verified::verify_ed25519_signature;
 
 const COMPACT_TOKEN_PART_COUNT: usize = 3;
@@ -3369,34 +3368,13 @@ fn decode_json_part<T: DeserializeOwned>(part: &str, compact_part: CompactPart) 
 }
 
 fn validate_decoded_json_object_bytes(bytes: &[u8], compact_part: CompactPart) -> TokenResult<()> {
-    let Some((first_significant_index, last_significant_index)) = json_significant_byte_indexes(bytes) else {
-        return Err(TokenError::JsonDecode {
-            part: compact_part,
-            message: "decoded JSON part must contain a top-level object".to_owned(),
-        });
-    };
-    let object = VerifiedJsonObjectBytes {
-        bytes: bytes.to_vec(),
-        first_significant_index,
-        last_significant_index,
-    };
-    if json_object_bytes_are_valid(&object) {
+    if verified_json_object_bytes(bytes).is_some() {
         return Ok(());
     }
     Err(TokenError::JsonDecode {
         part: compact_part,
         message: "failed verified decoded JSON object structural admission".to_owned(),
     })
-}
-
-fn json_significant_byte_indexes(bytes: &[u8]) -> Option<(usize, usize)> {
-    let first = bytes.iter().position(|byte| !is_json_whitespace_byte(*byte))?;
-    let last = bytes.iter().rposition(|byte| !is_json_whitespace_byte(*byte))?;
-    Some((first, last))
-}
-
-const fn is_json_whitespace_byte(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\n' | b'\r' | b'\t')
 }
 
 fn decode_part(part: &str, compact_part: CompactPart) -> TokenResult<Vec<u8>> {
@@ -4586,7 +4564,7 @@ mod tests {
         assert!(matches!(whitespace_error, TokenError::JsonDecode {
             part: super::CompactPart::Payload,
             message,
-        } if message.contains("top-level object")));
+        } if message.contains("verified decoded JSON object structural admission")));
     }
 
     #[test]

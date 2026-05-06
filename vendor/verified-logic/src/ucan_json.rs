@@ -103,6 +103,12 @@ pub fn suffix_is_json_whitespace(bytes: &Vec<u8>, start: usize) -> (result: bool
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JsonObjectSignificantIndexes {
+    pub first: usize,
+    pub last: usize,
+}
+
 /// Check decoded JSON object envelope bytes before callers rely on serde-derived semantics.
 ///
 /// This does not parse JSON, verify UTF-8/canonicalization, inspect fields,
@@ -131,6 +137,53 @@ pub fn json_object_admission_is_valid(bytes: &Vec<u8>, first: usize, last: usize
         return false;
     }
     true
+}
+
+/// Discover significant decoded JSON object envelope indexes before callers rely on serde-derived semantics.
+///
+/// A successful result carries the first and last non-whitespace byte indexes
+/// and proves they satisfy [`json_object_admission_spec`]. This does not parse
+/// JSON, verify UTF-8/canonicalization, inspect fields, decode base64url, hash,
+/// sign, or verify cryptographic signatures.
+// r[impl ucan-compact.json-object-admission]
+pub fn json_object_significant_indexes(bytes: &Vec<u8>) -> (result: Option<JsonObjectSignificantIndexes>)
+    ensures
+        result matches Some(indexes) ==> json_object_admission_spec(bytes@, indexes.first as int, indexes.last as int),
+{
+    if bytes.len() == 0 {
+        return None;
+    }
+
+    let mut first: usize = 0;
+    while first < bytes.len() && is_json_whitespace_byte(bytes[first])
+        invariant
+            first <= bytes.len(),
+            forall|k: int| 0 <= k < first ==> is_json_whitespace_byte_spec(bytes@[k]),
+        decreases bytes.len() - first,
+    {
+        first = first + 1;
+    }
+
+    if first >= bytes.len() {
+        return None;
+    }
+
+    let mut last: usize = bytes.len() - 1;
+    while last > first && is_json_whitespace_byte(bytes[last])
+        invariant
+            first < bytes.len(),
+            first <= last < bytes.len(),
+            forall|k: int| last < k < bytes.len() ==> is_json_whitespace_byte_spec(bytes@[k]),
+        decreases last - first,
+    {
+        last = last - 1;
+    }
+
+    if json_object_admission_is_valid(bytes, first, last) {
+        Some(JsonObjectSignificantIndexes { first, last })
+    } else {
+        None
+    }
 }
 
 } // verus!
@@ -167,5 +220,28 @@ mod tests {
         assert!(!json_object_admission_is_valid(&object, 1, 3));
         assert!(!json_object_admission_is_valid(&object, 2, 1));
         assert!(!json_object_admission_is_valid(&object, 1, object.len()));
+    }
+
+    #[test]
+    fn json_object_significant_indexes_discovers_object_bounds() {
+        let bare = br#"{"alg":"EdDSA","typ":"JWT"}"#.to_vec();
+        assert_eq!(
+            json_object_significant_indexes(&bare),
+            Some(JsonObjectSignificantIndexes {
+                first: 0,
+                last: bare.len() - 1,
+            })
+        );
+
+        let padded = b" \n\t{}\r\n".to_vec();
+        assert_eq!(json_object_significant_indexes(&padded), Some(JsonObjectSignificantIndexes { first: 3, last: 4 }));
+    }
+
+    #[test]
+    fn json_object_significant_indexes_rejects_non_objects_and_whitespace_only() {
+        assert_eq!(json_object_significant_indexes(&b" [] ".to_vec()), None);
+        assert_eq!(json_object_significant_indexes(&b" true ".to_vec()), None);
+        assert_eq!(json_object_significant_indexes(&b" \n\t\r".to_vec()), None);
+        assert_eq!(json_object_significant_indexes(&Vec::new()), None);
     }
 }

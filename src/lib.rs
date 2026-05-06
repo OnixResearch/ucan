@@ -170,6 +170,7 @@ pub use verified::token_time_valid_at;
 pub use verified::typed_caveat_is_satisfied;
 pub use verified::typed_caveat_set_is_satisfied;
 pub use verified::validate_token_envelope;
+pub use verified::verified_json_object_bytes;
 pub use verified::verify_ed25519_signature;
 pub use verified::web_of_trust_attestation_is_active_at;
 pub use verified::web_of_trust_attestation_payload_bytes;

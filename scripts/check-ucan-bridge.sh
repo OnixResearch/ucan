@@ -30,8 +30,8 @@ require_pattern 'use verified_logic::ucan_token|validate_token_envelope' src
 require_pattern 'use verified_logic::ucan_compact|compact_token_split_is_valid|compact_token_envelope_is_valid|compact_split_matches_parts|compact_envelope_matches_parts|VerifiedCompactTokenEnvelope' src
 require_pattern 'use verified_logic::ucan_base64url|base64url_segment_is_valid|base64url_no_pad_segment_is_valid|VerifiedBase64UrlSegment' src
 require_pattern 'decode_part|base64url_segment_is_valid|failed verified base64url-no-pad structural admission' src/token.rs
-require_pattern 'use verified_logic::ucan_json|json_object_bytes_are_valid|json_object_bytes_have_object_envelope|VerifiedJsonObjectBytes' src
-require_pattern 'decode_json_part|validate_decoded_json_object_bytes|json_object_bytes_are_valid|failed verified decoded JSON object structural admission' src/token.rs
+require_pattern 'use verified_logic::ucan_json|json_object_bytes_are_valid|verified_json_object_bytes|json_object_significant_indexes|VerifiedJsonObjectBytes' src
+require_pattern 'decode_json_part|validate_decoded_json_object_bytes|verified_json_object_bytes|failed verified decoded JSON object structural admission' src/token.rs
 require_pattern 'use verified_logic::ucan_header|parsed_header_is_valid|parsed_header_admission_is_valid|VerifiedParsedHeader' src
 require_pattern 'use verified_logic::ucan_claims_presence|parsed_claims_presence_is_valid|VerifiedParsedClaimsPresence|ParsedClaimsPresence' src
 require_pattern 'use verified_logic::ucan_temporal_order|parsed_temporal_order_is_valid|VerifiedParsedTemporalOrder|ParsedTemporalOrder' src
@@ -85,6 +85,7 @@ require_pattern '\.is_concrete\(\)' src/token.rs
 require_pattern '\.has_wildcard_segment\(\)' src/verified.rs
 
 reject_pattern 'fn .*attenuat.*\{|fn .*temporal.*\{|fn .*signature.*\{' crates/ucan-core/src
+reject_pattern 'fn json_significant_byte_indexes|fn is_json_whitespace_byte|bytes\.iter\(\)\.position\(\|byte\| !is_json_whitespace_byte\(\*byte\)\)|bytes\.iter\(\)\.rposition\(\|byte\| !is_json_whitespace_byte\(\*byte\)\)' src/token.rs
 reject_pattern 'fn ability_has_wildcard_segment|ABILITY_SEGMENT_SEPARATOR|WILDCARD_ABILITY_SEGMENT' src/token.rs
 reject_pattern 'parent\.audience\(\)\.as_str\(\) *!= *child_issuer\.as_str\(\)|child_issuer\.as_str\(\) *!= *parent\.audience\(\)\.as_str\(\)' src/token.rs
 reject_pattern 'self\.as_slice\(\)\.iter\(\)\.any\(\|candidate\| candidate == reference\)|candidate == reference\)\)|iter\(\)\.any\(\|existing\| existing == &reference\)' src/token.rs

@@ -27,7 +27,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `VerifiedChainEntry` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedDidKey` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedInvocationChainRequest` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
-| `VerifiedJsonObjectBytes` | `live-path` | `src/token.rs` reference |
+| `VerifiedJsonObjectBytes` | `live-path` | `src/token.rs` routes through `verified_json_object_bytes`; advanced callers may still supply already-discovered indexes explicitly |
 | `VerifiedParsedCapabilityListShape` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedCapabilityShape` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedCaveatListShape` | `live-path` | `src/token.rs` reference |
@@ -72,7 +72,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `encode_ed25519_did_key` | `live-path` | `src/token.rs` reference |
 | `invocation_chain_is_authorized` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `invocation_request_is_authorized` | `live-path` | `src/token.rs` reference |
-| `json_object_bytes_are_valid` | `live-path` | `src/token.rs` reference |
+| `json_object_bytes_are_valid` | `live-path` | explicit-index helper; live parsing now calls `verified_json_object_bytes` for vendored index discovery and object admission |
 | `parsed_capability_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_caveat_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_caveat_payloads_are_valid` | `live-path` | `src/token.rs` reference |
@@ -100,6 +100,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `typed_caveat_is_satisfied` | `live-path` | `src/token.rs` reference |
 | `typed_caveat_set_is_satisfied` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `validate_token_envelope` | `live-path` | `src/token.rs` reference |
+| `verified_json_object_bytes` | `live-path` | `src/token.rs` reference; discovers first/last significant decoded JSON object indexes through vendored `ucan_json` before serde parsing |
 | `verify_ed25519_signature` | `live-path` | `src/token.rs` reference |
 | `web_of_trust_attestation_is_active_at` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `web_of_trust_attestation_payload_bytes` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
@@ -132,7 +133,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `ucan_did` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_header` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_invocation` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
-| `ucan_json` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
+| `ucan_json` | `live-path` | Imported by `src/verified.rs`; live decoded header/payload admission routes first/last significant-byte discovery and object-envelope checks through this module before serde parsing. |
 | `ucan_parsed_capability_shape` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_parsed_caveat_payload` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_parsed_caveat_shape` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |

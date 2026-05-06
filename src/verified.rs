@@ -897,6 +897,27 @@ pub fn json_object_bytes_are_valid(object: &VerifiedJsonObjectBytes) -> bool {
     )
 }
 
+/// Discover and validate decoded JSON object significant-byte indexes before
+/// callers rely on serde-derived header or claim semantics.
+///
+/// This routes index discovery through vendored `verified-logic` instead of
+/// trusting shell-computed first/last significant-byte facts. It proves only
+/// finite byte-level object-envelope admission over already-decoded bytes. It
+/// does not parse JSON, verify UTF-8 or canonicalization, validate
+/// claim/header fields, decode base64url, hash, sign, verify cryptographic
+/// signatures, prove token provenance, access storage/network backends,
+/// persist state, replay-protect, or read an ambient clock.
+#[must_use]
+pub fn verified_json_object_bytes(bytes: &[u8]) -> Option<VerifiedJsonObjectBytes> {
+    let bytes = bytes.to_vec();
+    let indexes = ucan_json::json_object_significant_indexes(&bytes)?;
+    Some(VerifiedJsonObjectBytes {
+        bytes,
+        first_significant_index: indexes.first,
+        last_significant_index: indexes.last,
+    })
+}
+
 /// Validate parsed compact-token header field admission before structural validation.
 ///
 /// This proves only exact byte equality over shell/serde-supplied parsed fields:
@@ -2089,6 +2110,7 @@ mod tests {
     use super::typed_caveat_set_is_satisfied;
     use super::validate_token_envelope;
     use super::verification_stage_transcript_outcome;
+    use super::verified_json_object_bytes;
     use super::verify_ed25519_signature;
     use super::web_of_trust_attestation_is_active_at;
     use super::web_of_trust_attestation_payload_bytes;
@@ -2548,6 +2570,13 @@ mod tests {
             first_significant_index: 0,
             last_significant_index: 2,
         }));
+
+        let discovered = verified_json_object_bytes(b" \n\t{}\r\n").expect("object indexes");
+        assert_eq!(discovered.first_significant_index, 3);
+        assert_eq!(discovered.last_significant_index, 4);
+        assert_eq!(discovered.bytes, b" \n\t{}\r\n".to_vec());
+        assert!(verified_json_object_bytes(b" [] ").is_none());
+        assert!(verified_json_object_bytes(b" \n\t\r").is_none());
     }
 
     #[test]
