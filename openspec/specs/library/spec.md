@@ -250,24 +250,18 @@ r[library.authorization-decisions.authorize-concrete-request.missing-effective-c
 
 ### Requirement: Authorization uses verified capability semantics
 
-Authorization matching and concrete request admission MUST reuse the same verified-logic-backed resource and ability containment semantics used for proof-chain attenuation. Capability concrete/wildcard classification exposed by the UCAN verified adapter MUST also route through vendored verified-logic ability helpers rather than local shell-only segment scans.
+Authorization matching and concrete request admission MUST reuse verified-logic-backed resource, ability, and proof-depth admission semantics used for proof-chain attenuation. Shell proof-hop depth admission MUST route the hop-to-chain-length conversion and overflow rejection through vendored verified-logic rather than local shell-only arithmetic.
 
-#### Scenario: Wildcard ability segment authorizes child ability
-- GIVEN an effective capability with ability `store/*`
-- AND a request for ability `store/add`
-- WHEN authorization matching runs
-- THEN the request MUST be allowed if the resource is also covered
+#### Scenario: Proof-hop depth admission rejects overflow before budget check
+- GIVEN a shell proof-hop depth that cannot be represented as `depth + 1` chain length
+- WHEN proof-depth budget admission runs
+- THEN the request MUST be rejected through vendored `verified-logic` proof-hop admission
 
-#### Scenario: Embedded wildcard remains invalid
-- GIVEN a requested ability containing `*` inside a larger segment
-- WHEN the authorization request is constructed
-- THEN the request MUST fail before matching
-
-#### Scenario: Concrete ability admission uses verified wildcard classification
-- GIVEN a verified capability ability split into already-validated segments
-- WHEN the shell reports whether that ability contains any wildcard segment or can represent a concrete request
-- THEN the shell MUST route wildcard/concrete classification through vendored `verified-logic` ability helpers
-- AND the check MUST remain limited to segment bytes without claiming parser, policy, proof-chain, caveat, crypto, backend, clock, or provenance truth
+#### Scenario: Proof-hop depth admission preserves existing budget semantics
+- GIVEN a shell proof-hop depth and maximum delegation depth
+- WHEN proof-depth budget admission runs
+- THEN the result MUST match the existing chain-length budget predicate for `chain_len = depth + 1` when conversion succeeds
+- AND the check MUST not claim proof traversal, backend, revocation, caveat, crypto, parser, clock, or provenance truth
 
 ### Requirement: Authorization denials are structured
 

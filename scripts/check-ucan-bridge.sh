@@ -63,7 +63,7 @@ require_pattern 'use verified_logic::ucan_verification_stage|verification_stage_
 require_pattern 'use verified_logic::ucan_backend_transcript|backend_transcript_accepts|backend_transcript_first_failed_operation|VerifiedBackendTranscript' src
 require_pattern 'record_backend_operation|verify_backend_transcript_accepts|VerifiedBackendOperation::(KeyResolution|ProofLoad|Revocation)' src/token.rs
 require_pattern 'use verified_logic::ucan_chain|proof_link_is_valid|structural_chain_is_valid|check_chain_structural_valid' src
-require_pattern 'use verified_logic::ucan_delegation_depth|proof_depth_within_budget' src
+require_pattern 'use verified_logic::ucan_delegation_depth|proof_depth_within_budget|check_proof_hop_depth_budget' src
 require_pattern 'use verified_logic::ucan_revocation|revocation_reference_is_listed|structural_chain_not_revoked_is_valid|check_chain_structural_valid_not_revoked' src
 require_pattern 'use verified_logic::ucan_invocation|invocation_request_is_authorized|invocation_chain_is_authorized|receipt_execution_is_valid|check_invocation_chain_authorized|check_receipt_valid' src
 require_pattern 'use verified_logic::ucan_proof_traversal|proof_traversal_transcript_is_valid|traversal_transcript_valid' src
@@ -91,6 +91,7 @@ reject_pattern 'parent\.audience\(\)\.as_str\(\) *!= *child_issuer\.as_str\(\)|c
 reject_pattern 'self\.as_slice\(\)\.iter\(\)\.any\(\|candidate\| candidate == reference\)|candidate == reference\)\)|iter\(\)\.any\(\|existing\| existing == &reference\)' src/token.rs
 reject_pattern 'invoker: verified\.issuer\(\)\.clone\(\)' src/token.rs
 reject_pattern 'if depth > limits\.max_proof_depth\(\)|depth > limits\.max_proof_depth\(\)|chain_len - 1 <= max_depth' src/token.rs
+reject_pattern 'checked_add\(1\)|let Some\(chain_len\)|check_depth_budget\(chain_len, max_depth\)' src/verified.rs
 reject_pattern 'OnceLock|lazy_static|thread_local!|std::env|reqwest|ureq|hyper|process-global|global resolver|global proof|default resolver|default proof store|filesystem fallback|network fallback' src
 
 python3 - <<'PY'

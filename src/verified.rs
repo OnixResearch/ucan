@@ -1625,10 +1625,7 @@ pub fn invocation_request_is_authorized(
 /// valid finite chain length and is rejected.
 #[must_use]
 pub fn proof_depth_within_budget(depth: usize, max_depth: usize) -> bool {
-    let Some(chain_len) = depth.checked_add(1) else {
-        return false;
-    };
-    ucan_delegation_depth::check_depth_budget(chain_len, max_depth)
+    ucan_delegation_depth::check_proof_hop_depth_budget(depth, max_depth)
 }
 
 /// Check deterministic invocation receipt execution fields.

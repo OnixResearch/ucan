@@ -81,7 +81,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `parsed_header_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_proof_reference_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_temporal_order_is_valid` | `live-path` | `src/token.rs` reference |
-| `proof_depth_within_budget` | `live-path` | `src/token.rs` reference |
+| `proof_depth_within_budget` | `live-path` | `src/token.rs` reference; routes shell proof-hop depth conversion and overflow rejection through `verified_logic::ucan_delegation_depth::check_proof_hop_depth_budget`. |
 | `proof_link_is_valid` | `live-path` | `src/token.rs` reference |
 | `proof_reference_collection_is_valid` | `live-path` | `src/token.rs` reference |
 | `proof_reference_digest_is_valid` | `live-path` | `src/token.rs` reference |

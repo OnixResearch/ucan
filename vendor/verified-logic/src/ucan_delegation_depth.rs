@@ -34,6 +34,33 @@ pub fn check_depth_budget(chain_len: usize, max_depth: usize) -> (result: bool)
     chain_len - 1 <= max_depth
 }
 
+/// A shell proof-hop depth is admissible when it can be represented as a
+/// positive finite chain length and that chain length is within budget.
+// r[impl ucan-delegation-depth.budget-check]
+pub open spec fn proof_hop_depth_within_budget_spec(depth: usize, max_depth: usize) -> bool {
+    depth < usize::MAX && within_depth_budget_spec((depth as nat) + 1, max_depth as nat)
+}
+
+/// Check shell proof-hop depth against a maximum delegation-depth budget.
+///
+/// The shell counts proof hops from the leaf. The verified chain model counts
+/// tokens in the finite chain, so this helper rejects `depth + 1` overflow and
+/// then delegates to the chain-length budget predicate.
+// r[impl ucan-delegation-depth.budget-check]
+pub fn check_proof_hop_depth_budget(depth: usize, max_depth: usize) -> (result: bool)
+    ensures result == proof_hop_depth_within_budget_spec(depth, max_depth),
+{
+    if depth == usize::MAX {
+        false
+    } else {
+        assert(depth < usize::MAX);
+        let chain_len = depth + 1;
+        assert(chain_len > 0);
+        assert(chain_len as nat == (depth as nat) + 1);
+        check_depth_budget(chain_len, max_depth)
+    }
+}
+
 // --- Proofs ---
 
 /// A single-token chain has depth 0.
@@ -108,6 +135,14 @@ mod tests {
     fn test_deep_chain() {
         assert!(check_depth_budget(11, 10));
         assert!(!check_depth_budget(12, 10));
+    }
+
+    #[test]
+    fn test_proof_hop_depth_admission() {
+        assert!(check_proof_hop_depth_budget(0, 0));
+        assert!(check_proof_hop_depth_budget(5, 5));
+        assert!(!check_proof_hop_depth_budget(6, 5));
+        assert!(!check_proof_hop_depth_budget(usize::MAX, usize::MAX));
     }
 
     #[test]
