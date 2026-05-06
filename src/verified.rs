@@ -1278,6 +1278,26 @@ pub fn typed_caveat_is_satisfied(caveat: &VerifiedWebOfTrustCaveat, context: &Ve
     ucan_caveat::caveat_satisfied(&caveat, &context)
 }
 
+/// Check non-empty ASCII decimal payload shape before runtime typed caveat parsing.
+///
+/// This verifies only finite byte-shape admission. Numeric conversion, overflow
+/// handling, clock/counter provenance, and caveat policy semantics remain shell
+/// or caller boundaries.
+#[must_use]
+pub fn typed_caveat_ascii_decimal_payload_is_valid(payload: &[u8]) -> bool {
+    ucan_caveat::ascii_decimal_payload_is_valid(&payload.to_vec())
+}
+
+/// Check supported `max_count:window_seconds` rate-limit caveat payload shape.
+///
+/// This verifies only exactly-one-colon ASCII-decimal byte admission before the
+/// shell parses numeric values. It does not verify UTF-8/decimal parser
+/// correctness, counter freshness, or application policy semantics.
+#[must_use]
+pub fn typed_caveat_rate_limit_payload_shape_is_valid(payload: &[u8]) -> bool {
+    ucan_caveat::rate_limit_payload_shape_is_valid(&payload.to_vec())
+}
+
 /// Check whether every supplied typed caveat is satisfied by explicit context.
 ///
 /// This helper is an opt-in bridge to the vendored finite caveat-set predicate.

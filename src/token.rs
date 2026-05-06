@@ -84,7 +84,9 @@ use crate::verified::revocation_check_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
 use crate::verified::signing_input_byte_provenance_is_valid;
+use crate::verified::typed_caveat_ascii_decimal_payload_is_valid;
 use crate::verified::typed_caveat_is_satisfied;
+use crate::verified::typed_caveat_rate_limit_payload_shape_is_valid;
 use crate::verified::validate_token_envelope;
 use crate::verified::verification_stage_transcript_outcome;
 use crate::verified::verified_json_object_bytes;
@@ -924,35 +926,32 @@ impl CaveatPolicy for VerifiedTypedCaveatPolicy {
 }
 
 fn parse_time_bound_caveat(caveat: &CaveatDocument) -> std::result::Result<VerifiedWebOfTrustCaveat, String> {
-    let not_after_seconds = parse_ascii_u64(caveat.payload.as_slice(), "time bound not_after_seconds")?;
+    if !typed_caveat_ascii_decimal_payload_is_valid(caveat.payload.as_slice()) {
+        return Err("time bound not_after_seconds payload must be non-empty verified ASCII decimal".to_owned());
+    }
+    let not_after_seconds = parse_verified_ascii_u64(caveat.payload.as_slice(), "time bound not_after_seconds")?;
     Ok(VerifiedWebOfTrustCaveat::TimeBound { not_after_seconds })
 }
 
 fn parse_rate_limit_caveat(caveat: &CaveatDocument) -> std::result::Result<VerifiedWebOfTrustCaveat, String> {
+    if !typed_caveat_rate_limit_payload_shape_is_valid(caveat.payload.as_slice()) {
+        return Err("rate-limit caveat payload must be verified max_count:window_seconds ASCII decimal".to_owned());
+    }
     let payload = std::str::from_utf8(caveat.payload.as_slice())
         .map_err(|_| "rate-limit caveat payload must be UTF-8 ASCII decimal max_count:window_seconds".to_owned())?;
     let Some((max_count, window_seconds)) = payload.split_once(':') else {
-        return Err("rate-limit caveat payload must be max_count:window_seconds".to_owned());
+        unreachable!("verified rate-limit payload shape contains exactly one ':' delimiter");
     };
-    if window_seconds.contains(':') {
-        return Err("rate-limit caveat payload must contain exactly one ':' delimiter".to_owned());
-    }
-    let max_count = parse_ascii_u64(max_count.as_bytes(), "rate-limit max_count")?;
-    let window_seconds = parse_ascii_u64(window_seconds.as_bytes(), "rate-limit window_seconds")?;
+    let max_count = parse_verified_ascii_u64(max_count.as_bytes(), "rate-limit max_count")?;
+    let window_seconds = parse_verified_ascii_u64(window_seconds.as_bytes(), "rate-limit window_seconds")?;
     Ok(VerifiedWebOfTrustCaveat::RateLimit {
         max_count,
         window_seconds,
     })
 }
 
-fn parse_ascii_u64(payload: &[u8], name: &str) -> std::result::Result<u64, String> {
-    if payload.is_empty() {
-        return Err(format!("{name} payload must not be empty"));
-    }
-    if !payload.iter().all(u8::is_ascii_digit) {
-        return Err(format!("{name} payload must be ASCII decimal"));
-    }
-    let text = std::str::from_utf8(payload).map_err(|_| format!("{name} payload must be ASCII decimal"))?;
+fn parse_verified_ascii_u64(payload: &[u8], name: &str) -> std::result::Result<u64, String> {
+    let text = std::str::from_utf8(payload).map_err(|_| format!("{name} payload must be verified ASCII decimal"))?;
     text.parse::<u64>().map_err(|_| format!("{name} payload must fit in u64"))
 }
 
@@ -4139,7 +4138,7 @@ mod tests {
         assert!(matches!(
             decision.denial_reason(),
             Some(AuthorizationDenialReason::CaveatRejected { message, .. })
-                if message == "rate-limit caveat payload must be max_count:window_seconds"
+                if message == "rate-limit caveat payload must be verified max_count:window_seconds ASCII decimal"
         ));
     }
 

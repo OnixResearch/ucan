@@ -97,7 +97,9 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `token_needs_refresh` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `token_time_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `token_time_valid_at` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
+| `typed_caveat_ascii_decimal_payload_is_valid` | `live-path` | `src/token.rs` reference before typed time-bound payload numeric parsing |
 | `typed_caveat_is_satisfied` | `live-path` | `src/token.rs` reference |
+| `typed_caveat_rate_limit_payload_shape_is_valid` | `live-path` | `src/token.rs` reference before typed rate-limit payload UTF-8/u64 parsing |
 | `typed_caveat_set_is_satisfied` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `validate_token_envelope` | `live-path` | `src/token.rs` reference |
 | `verified_json_object_bytes` | `live-path` | `src/token.rs` reference; discovers first/last significant decoded JSON object indexes through vendored `ucan_json` before serde parsing |
@@ -122,7 +124,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `ucan_backend_transcript` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_base64url` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_capability_merge` | `public-helper` | Imported by `src/verified.rs` for explicit caller-supplied WOT helper APIs, not a live compact-token verifier guarantee by itself. |
-| `ucan_caveat` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
+| `ucan_caveat` | `live-path` | Imported by `src/verified.rs`; live typed caveat payload-shape admission and satisfaction route through this module for the finite supported time/rate vocabulary. |
 | `ucan_caveat_evaluation` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_caveat_preservation` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |
 | `ucan_chain` | `live-path` | Imported by `src/verified.rs`; associated bridge facts are routed by live token issuance/verification or verifier transcript paths where applicable. |

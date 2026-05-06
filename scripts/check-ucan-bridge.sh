@@ -70,12 +70,12 @@ require_pattern 'use verified_logic::ucan_proof_traversal|proof_traversal_transc
 require_pattern 'proof_traversal_dag_transcript_is_valid|VerifiedProofTraversalDagTranscript|dag_traversal_transcript_valid' src/verified.rs
 require_pattern 'verify_live_dag_proof_transcript|LiveProofTraversalTranscript|proof_traversal_dag_transcript_is_valid|parent_indices' src/token.rs
 require_pattern 'use verified_logic::web_of_trust_principal|web_of_trust_principal_digest|web_of_trust_principal_digest_is_valid|principal_id_from_bytes|principal_id_from_digest_bytes' src
-require_pattern 'use verified_logic::ucan_caveat|typed_caveat_is_satisfied|typed_caveat_set_is_satisfied|caveat_satisfied|caveat_set_satisfied' src
+require_pattern 'use verified_logic::ucan_caveat|typed_caveat_is_satisfied|typed_caveat_set_is_satisfied|typed_caveat_ascii_decimal_payload_is_valid|typed_caveat_rate_limit_payload_shape_is_valid|ascii_decimal_payload_is_valid|rate_limit_payload_shape_is_valid|caveat_satisfied|caveat_set_satisfied' src
 require_pattern 'use verified_logic::ucan_caveat_preservation|caveat_preservation_is_valid|parent_caveat_ids_preserved|VerifiedCaveatPreservation' src
 require_pattern 'use verified_logic::ucan_caveat_evaluation|caveat_evaluation_transcript_accepts|first_failed_caveat_index|VerifiedCaveatEvaluationTranscript' src
 require_pattern 'parent_caveats_are_preserved|caveat_identifier_set|caveat_preservation_is_valid|VerifiedCaveatPreservation' src/token.rs
 require_pattern 'evaluate_capability_caveats|caveat_evaluation_transcript_accepts|caveat_evaluation_first_failed_index|VerifiedCaveatEvaluationFact' src/token.rs
-require_pattern 'VerifiedTypedCaveatPolicySet|TypedCaveatContext|parse_time_bound_caveat|parse_rate_limit_caveat|typed_caveat_is_satisfied' src/token.rs
+require_pattern 'VerifiedTypedCaveatPolicySet|TypedCaveatContext|parse_time_bound_caveat|parse_rate_limit_caveat|typed_caveat_is_satisfied|typed_caveat_ascii_decimal_payload_is_valid|typed_caveat_rate_limit_payload_shape_is_valid' src/token.rs
 require_pattern 'use verified_logic::web_of_trust_attestation|web_of_trust_attestation_payload_bytes|web_of_trust_attestation_signature_is_valid|web_of_trust_attestation_is_active_at|attestation_payload_bytes|attestation_signature_valid|attestation_active_at' src
 require_pattern 'use verified_logic::web_of_trust_revocation|web_of_trust_revocation_payload_bytes|web_of_trust_revocation_signature_is_valid|web_of_trust_revocation_matches_attestation|web_of_trust_revocation_is_effective_at|revocation_payload_bytes|revocation_signature_valid|revocation_matches|revocation_effective_at' src
 require_pattern 'use verified_logic::web_of_trust_policy|web_of_trust_threshold_accepts|threshold_accepts' src
@@ -93,6 +93,7 @@ reject_pattern 'self\.as_slice\(\)\.iter\(\)\.any\(\|candidate\| candidate == re
 reject_pattern 'invoker: verified\.issuer\(\)\.clone\(\)' src/token.rs
 reject_pattern 'if depth > limits\.max_proof_depth\(\)|depth > limits\.max_proof_depth\(\)|chain_len - 1 <= max_depth' src/token.rs
 reject_pattern 'checked_add\(1\)|let Some\(chain_len\)|check_depth_budget\(chain_len, max_depth\)' src/verified.rs
+reject_pattern 'fn parse_ascii_u64|payload\.iter\(\)\.all\(u8::is_ascii_digit\)|window_seconds\.contains\(' src/token.rs
 reject_pattern 'OnceLock|lazy_static|thread_local!|std::env|reqwest|ureq|hyper|process-global|global resolver|global proof|default resolver|default proof store|filesystem fallback|network fallback' src
 
 python3 - <<'PY'

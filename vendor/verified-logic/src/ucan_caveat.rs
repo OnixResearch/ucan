@@ -78,6 +78,116 @@ pub fn caveat_set_satisfied(set: &Vec<Caveat>, ctx: &CaveatContext) -> (result: 
     true
 }
 
+// --- Typed caveat payload-shape admission ---
+
+/// ASCII decimal digit byte used by typed caveat payloads.
+pub open spec fn ascii_decimal_digit_spec(byte: u8) -> bool {
+    48u8 <= byte && byte <= 57u8
+}
+
+/// Non-empty ASCII decimal payload shape used before runtime numeric parsing.
+pub open spec fn ascii_decimal_payload_spec(payload: Seq<u8>) -> bool {
+    payload.len() > 0 && forall|i: int| #![auto] 0 <= i < payload.len() ==> ascii_decimal_digit_spec(payload[i])
+}
+
+/// `max_count:window_seconds` byte-shape admission for the supported rate-limit caveat.
+pub open spec fn rate_limit_payload_shape_spec(payload: Seq<u8>) -> bool {
+    payload.len() >= 3 && exists|colon: int|
+        0 < colon < payload.len() - 1
+            && payload[colon] == 58u8
+            && (forall|i: int| #![auto] 0 <= i < payload.len() ==> if i == colon {
+                payload[i] == 58u8
+            } else {
+                ascii_decimal_digit_spec(payload[i])
+            })
+}
+
+/// Check whether one byte is an ASCII decimal digit.
+pub fn is_ascii_decimal_digit(byte: u8) -> (result: bool)
+    ensures result == ascii_decimal_digit_spec(byte),
+{
+    48u8 <= byte && byte <= 57u8
+}
+
+/// Check non-empty ASCII decimal payload shape before runtime numeric parsing.
+pub fn ascii_decimal_payload_is_valid(payload: &Vec<u8>) -> (result: bool)
+    ensures result == ascii_decimal_payload_spec(payload@),
+{
+    if payload.len() == 0 {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < payload.len()
+        invariant
+            0 <= i <= payload.len(),
+            forall|k: int| #![auto] 0 <= k < i ==> ascii_decimal_digit_spec(payload@[k]),
+        decreases payload.len() - i,
+    {
+        if !is_ascii_decimal_digit(payload[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Check supported rate-limit `max_count:window_seconds` payload shape before runtime parsing.
+pub fn rate_limit_payload_shape_is_valid(payload: &Vec<u8>) -> (result: bool)
+    ensures result ==> rate_limit_payload_shape_spec(payload@),
+{
+    if payload.len() < 3 {
+        return false;
+    }
+    let mut i: usize = 0;
+    let mut colon_seen = false;
+    let mut colon_index: usize = 0;
+    while i < payload.len()
+        invariant
+            0 <= i <= payload.len(),
+            colon_seen ==> colon_index < i,
+            colon_seen ==> payload@[colon_index as int] == 58u8,
+            forall|k: int| #![auto] 0 <= k < i ==> payload@[k] == 58u8 || ascii_decimal_digit_spec(payload@[k]),
+            forall|k: int| #![auto] 0 <= k < i && payload@[k] == 58u8 ==> colon_seen && k == colon_index as int,
+        decreases payload.len() - i,
+    {
+        let byte = payload[i];
+        if byte == 58u8 {
+            if colon_seen {
+                return false;
+            }
+            colon_seen = true;
+            colon_index = i;
+        } else if !is_ascii_decimal_digit(byte) {
+            return false;
+        }
+        i = i + 1;
+    }
+    if !colon_seen {
+        return false;
+    }
+    if colon_index == 0 {
+        return false;
+    }
+    if colon_index + 1 >= payload.len() {
+        return false;
+    }
+    assert(payload@.len() >= 3);
+    assert(0 < colon_index as int);
+    assert((colon_index as int) < payload@.len() - 1);
+    assert(payload@[colon_index as int] == 58u8);
+    assert forall|k: int| #![auto] 0 <= k < payload@.len() implies if k == colon_index as int {
+        payload@[k] == 58u8
+    } else {
+        ascii_decimal_digit_spec(payload@[k])
+    } by {
+        if k == colon_index as int {
+        } else {
+            assert(payload@[k] != 58u8);
+        }
+    }
+    true
+}
+
 // --- Single caveat containment ---
 
 /// Parent caveat contains child caveat: satisfying child implies satisfying parent.
@@ -341,5 +451,18 @@ mod tests {
         }];
         let combined = caveat_intersect(&a, &b);
         assert_eq!(combined.len(), 2);
+    }
+
+    #[test]
+    fn test_typed_caveat_payload_shape_admission() {
+        assert!(ascii_decimal_payload_is_valid(&b"12345".to_vec()));
+        assert!(!ascii_decimal_payload_is_valid(&Vec::new()));
+        assert!(!ascii_decimal_payload_is_valid(&b"12a45".to_vec()));
+
+        assert!(rate_limit_payload_shape_is_valid(&b"100:3600".to_vec()));
+        assert!(!rate_limit_payload_shape_is_valid(&b":3600".to_vec()));
+        assert!(!rate_limit_payload_shape_is_valid(&b"100:".to_vec()));
+        assert!(!rate_limit_payload_shape_is_valid(&b"100:3600:extra".to_vec()));
+        assert!(!rate_limit_payload_shape_is_valid(&b"100/window".to_vec()));
     }
 }
