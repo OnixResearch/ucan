@@ -11,6 +11,7 @@ use verified_logic::ucan_chain;
 use verified_logic::ucan_compact;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
+use verified_logic::ucan_header;
 use verified_logic::ucan_invocation;
 use verified_logic::ucan_json;
 use verified_logic::ucan_proof_reference;
@@ -155,6 +156,12 @@ pub struct VerifiedJsonObjectBytes {
     pub bytes: Vec<u8>,
     pub first_significant_index: usize,
     pub last_significant_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedParsedHeader {
+    pub algorithm: Vec<u8>,
+    pub token_type: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -722,6 +729,18 @@ pub fn json_object_bytes_are_valid(object: &VerifiedJsonObjectBytes) -> bool {
         object.first_significant_index,
         object.last_significant_index,
     )
+}
+
+/// Validate parsed compact-token header field admission before structural validation.
+///
+/// This proves only exact byte equality over shell/serde-supplied parsed fields:
+/// algorithm `EdDSA` and token type `JWT`. It does not parse JSON, verify UTF-8
+/// or canonicalization, decode base64url, verify signing input provenance, hash,
+/// sign, verify cryptographic signatures, access storage/network backends,
+/// persist state, replay-protect, or read an ambient clock.
+#[must_use]
+pub fn parsed_header_is_valid(header: &VerifiedParsedHeader) -> bool {
+    ucan_header::parsed_header_admission_is_valid(&header.algorithm, &header.token_type)
 }
 
 /// Validate that a shell-computed proof reference uses the supported fixed digest
@@ -1640,6 +1659,7 @@ mod tests {
     use super::VerifiedCompactTokenParts;
     use super::VerifiedInvocationChainRequest;
     use super::VerifiedJsonObjectBytes;
+    use super::VerifiedParsedHeader;
     use super::VerifiedPrimitiveError;
     use super::VerifiedProofReferenceDigest;
     use super::VerifiedProofTraversalBudget;
@@ -1669,6 +1689,7 @@ mod tests {
     use super::invocation_chain_is_authorized;
     use super::invocation_request_is_authorized;
     use super::json_object_bytes_are_valid;
+    use super::parsed_header_is_valid;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
     use super::proof_reference_digest_is_valid;
@@ -1800,6 +1821,26 @@ mod tests {
             bytes: b"abc/".to_vec()
         }));
         assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment { bytes: b"A".to_vec() }));
+    }
+
+    #[test]
+    fn parsed_header_uses_verified_admission() {
+        assert!(parsed_header_is_valid(&VerifiedParsedHeader {
+            algorithm: b"EdDSA".to_vec(),
+            token_type: b"JWT".to_vec(),
+        }));
+        assert!(!parsed_header_is_valid(&VerifiedParsedHeader {
+            algorithm: b"ES256".to_vec(),
+            token_type: b"JWT".to_vec(),
+        }));
+        assert!(!parsed_header_is_valid(&VerifiedParsedHeader {
+            algorithm: b"EdDSA".to_vec(),
+            token_type: b"JWS".to_vec(),
+        }));
+        assert!(!parsed_header_is_valid(&VerifiedParsedHeader {
+            algorithm: b"EdDSA\0".to_vec(),
+            token_type: b"JWT".to_vec(),
+        }));
     }
 
     #[test]

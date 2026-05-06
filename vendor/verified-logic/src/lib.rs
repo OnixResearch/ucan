@@ -848,6 +848,8 @@ pub mod ucan_cid;
 /// Verified UCAN delegation depth budget.
 pub mod ucan_delegation_depth;
 pub mod ucan_did;
+/// Verified parsed UCAN header field admission.
+pub mod ucan_header;
 /// Verified UCAN invocation and receipt model.
 pub mod ucan_invocation;
 /// Verified decoded UCAN JSON object byte admission.

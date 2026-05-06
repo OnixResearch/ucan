@@ -25,6 +25,7 @@ use crate::verified::VerifiedCapability;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedJsonObjectBytes;
+use crate::verified::VerifiedParsedHeader;
 use crate::verified::VerifiedPrimitiveError;
 use crate::verified::VerifiedProofReferenceDigest;
 use crate::verified::VerifiedProofTraversalBudget;
@@ -43,6 +44,7 @@ use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
 use crate::verified::invocation_request_is_authorized;
 use crate::verified::json_object_bytes_are_valid;
+use crate::verified::parsed_header_is_valid;
 use crate::verified::proof_depth_within_budget;
 use crate::verified::proof_link_is_valid;
 use crate::verified::proof_reference_digest_is_valid;
@@ -3179,7 +3181,11 @@ fn validate_compact_token_string(token: &str) -> TokenResult<()> {
 }
 
 fn validate_header(header: &DecodedHeader) -> TokenResult<()> {
-    if header.alg == TOKEN_ALGORITHM_EDDSA && header.typ == TOKEN_TYPE_JWT {
+    let verified_header = VerifiedParsedHeader {
+        algorithm: header.alg.as_bytes().to_vec(),
+        token_type: header.typ.as_bytes().to_vec(),
+    };
+    if parsed_header_is_valid(&verified_header) {
         return Ok(());
     }
     Err(TokenError::UnsupportedHeader {
@@ -4177,6 +4183,27 @@ mod tests {
         let second_reference = super::proof_reference_for_token(&token);
         assert_eq!(first_reference, second_reference);
         assert_eq!(first_reference.as_bytes().len(), blake3::OUT_LEN);
+    }
+
+    #[test]
+    fn parsed_header_admission_rejects_unsupported_fields() {
+        let wrong_algorithm = token_with_header(
+            r#"{"alg":"ES256","typ":"JWT"}"#,
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#,
+        );
+        let decoded = parse_compact_token(&wrong_algorithm).expect("token should parse before header admission");
+        let error = validate_decoded_token(decoded).expect_err("unsupported algorithm should fail closed");
+        assert!(matches!(error, TokenError::UnsupportedHeader { algorithm, token_type }
+            if algorithm == "ES256" && token_type == super::TOKEN_TYPE_JWT));
+
+        let wrong_type = token_with_header(
+            r#"{"alg":"EdDSA","typ":"JWS"}"#,
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#,
+        );
+        let decoded = parse_compact_token(&wrong_type).expect("token should parse before header admission");
+        let error = validate_decoded_token(decoded).expect_err("unsupported token type should fail closed");
+        assert!(matches!(error, TokenError::UnsupportedHeader { algorithm, token_type }
+            if algorithm == super::TOKEN_ALGORITHM_EDDSA && token_type == "JWS"));
     }
 
     #[test]
@@ -5381,6 +5408,13 @@ mod tests {
         let signature = String::from_utf8(signature).expect("base64url signature should remain utf-8");
         CompactToken::new(super::join_compact_parts(parts[0], parts[1], signature.as_str()))
             .expect("tampered token should wrap")
+    }
+
+    fn token_with_header(header_json: &str, payload_json: &str) -> CompactToken {
+        let header = super::URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload = super::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
+        let signature = super::URL_SAFE_NO_PAD.encode([0_u8; super::ED25519_SIGNATURE_BYTES]);
+        CompactToken::new(super::join_compact_parts(&header, &payload, &signature)).expect("token should wrap")
     }
 
     fn token_with_payload(payload_json: &str) -> CompactToken {

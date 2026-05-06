@@ -1,2 +1,2 @@
-revision=e09f88cb3e16510858689ac7c9463fc4b1430518
+revision=7bbd4e2f852dcb2782cdcbd992426e1c72bc0910
 source_repo=git@github.com:brittonr/verified-logic.git

@@ -885,17 +885,17 @@ The library MUST preserve the existing caller-injected proof traversal behavior 
 - AND verified traversal primitives MUST NOT fetch proofs, resolve keys, verify signatures, access storage or network backends, persist state, replay-protect, sign, or read an ambient clock
 
 ### Requirement: Verified compact-token codec boundary [r[library.verified-compact-token-codec-boundary]]
-The library MUST route compact-token split, framing, proof-reference digest, base64url segment, and decoded JSON object structural admission through vendored verified-logic predicates before continuing into trusted runtime codec, JSON parser, or cryptographic boundaries.
+The library MUST route compact-token split, framing, proof-reference digest, base64url segment, decoded JSON object structural admission, and parsed header field admission through vendored verified-logic predicates before continuing into trusted runtime codec, JSON parser, structural-validation, or cryptographic boundaries.
 
-#### Scenario: Decoded JSON object admission rejects non-object header and payload bytes [r[library.verified-compact-token-codec-boundary.scenario.json-object-admission]]
-- GIVEN decoded compact header or payload bytes whose first and last non-JSON-whitespace bytes do not delimit a JSON object
-- WHEN the shell prepares to deserialize that decoded part
-- THEN the shell MUST reject it through the verified bridge before relying on serde-derived header or claim semantics
+#### Scenario: Parsed header admission rejects unsupported algorithm or type [r[library.verified-compact-token-codec-boundary.scenario.parsed-header-admission]]
+- GIVEN a compact header deserialized into parsed `alg` and `typ` fields
+- WHEN either parsed field differs byte-for-byte from the supported `EdDSA` / `JWT` constants
+- THEN the shell MUST reject the token through the verified parsed-header bridge before structural validation or signature verification continues
 
-#### Scenario: JSON object admission preserves parser trust boundary [r[library.verified-compact-token-codec-boundary.scenario.json-object-boundary-limits]]
-- GIVEN decoded compact header or payload bytes admitted by the verified JSON object structural predicate
-- WHEN the shell deserializes JSON, validates fields, constructs signing input, hashes proof references, or verifies signatures
-- THEN the library MUST continue to document those runtime parser, codec, and cryptographic operations as outside the verified structural admission claim
+#### Scenario: Parsed header admission preserves parser and crypto trust boundaries [r[library.verified-compact-token-codec-boundary.scenario.parsed-header-boundary-limits]]
+- GIVEN parsed header fields admitted by the verified predicate
+- WHEN the shell relies on serde field extraction, canonical signing input, or Ed25519 verification
+- THEN the library MUST continue to document those parser, canonicalization, and cryptographic operations as outside the verified parsed-header admission claim
 
 ### Requirement: Caveat-preserving attenuation invariant [r[library.verified-caveat-preserving-attenuation]]
 
