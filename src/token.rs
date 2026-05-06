@@ -22,6 +22,7 @@ use crate::verified::VerifiedBackendOperationFact;
 use crate::verified::VerifiedBackendTranscript;
 use crate::verified::VerifiedBase64UrlSegment;
 use crate::verified::VerifiedCapability;
+use crate::verified::VerifiedCaveatPreservation;
 use crate::verified::VerifiedCompactTokenEnvelope;
 use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedJsonObjectBytes;
@@ -37,6 +38,7 @@ use crate::verified::VerifiedWebOfTrustCaveatContext;
 use crate::verified::backend_transcript_accepts;
 use crate::verified::backend_transcript_first_failed_operation;
 use crate::verified::base64url_segment_is_valid;
+use crate::verified::caveat_preservation_is_valid;
 use crate::verified::compact_token_envelope_is_valid;
 use crate::verified::compact_token_split_is_valid;
 use crate::verified::compose_time_window_chain;
@@ -2643,22 +2645,23 @@ fn capability_is_delegated(child: &CapabilityDocument, parents: &[CapabilityDocu
     let child_verified = VerifiedCapability::from_document(child.clone())?;
     for parent in parents {
         let parent_verified = VerifiedCapability::from_document(parent.clone())?;
-        if parent_verified.contains(&child_verified) && parent_caveats_are_preserved(parent, child) {
+        if parent_verified.contains(&child_verified) && parent_caveats_are_preserved(parent, child)? {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn parent_caveats_are_preserved(parent: &CapabilityDocument, child: &CapabilityDocument) -> bool {
-    parent.caveats.iter().all(|parent_caveat| {
-        child.caveats.iter().any(|child_caveat| {
-            child_caveat.domain == parent_caveat.domain
-                && child_caveat.caveat_type == parent_caveat.caveat_type
-                && child_caveat.key == parent_caveat.key
-                && child_caveat.payload() == parent_caveat.payload()
-        })
-    })
+fn parent_caveats_are_preserved(parent: &CapabilityDocument, child: &CapabilityDocument) -> TokenResult<bool> {
+    let preservation = VerifiedCaveatPreservation {
+        parent_caveat_ids: caveat_identifier_set(parent)?,
+        child_caveat_ids: caveat_identifier_set(child)?,
+    };
+    Ok(caveat_preservation_is_valid(&preservation))
+}
+
+fn caveat_identifier_set(capability: &CapabilityDocument) -> TokenResult<Vec<Vec<u8>>> {
+    capability.caveats.iter().map(caveat_identifier_bytes).collect()
 }
 
 fn parent_effective_capabilities(parents: &[VerifiedToken]) -> Vec<CapabilityDocument> {

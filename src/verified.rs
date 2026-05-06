@@ -7,6 +7,7 @@ use verified_logic::ucan_backend_transcript;
 use verified_logic::ucan_base64url;
 use verified_logic::ucan_capability_merge;
 use verified_logic::ucan_caveat;
+use verified_logic::ucan_caveat_preservation;
 use verified_logic::ucan_chain;
 use verified_logic::ucan_compact;
 use verified_logic::ucan_delegation_depth;
@@ -162,6 +163,12 @@ pub struct VerifiedJsonObjectBytes {
 pub struct VerifiedParsedHeader {
     pub algorithm: Vec<u8>,
     pub token_type: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedCaveatPreservation {
+    pub parent_caveat_ids: Vec<Vec<u8>>,
+    pub child_caveat_ids: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -741,6 +748,21 @@ pub fn json_object_bytes_are_valid(object: &VerifiedJsonObjectBytes) -> bool {
 #[must_use]
 pub fn parsed_header_is_valid(header: &VerifiedParsedHeader) -> bool {
     ucan_header::parsed_header_admission_is_valid(&header.algorithm, &header.token_type)
+}
+
+/// Exposes the vendored opaque caveat identifier preservation predicate.
+///
+/// This proves only that each caller/shell-supplied parent caveat identifier
+/// byte vector appears exactly in the child identifier set. It does not prove
+/// caveat-document validation, length-prefix encoding provenance/injectivity,
+/// payload parsing, caveat policy semantics, clocks, counters, backend truth,
+/// token provenance, or cryptographic correctness.
+#[must_use]
+pub fn caveat_preservation_is_valid(preservation: &VerifiedCaveatPreservation) -> bool {
+    ucan_caveat_preservation::parent_caveat_ids_preserved(
+        &preservation.parent_caveat_ids,
+        &preservation.child_caveat_ids,
+    )
 }
 
 /// Validate that a shell-computed proof reference uses the supported fixed digest
@@ -1654,6 +1676,7 @@ mod tests {
     use super::VerifiedBackendTranscript;
     use super::VerifiedBase64UrlSegment;
     use super::VerifiedCapability;
+    use super::VerifiedCaveatPreservation;
     use super::VerifiedChainEntry;
     use super::VerifiedCompactTokenEnvelope;
     use super::VerifiedCompactTokenParts;
@@ -1680,6 +1703,7 @@ mod tests {
     use super::backend_transcript_first_failed_operation;
     use super::base64url_segment_is_valid;
     use super::capability_set_authorizes;
+    use super::caveat_preservation_is_valid;
     use super::compact_token_envelope_is_valid;
     use super::compact_token_split_is_valid;
     use super::compose_time_window_chain;
@@ -1841,6 +1865,27 @@ mod tests {
             algorithm: b"EdDSA\0".to_vec(),
             token_type: b"JWT".to_vec(),
         }));
+    }
+
+    #[test]
+    fn caveat_preservation_uses_verified_admission() {
+        let preservation = VerifiedCaveatPreservation {
+            parent_caveat_ids: vec![b"a".to_vec(), b"b".to_vec()],
+            child_caveat_ids: vec![b"extra".to_vec(), b"b".to_vec(), b"a".to_vec()],
+        };
+        assert!(caveat_preservation_is_valid(&preservation));
+
+        let missing = VerifiedCaveatPreservation {
+            parent_caveat_ids: vec![b"a".to_vec(), b"b".to_vec()],
+            child_caveat_ids: vec![b"a".to_vec()],
+        };
+        assert!(!caveat_preservation_is_valid(&missing));
+
+        let changed_bytes = VerifiedCaveatPreservation {
+            parent_caveat_ids: vec![b"a".to_vec()],
+            child_caveat_ids: vec![b"A".to_vec()],
+        };
+        assert!(!caveat_preservation_is_valid(&changed_bytes));
     }
 
     #[test]
