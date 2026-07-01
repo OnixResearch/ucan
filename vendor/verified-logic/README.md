@@ -1,6 +1,8 @@
-# verified-logic
+# Trellis
 
-Reusable logic building blocks with machine-checked correctness.
+Natural, composable verified-logic building blocks for reliable systems.
+Trellis provides a lightweight structure for growing reusable proofs, specs,
+and runtime code that stays mechanically checked.
 
 The house style is a `spec fn` (mathematical definition) plus an
 `exec fn` whose `ensures result == spec(args)` clause is verified by
@@ -10,7 +12,7 @@ are listed in `openspec/specs/verification-gaps/spec.md` so any weaker
 bridge stays explicit. Requirement coverage is tracked by
 [Tracey](https://tracey.bearcove.eu/).
 
-**8730 Verus proofs · 4296 tests · 1772 requirements · 395 modules · 16 trusted/proof-gap boundaries**
+**10525 Verus proofs · 4765 tests · 1967 requirements · 592 modules · 16 trusted/proof-gap boundaries**
 
 ## How it works
 
@@ -49,7 +51,7 @@ validation commands captured in the change evidence.
 | Module | Composition purpose | Status |
 |---|---|---|
 | `durable_job_executor` | durable, idempotent, retry-aware job execution | verified |
-| `fenced_distributed_lock` | stale-holder-safe lease writes with fencing tokens | verified |
+| `distributed_lock` | stale-holder-safe lease writes with fencing tokens | verified |
 | `linearizable_read_gate` | Raft read-index / lease-read admission | verified |
 | `safe_snapshot_replication` | complete, integrity-checked snapshot installation | verified |
 | `crash_safe_page_cache` | WAL-backed dirty-page recovery | verified |
@@ -88,6 +90,27 @@ validation commands captured in the change evidence.
 | `ring_buffer` | FIFO queue with power-of-two capacity |
 | `sequence` | monotonic sequence generator with batch reservation |
 | `slice` | chunk count, prefix/suffix equality, all-equal, mismatch |
+
+### Rust async primitives
+
+| Module | What it verifies |
+|---|---|
+| `async_task_state` | finite pending/ready/completed/cancelled task lifecycle admission with terminal-transition rejection proofs and focused positive/negative tests |
+| `task_waker` | finite empty/registered/notified/taken generation-tagged waker-slot admission plus no-lost-wake bridge predicates that avoid callback/fairness claims |
+| `oneshot_channel` | finite open/sent/received/closed/cancelled single-slot channel admission plus receiver readiness/waker-notification composition |
+| `drop_guard` | finite armed/disarmed/cleaned exactly-once cleanup guard admission with repeated-cleanup rejection evidence |
+
+### Circuit primitives
+
+| Module | What it verifies |
+|---|---|
+| `r1cs_constraint` | bounded single-row R1CS shape, modular dot product, and satisfaction admission without multi-row/proving-system claims |
+| `r1cs_bit_decomposition` | bounded two-bit decomposition over boolean R1CS witness slots without arbitrary-width range-check/proving-system claims |
+| `r1cs_lookup` | bounded lookup-table membership over active R1CS witness/table prefixes without PLONK lookup/proving-system claims |
+| `r1cs_boolean` | bounded booleanity row encoding and satisfaction for witness-slot bit constraints without range-check/proving-system claims |
+| `r1cs_gates` | bounded multiplication, addition, and constant gate adapters into R1CS rows without circuit-builder/proving-system claims |
+| `r1cs_system` | bounded multi-row R1CS system shape and shared-witness satisfaction without proving-system claims |
+| `r1cs_public_inputs` | bounded public-input binding and R1CS statement satisfaction without proving-system claims |
 
 ### Raft consensus
 
@@ -179,6 +202,17 @@ validation commands captured in the change evidence.
 | `subsumption` | variant subsumption |
 | `token_timestamp` | UCAN token timestamp validity |
 
+### Language and computation admission
+
+| Module | What it verifies |
+|---|---|
+| `ability_effect` | finite ability requirements, handler discharge, and sandbox attenuation |
+| `algebraic_effect` | finite algebraic-effect signatures, rows, summaries, handlers, and single-use continuations |
+| `content_addressed_code` | content-addressed definition identity, dependency closure, and recursive group admission |
+| `remote_computation` | remote computation dependency, ability, and resource admission |
+| `semantic_refactoring` | immutable name movement, compatible propagation, and unresolved-dependent admission |
+| `typed_durable_reference` | typed durable references, unpersist gates, and migration admission |
+
 ### Memory management
 
 | Module | What it verifies |
@@ -220,6 +254,11 @@ validation commands captured in the change evidence.
 | `rcu` | read-copy-update: grace periods, quiescent state, safe reclamation |
 | `mpsc_bounds` | MPSC channel bounds: occupancy, send/receive, capacity, close/drain |
 | `futex_state` | futex wait/wake FSM: idle/waiting/notified, notify idempotence |
+| `parking_lot_core_model` | finite key-to-waiter queues with uniqueness, requeue, and bucket metadata validity |
+| `parking_lot_raw_mutex` | compact raw-mutex locked/parked-bit acquisition and release state machine |
+| `parking_lot_condvar_model` | condition-variable association, notify, timeout, and no-spurious requeue semantics |
+| `parking_lot_rwlock_model` | packed reader/writer/upgradable RwLock state transitions and fairness gates |
+| `parking_lot_contracts` | parking-lot fairness, timeout, reentrant mutex, Once, raw-lock, and deadlock contracts |
 | `ticket_lock` | FIFO-fair spinlock: ticket/serving counters, fairness, bounded waiters |
 | `cas_loop` | CAS retry loop modeling: ABA detection via pack/unpack, retry bounds |
 | `bounded_mpmc` | bounded MPMC ring buffer: head/tail, lap-based empty/full, occupancy |
@@ -342,7 +381,8 @@ validation commands captured in the change evidence.
 |---|---|
 | `register_allocation` | live-range overlap graphs, conflict-free register assignment, and deterministic spill fallback |
 | `stack_frame_layout` | aligned stack-slot placement, exact rounded frame sizing, and explicit safe-reuse checks over live ranges |
-| `wasm_primitives` | exact Wasm value tags, `i32.add` stack discipline, typed local access, and linear-memory bounds/grow semantics |
+| `wasm_primitives` | exact Wasm value tags, `i32.add` stack discipline, typed local access, linear-memory bounds/grow semantics, control-label branch/return arity, unreachable-stack validation, control-frame stack-height restoration, finite `call_indirect` table/signature admission, and `br_table` target validation |
+| `gpu_primitives` | finite GPU program shapes, launch/grid/block/thread bounds, pitched/tensor memory-layout, coalesced access, and shared-tile admission |
 
 ### Scheduling primitives
 
@@ -447,11 +487,73 @@ validation commands captured in the change evidence.
 | `concurrent_composition` | concurrency protocol ↔ data structure invariant chains across 7 groups |
 | `consensus_path` | end-to-end Raft read/write path composition proofs |
 
+### Additional public module coverage
+
+The drift checker treats the compact lists below as README catalog entries for public modules whose detailed descriptions remain in the crate-level `src/lib.rs` documentation. Keep these names synchronized with `pub mod` declarations; add a fuller table row above when a module needs human-facing explanation.
+
+- **beam**: `beam_link`, `beam_mailbox`, `beam_monitor`, `beam_process`, `beam_registry`, `beam_scheduler`, `beam_send`
+- **bounded**: `bounded_interval`
+- **cache**: `cache_partition`
+- **chaoscontrol**: `chaoscontrol_coverage`, `chaoscontrol_fault_schedule`, `chaoscontrol_fault_state`, `chaoscontrol_frontier`, `chaoscontrol_input_tree`, `chaoscontrol_oracle`, `chaoscontrol_scheduler`
+- **composite**: `composite_outcome`, `composite_receipt_envelope`
+- **config**: `config_admission`, `config_default`, `config_key`, `config_override_precedence`, `config_typed_value`, `config_validation_decision`
+- **consistency**: `consistency_history`, `consistency_object`, `consistency_refinement`, `consistency_relations`, `consistency_session`, `consistency_transactional`
+- **constant**: `constant_folding`
+- **constraint**: `constraint_admission`, `constraint_assignment`, `constraint_consistency`, `constraint_domain`, `constraint_propagation`, `constraint_relation`, `constraint_variable`, `constraint_witness`
+- **control**: `control_actuator_saturation`, `control_deadband`, `control_error_signal`, `control_flow_graph`, `control_hysteresis`, `control_rate_limit`, `control_safety_envelope`, `control_setpoint`
+- **cron**: `cron_field`, `cron_match`, `cron_next`
+- **ct**: `ct_select`
+- **data**: `data_validation_admission`, `data_validation_cross_field`, `data_validation_enum_constraint`, `data_validation_error_accumulation`, `data_validation_field_presence`, `data_validation_normalization_decision`, `data_validation_range_constraint`, `data_validation_schema_predicate`
+- **ds**: `ds_bounded_array`, `ds_fifo_queue`, `ds_key_value_map`, `ds_priority_queue`, `ds_ring_buffer`, `ds_union_find`
+- **false**: `false_sharing`
+- **feature**: `feature_flag_gate`, `feature_flag_rollout_bucket`
+- **fetch**: `fetch_add`
+- **fs**: `fs_path_admission`, `fs_path_containment`, `fs_path_extension_type`, `fs_path_form`, `fs_path_join_split`, `fs_path_normalization`, `fs_path_segment`, `fs_path_traversal`
+- **geom**: `geom_admission`, `geom_bounds`, `geom_containment`, `geom_grid_cell`, `geom_intersection`, `geom_orientation`, `geom_point_vector`, `geom_transform`
+- **gis**: `gis_bounding_box`, `gis_coordinate_envelope`, `gis_linestring_topology`, `gis_tile_index`
+- **graph**: `graph_adjacency`, `graph_component_partition`, `graph_frontier_cut`, `graph_query_composition`, `graph_reachability`, `graph_shortest_path_envelope`, `graph_topological_order`
+- **hypervisor**: `hypervisor_dirty_log`, `hypervisor_exit`, `hypervisor_gpa`, `hypervisor_interrupt`, `hypervisor_memslot`, `hypervisor_vcpu`
+- **id**: `id_alias_map`, `id_canonicalization`, `id_collision_metadata`, `id_identifier_envelope`, `id_lookup_result`, `id_namespace_scope`, `id_registration_admission`, `id_scoped_uniqueness`
+- **index**: `index_query_pagination`
+- **instruction**: `instruction_selection`
+- **knowledge**: `knowledge_graph`
+- **left**: `left_right`
+- **metric**: `metric_admission`, `metric_aggregate`, `metric_alert`, `metric_counter`, `metric_gauge`, `metric_histogram`, `metric_id`, `metric_labels`, `metric_window`
+- **ml**: `ml_batch_iterator`, `ml_confusion_matrix`, `ml_dataset_split`, `ml_feature_normalization`, `ml_inference_envelope`, `ml_label_encoding`, `ml_tensor_shape`, `ml_top_k`
+- **net**: `net_checksum_shape`, `net_endpoint_address`, `net_header_field`, `net_message_sequence`, `net_packet_frame`, `net_parser_admission`, `net_payload_bound`, `net_protocol_admission`
+- **nix**: `nix_base32`, `nix_drv_serialize`, `nix_fingerprint`, `nix_hash_truncate`, `nix_store_path`
+- **numeric**: `numeric_affine_transform_discrete`, `numeric_checked_arithmetic_envelope`, `numeric_denominator_safe_ratio`, `numeric_fixed_point_scale`, `numeric_histogram_counter`, `numeric_monotone_sequence`, `numeric_prefix_sum`, `numeric_quantized_threshold`
+- **opt**: `opt_admission`, `opt_bound`, `opt_candidate_ranking`, `opt_dominance`, `opt_feasible_set`, `opt_frontier`, `opt_objective`, `opt_optimum_witness`
+- **parsing**: `parsing_format`
+- **physics**: `physics_collision_envelope`, `physics_contact_manifold`, `physics_energy_budget`, `physics_integrator_step`, `physics_momentum_budget`, `physics_time_horizon`, `physics_units`, `physics_vector_bounds`
+- **policy**: `policy_action`, `policy_authorization`, `policy_conflict`, `policy_delegation`, `policy_grant_denial`, `policy_principal`, `policy_resource`, `policy_rule`
+- **probability**: `probability_statistics`
+- **proof**: `proof_gap_boundary_audit`
+- **raft**: `raft_consensus_core`
+- **rect**: `rect_grid_index`
+- **resource**: `resource_accounting`
+- **scheduling**: `scheduling_calendar`
+- **sel4**: `sel4_asid`, `sel4_cap_rights`, `sel4_cdt`, `sel4_cspace`, `sel4_endpoint`, `sel4_fault_ipc`, `sel4_invariants`, `sel4_invocation`, `sel4_irq`, `sel4_notification`, `sel4_ready_queue`, `sel4_reply`, `sel4_tcb`, `sel4_untyped`, `sel4_vspace`
+- **serialization**: `serialization_codec`
+- **shamir**: `shamir_field`, `shamir_lagrange`, `shamir_poly`, `shamir_reconstruct`, `shamir_split`, `shamir_threshold`
+- **signal**: `signal_processing`
+- **state**: `state_machine_workflow`
+- **storage**: `storage_index`
+- **surelock**: `surelock_deadlock`, `surelock_id`, `surelock_key`, `surelock_level`, `surelock_lockset`
+- **table**: `table_relational`
+- **text**: `text_string`
+- **type**: `type_unification`
+- **ucan**: `ucan_ability`, `ucan_backend_transcript`, `ucan_base64url`, `ucan_capability_merge`, `ucan_caveat`, `ucan_caveat_evaluation`, `ucan_caveat_preservation`, `ucan_chain`, `ucan_cid`, `ucan_claims_presence`, `ucan_compact`, `ucan_delegation_depth`, `ucan_did`, `ucan_header`, `ucan_invocation`, `ucan_json`, `ucan_parsed_capability_shape`, `ucan_parsed_caveat_payload`, `ucan_parsed_caveat_shape`, `ucan_parsed_did_claim`, `ucan_principal_link`, `ucan_proof_reference`, `ucan_proof_reference_collection`, `ucan_proof_reference_list_shape`, `ucan_proof_store_result`, `ucan_proof_traversal`, `ucan_replay_admission`, `ucan_revocation`, `ucan_revocation_check`, `ucan_signature`, `ucan_temporal`, `ucan_temporal_order`, `ucan_token`, `ucan_verification_stage`
+- **ungrouped**: `calendar`, `cryptoshedding`, `mesi`, `moesi`, `nonce`, `timeseries`, `zeroize`
+- **vision**: `vision_color_layout`, `vision_color_transform_envelope`, `vision_connected_components`, `vision_convolution_window`, `vision_detection_nms`, `vision_image_buffer`, `vision_image_pyramid`, `vision_roi`
+- **web**: `web_of_trust_attestation`, `web_of_trust_chain`, `web_of_trust_policy`, `web_of_trust_principal`, `web_of_trust_resolution`, `web_of_trust_revocation`
+- **zircon**: `zircon_channel`, `zircon_event`, `zircon_fifo`, `zircon_futex`, `zircon_handle`, `zircon_job`, `zircon_port`, `zircon_rights`, `zircon_socket`, `zircon_timer`, `zircon_wait`
+
 ## Usage
 
 ```toml
 [dependencies]
-verified-logic = { git = "https://github.com/yourname/verified-logic" }
+verified-logic = { git = "https://github.com/OnixResearch/trellis" }
 ```
 
 ```rust
@@ -474,28 +576,33 @@ runtime cost from specs, proofs, requires, or ensures.
 ```bash
 nix develop                # enter devshell
 cargo check                # compile (ghost code erased)
-cargo test                 # 4165 tests (unit + property + doc)
+cargo test                 # 4617 unit/property + 13 doc tests
 cargo clippy --all-targets -- -D warnings
 ```
 
 ## Verification
 
 ```bash
-./scripts/verify.sh        # all gates: clippy → tests → verus → coverage
-./scripts/verus.sh         # verus only (8451 proofs)
-./scripts/check-coverage.sh   # every pub fn has r[impl] annotation
-./scripts/check-ensures.sh    # every pub fn in verus! has ensures
+./scripts/verify.rs        # all gates: clippy → tests → verus → coverage
+./scripts/verus.sh         # verus only
+./scripts/check-coverage.rs   # every pub fn has r[impl] annotation
+./scripts/check-ensures.rs    # every pub fn in verus! has ensures
+./scripts/checker-fixtures.rs # valid/invalid regression fixtures for checker behavior
+./scripts/check-verification-policy.rs # Nickel policy typecheck/export freshness
+./scripts/check-readme-module-catalog.rs # README module catalog drift and fixture self-test
+./scripts/check-readme-metrics.rs # README headline metrics drift; --full refreshes command-backed counts
+./scripts/check-proof-gap-inventory.rs # proof-gap counts, exact sites, classifications, and rationale manifest
 ```
 
 ## Structure
 
 ```
-src/lib.rs              ← crate root, 373 module declarations
+src/lib.rs              ← crate root, 581 public module declarations
 src/<module>.rs         ← spec fn + exec fn + proof fn + #[cfg(test)] tests
-docs/requirements.md    ← 1734 tracey requirements
+docs/requirements.md    ← canonical requirement prose and Tracey anchors
 scripts/verus.sh        ← verus wrapper with nix store paths
-scripts/verify.sh       ← full verification pipeline
-scripts/check-*.sh      ← annotation enforcement
+scripts/verify.rs       ← full verification pipeline
+scripts/check-*.rs      ← annotation enforcement
 ```
 
 Most modules follow the same pattern (tracked exceptions are listed in
@@ -551,4 +658,4 @@ In addition to `external_body`, the current audit also tracks:
 - `0` `assume(...)` soundness oracles
 - `0` placeholder-spec surfaces
 
-All trusted/proof-gap items remain listed in `openspec/specs/verification-gaps/spec.md` with rationale.
+All trusted/proof-gap items remain listed in `openspec/specs/verification-gaps/spec.md`, and `docs/proof-gap-sites.tsv` is the checked per-site source for exact trusted-boundary rationale.

@@ -81,16 +81,19 @@ pub fn caveat_set_satisfied(set: &Vec<Caveat>, ctx: &CaveatContext) -> (result: 
 // --- Typed caveat payload-shape admission ---
 
 /// ASCII decimal digit byte used by typed caveat payloads.
+// r[impl ucan-caveat.satisfaction-decidable]
 pub open spec fn ascii_decimal_digit_spec(byte: u8) -> bool {
     48u8 <= byte && byte <= 57u8
 }
 
 /// Non-empty ASCII decimal payload shape used before runtime numeric parsing.
+// r[impl ucan-caveat.satisfaction-decidable]
 pub open spec fn ascii_decimal_payload_spec(payload: Seq<u8>) -> bool {
     payload.len() > 0 && forall|i: int| #![auto] 0 <= i < payload.len() ==> ascii_decimal_digit_spec(payload[i])
 }
 
 /// `max_count:window_seconds` byte-shape admission for the supported rate-limit caveat.
+// r[impl ucan-caveat.satisfaction-decidable]
 pub open spec fn rate_limit_payload_shape_spec(payload: Seq<u8>) -> bool {
     payload.len() >= 3 && exists|colon: int|
         0 < colon < payload.len() - 1
@@ -103,6 +106,7 @@ pub open spec fn rate_limit_payload_shape_spec(payload: Seq<u8>) -> bool {
 }
 
 /// Check whether one byte is an ASCII decimal digit.
+// r[impl ucan-caveat.satisfaction-decidable]
 pub fn is_ascii_decimal_digit(byte: u8) -> (result: bool)
     ensures result == ascii_decimal_digit_spec(byte),
 {
@@ -110,6 +114,7 @@ pub fn is_ascii_decimal_digit(byte: u8) -> (result: bool)
 }
 
 /// Check non-empty ASCII decimal payload shape before runtime numeric parsing.
+// r[impl ucan-caveat.satisfaction-decidable]
 pub fn ascii_decimal_payload_is_valid(payload: &Vec<u8>) -> (result: bool)
     ensures result == ascii_decimal_payload_spec(payload@),
 {
@@ -132,6 +137,7 @@ pub fn ascii_decimal_payload_is_valid(payload: &Vec<u8>) -> (result: bool)
 }
 
 /// Check supported rate-limit `max_count:window_seconds` payload shape before runtime parsing.
+// r[impl ucan-caveat.satisfaction-decidable]
 pub fn rate_limit_payload_shape_is_valid(payload: &Vec<u8>) -> (result: bool)
     ensures result ==> rate_limit_payload_shape_spec(payload@),
 {

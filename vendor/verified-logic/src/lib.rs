@@ -1,4 +1,4 @@
-//! Verified logic building blocks.
+//! Trellis: composable verified-logic building blocks.
 //!
 //! Every public function in this crate has machine-checked pre/postconditions
 //! verified by [Verus](https://verus-lang.github.io/verus/guide/). Requirements
@@ -44,6 +44,16 @@
 //! - `consistent_snapshot` — consistent cuts with lattice operations (join/meet) and message
 //!   consistency
 //! - `containment` — delegation containment: scope + mode + subsumption
+//! - `ability_effect` — finite ability requirement admission, handler discharge, and sandbox
+//!   attenuation
+//! - `algebraic_effect` — finite algebraic-effect signatures, handler coverage, residual calls, and
+//!   single-use continuation tokens
+//! - `typed_durable_reference` — finite typed durable reference, unpersist, and migration admission
+//! - `remote_computation` — finite remote computation dependency, ability, and resource admission
+//! - `semantic_refactoring` — finite immutable name movement, compatible propagation, and
+//!   unresolved-dependent admission
+//! - `content_addressed_code` — finite content-addressed definition identity, dependency closure,
+//!   and recursive group admission
 //! - `consistent_hash` — consistent hash ring with complete coverage
 //! - `consistency_history` — shared operation vocabulary for consistency-model predicates
 //! - `consistency_object` — object-level sequential-consistency and linearizability predicates
@@ -87,8 +97,18 @@
 //!   deterministic spill fallback
 //! - `stack_frame_layout` — aligned stack-slot placement, exact rounded frame sizing, and explicit
 //!   safe-reuse checks over live ranges
-//! - `wasm_primitives` — exact Wasm value tags, `i32.add` stack discipline, typed local access, and
-//!   linear-memory bounds/grow semantics
+//! - `wasm_primitives` — exact Wasm value tags, `i32.add` stack discipline, typed local access,
+//!   linear-memory bounds/grow semantics, control-label branch/return arity, unreachable-stack
+//!   validation, control-frame stack-height restoration, finite `call_indirect` table/signature
+//!   admission, and `br_table` target validation
+//! - `r1cs_constraint` — bounded single-row R1CS shape, modular dot product, and satisfaction
+//!   admission
+//! - `r1cs_boolean` — bounded booleanity row encoding and satisfaction over an R1CS witness slot
+//! - `r1cs_bit_decomposition` — bounded two-bit decomposition over boolean R1CS witness slots
+//! - `r1cs_lookup` — bounded lookup-table membership over active R1CS witness/table prefixes
+//! - `r1cs_gates` — bounded multiplication, addition, and constant gate adapters into R1CS rows
+//! - `r1cs_system` — bounded multi-row R1CS system shape and shared-witness satisfaction admission
+//! - `r1cs_public_inputs` — bounded public-input binding and R1CS statement satisfaction admission
 //! - `dead_code_elimination` — dead instruction classification from side-effect tagging and
 //!   live-out facts
 //! - `debruijn` — de Bruijn shifting, substitution, and beta reduction with scope preservation
@@ -125,9 +145,16 @@
 //!   equivalence with canonical tag/index decomposition
 //! - `follower_read` — follower-side linearizable reads via leader commit confirmation
 //! - `futex_state` — futex wait/wake state machine: idle/waiting/notified transitions
+//! - `parking_lot_condvar_model` — finite condition-variable association and requeue semantics
+//! - `parking_lot_contracts` — fairness, timeout, reentrant, Once, raw-lock, and deadlock contracts
+//! - `parking_lot_core_model` — finite parking-lot key/queue/requeue model
+//! - `parking_lot_raw_mutex` — compact raw-mutex locked/parked bit state machine
+//! - `parking_lot_rwlock_model` — packed parking-lot-style RwLock state transitions
 //! - `ghost_history` — ghost state for Raft inductive proofs: vote history, leader logs, entry
 //!   provenance
 //! - `glob` — glob pattern matching with `*` wildcards for capabilities
+//! - `gpu_primitives` — finite GPU program shapes, launch/grid/block/thread checks, pitched/tensor
+//!   memory-layout, coalesced memory, and shared-tile admission
 //! - `gossip` — gossip infection bounds and convergence
 //! - `expiration` — TTL calculation, lease/key expiration, time remaining
 //! - `hash_bucket` — hash-to-bucket assignment, modular and power-of-two
@@ -140,6 +167,8 @@
 //! - `interval` — half-open interval contains, overlap, split, merge
 //! - `joint_consensus` — dual-quorum membership changes with intersection proof
 //! - `journal` — append-only transaction journal with running balances and seq num monotonicity
+//! - `knowledge_graph` — finite KG terms, triples, properties, ontology constraints, provenance,
+//!   alignment, query-shape, inference, embedding-index, and admission
 //! - `kv_version` — KV entry version computation: create/update with saturation
 //! - `layout_constraint` — tiling layout constraint resolution: satisfaction, clamping,
 //!   conservation
@@ -238,6 +267,8 @@
 //! - `per_core_rwlock` — per-core reader aggregation, writer drain gating, and rwlock mode
 //!   refinement
 //! - `sequence` — monotonic ID generation with batch reservation and overflow protection
+//! - `serialization_codec` — finite byte buffers, frames, length prefixes, schema/version,
+//!   checksum-shape metadata, encoder/decoder shape predicates, and bounded round trips
 //! - `sequential` — sequential access detection, prefetch triggering
 //! - `signal` — signal set algebra: add/remove/contains, union/intersect, deliverable
 //! - `set_associative_lookup` — cache address decomposition and per-set tag lookup
@@ -290,6 +321,8 @@
 //! - `tier` — hot/warm/cold tier classification with promote/demote
 //! - `tiered_rate_limit` — global-first two-tier rate limiting with capacity invariant
 //! - `tiling` — 2D rect non-overlap, containment, strip partitioning for layout engines
+//! - `timeseries` — finite monotone timestamp indexes, aligned samples, windows, resample buckets,
+//!   rolling aggregates, and gap reports
 //! - `type_lattice` — type conversion reachability: reflexive, ANY top, STRING source
 //! - `type_unification` — first-order type syntax, occurs check, substitution application and
 //!   composition
@@ -354,14 +387,17 @@
 //! - `coalesce_policy` — immediate vs deferred coalescing: convergence, total preservation
 //! - `fragmentation` — fragmentation metrics: external/internal bounds, can-satisfy
 
+pub mod ability_effect;
 pub mod access_mode;
 pub mod acid;
 pub mod algebraic;
+pub mod algebraic_effect;
 pub mod append_entries_build;
 pub mod append_entries_check;
 pub mod append_response;
 pub mod approval;
 pub mod arithmetic;
+pub mod async_task_state;
 pub mod authorize;
 pub mod backend_frame_allocator;
 pub mod backoff;
@@ -398,6 +434,10 @@ pub mod consistency_transactional;
 pub mod consistent_hash;
 pub mod consistent_snapshot;
 pub mod containment;
+pub mod content_addressed_code;
+pub mod remote_computation;
+pub mod semantic_refactoring;
+pub mod typed_durable_reference;
 
 pub mod alloc_bitmap;
 pub mod alloc_token;
@@ -438,6 +478,7 @@ pub mod commit_advance;
 pub mod commit_notify;
 pub mod compaction_fence;
 pub mod composite_outcome;
+pub mod composite_receipt_envelope;
 pub mod config_admission;
 pub mod config_change;
 pub mod config_default;
@@ -493,6 +534,7 @@ pub mod dominator_tree;
 pub mod double_entry;
 pub mod drain;
 pub mod drain_protocol;
+pub mod drop_guard;
 pub mod ds_bounded_array;
 pub mod ds_fifo_queue;
 pub mod ds_key_value_map;
@@ -557,10 +599,12 @@ pub mod gis_linestring_topology;
 pub mod gis_tile_index;
 pub mod glob;
 pub mod gossip;
+pub mod gpu_primitives;
 pub mod graph_adjacency;
 pub mod graph_color;
 pub mod graph_component_partition;
 pub mod graph_frontier_cut;
+pub mod graph_query_composition;
 pub mod graph_reachability;
 pub mod graph_shortest_path_envelope;
 pub mod graph_topological_order;
@@ -582,6 +626,7 @@ pub mod id_lookup_result;
 pub mod id_namespace_scope;
 pub mod id_registration_admission;
 pub mod id_scoped_uniqueness;
+pub mod index_query_pagination;
 pub mod index_select;
 pub mod install_snapshot;
 pub mod instruction_selection;
@@ -598,6 +643,7 @@ pub mod job_state;
 pub mod job_timeout;
 pub mod joint_consensus;
 pub mod journal;
+pub mod knowledge_graph;
 pub mod kv_version;
 pub mod last_applied;
 pub mod layout_constraint;
@@ -686,6 +732,7 @@ pub mod numeric_histogram_counter;
 pub mod numeric_monotone_sequence;
 pub mod numeric_prefix_sum;
 pub mod numeric_quantized_threshold;
+pub mod oneshot_channel;
 pub mod opt_admission;
 pub mod opt_bound;
 pub mod opt_candidate_ranking;
@@ -698,6 +745,12 @@ pub mod option;
 pub mod ordering;
 pub mod page;
 pub mod page_checksum;
+pub mod parking_lot_condvar_model;
+pub mod parking_lot_contracts;
+pub mod parking_lot_core_model;
+pub mod parking_lot_raw_mutex;
+pub mod parking_lot_rwlock_model;
+pub mod parsing_format;
 pub mod partition;
 pub mod pattern;
 pub mod paxos;
@@ -730,12 +783,21 @@ pub mod pre_vote_tally;
 pub mod pressure;
 pub mod priority_election;
 pub mod priority_inversion;
+pub mod probability_statistics;
 pub mod process_state;
+pub mod proof_gap_boundary_audit;
 pub mod properties;
 pub mod query_cost;
 pub mod quorum;
 pub mod quorum_cert;
 pub mod quota;
+pub mod r1cs_bit_decomposition;
+pub mod r1cs_boolean;
+pub mod r1cs_constraint;
+pub mod r1cs_gates;
+pub mod r1cs_lookup;
+pub mod r1cs_public_inputs;
+pub mod r1cs_system;
 pub mod raft_consensus_core;
 pub mod raft_membership_manager;
 pub mod raft_step;
@@ -751,12 +813,14 @@ pub mod register_allocation;
 pub mod replication_mode;
 pub mod replication_pipeline;
 pub mod request_forward;
+pub mod resource_accounting;
 pub mod result;
 pub mod retry;
 pub mod ring_buffer;
 pub mod rwlock;
 pub mod safe_reclamation_domain;
 pub mod safe_snapshot_replication;
+pub mod scheduling_calendar;
 pub mod scope;
 pub mod segregated_free;
 pub mod sel4_asid;
@@ -782,6 +846,7 @@ pub mod seqlock;
 pub mod sequence;
 pub mod sequential;
 pub mod serializable_txn_guard;
+pub mod serialization_codec;
 pub mod serialize_inj;
 pub mod session_tree;
 pub mod set_associative_lookup;
@@ -794,6 +859,7 @@ pub mod shamir_split;
 pub mod shamir_threshold;
 pub mod shortest_path;
 pub mod signal;
+pub mod signal_processing;
 pub mod size_class;
 pub mod slab;
 pub mod slice;
@@ -806,6 +872,8 @@ pub mod split_coalesce;
 pub mod ssa_construction;
 pub mod stack_frame_layout;
 pub mod state_machine_safety;
+pub mod state_machine_workflow;
+pub mod storage_index;
 pub mod store_buffer;
 pub mod subsumption;
 pub mod surelock_deadlock;
@@ -813,12 +881,16 @@ pub mod surelock_id;
 pub mod surelock_key;
 pub mod surelock_level;
 pub mod surelock_lockset;
+pub mod table_relational;
+pub mod task_waker;
 pub mod tcp_state;
 pub mod term_authority;
+pub mod text_string;
 pub mod ticket_lock;
 pub mod tier;
 pub mod tiered_rate_limit;
 pub mod tiling;
+pub mod timeseries;
 pub mod tlb_shootdown;
 pub mod token_timestamp;
 pub mod topo_sort;

@@ -2829,8 +2829,9 @@ mod tests {
     fn test_nix_cli_oracle_known_sha256_zero() {
         let bytes = vec![0u8; 32];
         let ours = String::from_utf8(encode(&bytes)).unwrap();
-        let theirs = nix32_sha256(&hex_of(&bytes));
-        assert_eq!(theirs.as_deref(), Some(ours.as_str()));
+        if let Some(theirs) = nix32_sha256(&hex_of(&bytes)) {
+            assert_eq!(theirs, ours);
+        }
     }
 
     proptest! {

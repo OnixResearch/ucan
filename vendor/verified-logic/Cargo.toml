@@ -1,9 +1,9 @@
 [package]
 name = "verified-logic"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-description = "Verified logic building blocks — machine-checked with Verus"
+description = "Trellis: composable verified-logic building blocks, machine-checked with Verus"
 
 [dependencies]
 anyhow = "1.0"
@@ -34,7 +34,7 @@ default = []
 [lints.rust]
 unsafe_code = "forbid"
 # Documentation coverage is enforced by Tracey annotations (r[impl], r[verify])
-# and check-coverage.sh, not by rustdoc `///` comments. Many Verus exec fns
+# and check-coverage.rs, not by rustdoc `///` comments. Many Verus exec fns
 # inside verus! blocks are documented by their spec fn + module docstring.
 missing_docs = "allow"
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_keep_ghost_body)'] }

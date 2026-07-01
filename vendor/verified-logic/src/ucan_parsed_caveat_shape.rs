@@ -3,6 +3,7 @@
 //! This module proves only finite serde/shell-supplied caveat field-presence
 //! facts. Payload decoding, typed payload parsing, policy semantics, clocks,
 //! counters, and token provenance remain caller/runtime boundaries.
+#![allow(clippy::struct_excessive_bools)]
 
 use vstd::prelude::*;
 

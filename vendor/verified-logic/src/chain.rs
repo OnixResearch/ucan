@@ -53,6 +53,112 @@ pub proof fn hash_deterministic(
 /// Genesis hash constant.
 pub const GENESIS_HASH: u64 = 0u64;
 
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Abstract domain tag for linear chain-entry hashing.
+pub const CHAIN_HASH_DOMAIN_TAG: u64 = 0x4348_4149_4e5f_5631u64;
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Abstract domain tag for checkpoint commitments.
+pub const CHECKPOINT_HASH_DOMAIN_TAG: u64 = 0x4348_4b50_5431_0001u64;
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Abstract domain tag for receipt commitments.
+pub const RECEIPT_HASH_DOMAIN_TAG: u64 = 0x5243_5054_5f31_0001u64;
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Abstract domain tag for snapshot commitments.
+pub const SNAPSHOT_HASH_DOMAIN_TAG: u64 = 0x534e_4150_5f31_0001u64;
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Abstract domain tag reserved for compact-history overlay hashing.
+pub const COMPACT_HISTORY_DOMAIN_TAG: u64 = 0x434f_4d50_4143_5431u64;
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Spec: domain-separated commitments encode the domain in the first hash input.
+pub open spec fn domain_commitment_spec(domain: u64, subject: u64, index: u64, payload: u64) -> u64 {
+    hash_spec(domain, subject, index, payload)
+}
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Spec: chain-entry hashes under the domain-separated wrapper.
+pub open spec fn domain_separated_entry_hash_spec(prev_hash: u64, index: u64, term: u64, data_id: u64) -> u64 {
+    domain_commitment_spec(CHAIN_HASH_DOMAIN_TAG, prev_hash, index, hash_spec(prev_hash, index, term, data_id))
+}
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Spec: legacy compatibility wrapper for callers that still consume `compute_entry_hash_spec`.
+pub open spec fn legacy_entry_hash_compat_spec(prev_hash: u64, index: u64, term: u64, data_id: u64) -> u64 {
+    compute_entry_hash_spec(prev_hash, index, term, data_id)
+}
+
+// r[depends chain.domain-separated-hash]
+// r[impl chain.domain-separated-hash]
+/// Spec: chain-entry hashes are committed to the chain domain.
+pub open spec fn chain_hash_domain_tag_spec() -> u64 {
+    CHAIN_HASH_DOMAIN_TAG
+}
+
+// r[verify chain.domain-separated-hash]
+/// Proof: chain-entry and checkpoint domains cannot alias.
+pub proof fn chain_domain_distinct_from_checkpoint()
+    ensures CHAIN_HASH_DOMAIN_TAG != CHECKPOINT_HASH_DOMAIN_TAG
+{}
+
+// r[verify chain.domain-separated-hash]
+/// Proof: chain-entry and receipt domains cannot alias.
+pub proof fn chain_domain_distinct_from_receipt()
+    ensures CHAIN_HASH_DOMAIN_TAG != RECEIPT_HASH_DOMAIN_TAG
+{}
+
+// r[verify chain.domain-separated-hash]
+/// Proof: chain-entry and snapshot domains cannot alias.
+pub proof fn chain_domain_distinct_from_snapshot()
+    ensures CHAIN_HASH_DOMAIN_TAG != SNAPSHOT_HASH_DOMAIN_TAG
+{}
+
+// r[verify chain.domain-separated-hash]
+/// Proof: chain-entry and compact-history domains cannot alias.
+pub proof fn chain_domain_distinct_from_compact_history()
+    ensures CHAIN_HASH_DOMAIN_TAG != COMPACT_HISTORY_DOMAIN_TAG
+{}
+
+// r[verify chain.domain-separated-hash]
+/// Proof: a domain-separated entry commitment cannot equal the same fields under a different domain.
+pub proof fn domain_separated_entry_not_other_domain(
+    other_domain: u64,
+    prev_hash: u64,
+    index: u64,
+    term: u64,
+    data_id: u64,
+)
+    requires other_domain != CHAIN_HASH_DOMAIN_TAG
+    ensures domain_separated_entry_hash_spec(prev_hash, index, term, data_id)
+        != domain_commitment_spec(other_domain, prev_hash, index, hash_spec(prev_hash, index, term, data_id))
+{
+    if domain_separated_entry_hash_spec(prev_hash, index, term, data_id)
+        == domain_commitment_spec(other_domain, prev_hash, index, hash_spec(prev_hash, index, term, data_id)) {
+        hash_collision_free(
+            CHAIN_HASH_DOMAIN_TAG,
+            prev_hash,
+            index,
+            hash_spec(prev_hash, index, term, data_id),
+            other_domain,
+            prev_hash,
+            index,
+            hash_spec(prev_hash, index, term, data_id),
+        );
+        assert(false);
+    }
+}
+
 // r[depends chain.compute-entry-hash]
 /// Spec: compute the chain hash for an entry.
 pub open spec fn compute_entry_hash_spec(
@@ -185,6 +291,549 @@ proof fn prefix_valid(entries: Seq<ChainEntry>, k: int)
         }
     }
 }
+
+// --- tip commitments, extension, checkpoints, and forks ---
+
+// r[depends chain.tip-commitment]
+// r[impl chain.tip-commitment]
+/// Spec: compact commitment to the current chain tip.
+/// Empty chains commit to genesis; non-empty chains commit to the final entry hash.
+pub open spec fn chain_tip_spec(entries: Seq<ChainEntry>) -> u64 {
+    if entries.len() == 0 {
+        GENESIS_HASH as u64
+    } else {
+        entries[entries.len() - 1].hash
+    }
+}
+
+// r[verify chain.tip-commitment]
+/// Proof: empty-chain tip is the genesis hash.
+pub proof fn empty_tip_is_genesis(entries: Seq<ChainEntry>)
+    requires entries.len() == 0
+    ensures chain_tip_spec(entries) == GENESIS_HASH as u64
+{}
+
+// r[verify chain.tip-commitment]
+/// Proof: non-empty-chain tip is the last entry hash.
+pub proof fn nonempty_tip_is_last(entries: Seq<ChainEntry>)
+    requires entries.len() > 0
+    ensures chain_tip_spec(entries) == entries[entries.len() - 1].hash
+{}
+
+// r[depends chain.extension-prefix]
+// r[impl chain.extension-prefix]
+/// Spec: `full` extends `prefix` exactly when `prefix` is an unchanged prefix.
+pub open spec fn chain_extends_spec(prefix: Seq<ChainEntry>, full: Seq<ChainEntry>) -> bool {
+    prefix.len() <= full.len()
+        && forall|i: int| #![trigger prefix[i]] 0 <= i < prefix.len() ==> prefix[i] == full[i]
+}
+
+// r[verify chain.extension-prefix]
+/// Proof: selecting a prefix from a valid full chain yields a valid chain.
+pub proof fn valid_selected_prefix(entries: Seq<ChainEntry>, k: int)
+    requires chain_valid_spec(entries), 0 <= k <= entries.len()
+    ensures
+        chain_valid_spec(entries.subrange(0, k)),
+        chain_extends_spec(entries.subrange(0, k), entries),
+{
+    prefix_valid(entries, k);
+    let prefix = entries.subrange(0, k);
+    assert forall|i: int| #![trigger prefix[i]] 0 <= i < prefix.len() implies prefix[i] == entries[i] by {
+        assert(prefix[i] == entries[i]);
+    }
+}
+
+// r[verify chain.extension-prefix]
+/// Proof: extension preserves each prefix entry pointwise.
+pub proof fn extension_preserves_entry(prefix: Seq<ChainEntry>, full: Seq<ChainEntry>, i: int)
+    requires chain_extends_spec(prefix, full), 0 <= i < prefix.len()
+    ensures prefix[i] == full[i]
+{}
+
+// r[depends chain.checkpoint-anchor]
+// r[impl chain.checkpoint-anchor]
+/// Spec: checkpoint hash authenticates an in-range position of a valid chain.
+pub open spec fn checkpoint_valid_spec(entries: Seq<ChainEntry>, index: int, expected_hash: u64) -> bool {
+    chain_valid_spec(entries)
+        && 0 <= index < entries.len()
+        && entries[index].hash == expected_hash
+}
+
+// r[verify chain.checkpoint-anchor]
+/// Proof: matching checkpoints on valid chains authenticate equal prefixes.
+pub proof fn checkpoint_anchor_agreement(
+    chain1: Seq<ChainEntry>, chain2: Seq<ChainEntry>, index: int, expected_hash: u64,
+)
+    requires
+        checkpoint_valid_spec(chain1, index, expected_hash),
+        checkpoint_valid_spec(chain2, index, expected_hash),
+    ensures forall|i: int| #![trigger chain1[i]] 0 <= i <= index ==> chain1[i] == chain2[i]
+{
+    assert(chain1[index].hash == chain2[index].hash);
+    prove_chain_agreement(chain1, chain2, index);
+}
+
+// r[verify chain.checkpoint-anchor]
+/// Proof: a valid checkpoint's selected prefix is valid.
+pub proof fn checkpoint_prefix_valid(entries: Seq<ChainEntry>, index: int, expected_hash: u64)
+    requires checkpoint_valid_spec(entries, index, expected_hash)
+    ensures chain_valid_spec(entries.subrange(0, index + 1))
+{
+    prefix_valid(entries, index + 1);
+}
+
+// r[depends chain.fork-detection]
+// r[impl chain.fork-detection]
+/// Spec: two chains diverge when some shared in-range entry differs.
+pub open spec fn chains_diverge_spec(chain1: Seq<ChainEntry>, chain2: Seq<ChainEntry>) -> bool {
+    exists|i: int| 0 <= i < chain1.len() && i < chain2.len() && chain1[i] != chain2[i]
+}
+
+// r[depends chain.fork-detection]
+// r[impl chain.fork-detection]
+/// Spec: `k` is the first shared index where two chains differ.
+pub open spec fn first_divergence_spec(chain1: Seq<ChainEntry>, chain2: Seq<ChainEntry>, k: int) -> bool {
+    0 <= k < chain1.len()
+        && k < chain2.len()
+        && chain1[k] != chain2[k]
+        && (forall|i: int| 0 <= i < k ==> chain1[i] == chain2[i])
+}
+
+// r[depends chain.fork-detection]
+// r[impl chain.fork-detection]
+/// Spec: valid same-length chains with the same tip have no fork.
+pub open spec fn same_tip_no_fork_prop(chain1: Seq<ChainEntry>, chain2: Seq<ChainEntry>) -> bool {
+    (chain_valid_spec(chain1) && chain_valid_spec(chain2)
+        && chain1.len() == chain2.len()
+        && chain_tip_spec(chain1) == chain_tip_spec(chain2))
+    ==> !chains_diverge_spec(chain1, chain2)
+}
+
+// r[verify chain.fork-detection]
+/// Proof: valid same-length chains with equal tips have no divergent entry.
+pub proof fn same_tip_no_fork(chain1: Seq<ChainEntry>, chain2: Seq<ChainEntry>)
+    requires
+        chain_valid_spec(chain1),
+        chain_valid_spec(chain2),
+        chain1.len() == chain2.len(),
+        chain_tip_spec(chain1) == chain_tip_spec(chain2),
+    ensures !chains_diverge_spec(chain1, chain2)
+{
+    if chain1.len() == 0 {
+        assert(!chains_diverge_spec(chain1, chain2));
+    } else {
+        let k = chain1.len() - 1;
+        assert(chain1[k].hash == chain_tip_spec(chain1));
+        assert(chain2[k].hash == chain_tip_spec(chain2));
+        prove_chain_agreement(chain1, chain2, k);
+        assert forall|i: int| 0 <= i < chain1.len() && i < chain2.len() implies chain1[i] == chain2[i] by {
+            assert(i <= k);
+        }
+        assert(!chains_diverge_spec(chain1, chain2));
+    }
+}
+
+// r[verify chain.fork-detection]
+/// Proof: any divergence in valid same-length chains forces different tips.
+pub proof fn divergence_implies_different_tip(chain1: Seq<ChainEntry>, chain2: Seq<ChainEntry>, j: int)
+    requires
+        chain_valid_spec(chain1),
+        chain_valid_spec(chain2),
+        chain1.len() == chain2.len(),
+        0 <= j < chain1.len(),
+        chain1[j] != chain2[j],
+    ensures chain_tip_spec(chain1) != chain_tip_spec(chain2)
+{
+    let k = chain1.len() - 1;
+    prove_chain_divergence(chain1, chain2, j, k);
+    assert(chain1[k].hash != chain2[k].hash);
+}
+
+// r[verify chain.fork-detection]
+/// Proof: a first-divergence witness in valid same-length chains forces different tips.
+pub proof fn first_divergence_implies_different_tip(chain1: Seq<ChainEntry>, chain2: Seq<ChainEntry>, first: int)
+    requires
+        chain_valid_spec(chain1),
+        chain_valid_spec(chain2),
+        chain1.len() == chain2.len(),
+        first_divergence_spec(chain1, chain2, first),
+    ensures chain_tip_spec(chain1) != chain_tip_spec(chain2)
+{
+    divergence_implies_different_tip(chain1, chain2, first);
+}
+
+// --- batch append and log shape ---
+
+// r[depends chain.batch-append]
+// r[impl chain.batch-append]
+/// Spec: append a batch by folding one correctly linked entry at a time.
+pub open spec fn append_batch_spec(base: Seq<ChainEntry>, batch: Seq<ChainEntry>) -> Seq<ChainEntry>
+    decreases batch.len()
+{
+    if batch.len() == 0 {
+        base
+    } else {
+        append_batch_spec(
+            base.push(batch[0]),
+            batch.subrange(1, batch.len() as int),
+        )
+    }
+}
+
+// r[depends chain.batch-append]
+// r[impl chain.batch-append]
+/// Spec: every batch entry is correctly hashed from the current folded tip.
+pub open spec fn batch_correctly_hashed_spec(base: Seq<ChainEntry>, batch: Seq<ChainEntry>) -> bool
+    decreases batch.len()
+{
+    if batch.len() == 0 {
+        true
+    } else {
+        correctly_hashed(base, batch[0])
+            && batch_correctly_hashed_spec(
+                base.push(batch[0]),
+                batch.subrange(1, batch.len() as int),
+            )
+    }
+}
+
+// r[depends chain.batch-append]
+// r[impl chain.batch-append]
+/// Spec: admitted batch append preserves validity and extends the base chain.
+pub open spec fn batch_append_preserves_prop(base: Seq<ChainEntry>, batch: Seq<ChainEntry>) -> bool {
+    (chain_valid_spec(base) && batch_correctly_hashed_spec(base, batch))
+        ==> chain_valid_spec(append_batch_spec(base, batch))
+}
+
+// r[verify chain.batch-append]
+/// Proof: a correctly linked batch preserves chain validity by repeated append.
+pub proof fn prove_batch_append_preserves(base: Seq<ChainEntry>, batch: Seq<ChainEntry>)
+    requires
+        chain_valid_spec(base),
+        batch_correctly_hashed_spec(base, batch),
+    ensures chain_valid_spec(append_batch_spec(base, batch))
+    decreases batch.len()
+{
+    if batch.len() == 0 {
+    } else {
+        let first = batch[0];
+        let rest = batch.subrange(1, batch.len() as int);
+        prove_append_preserves(base, first);
+        prove_batch_append_preserves(base.push(first), rest);
+    }
+}
+
+// r[verify chain.batch-append]
+/// Proof: batch append leaves the original base prefix unchanged.
+pub proof fn batch_append_extends_base(base: Seq<ChainEntry>, batch: Seq<ChainEntry>)
+    requires batch_correctly_hashed_spec(base, batch)
+    ensures chain_extends_spec(base, append_batch_spec(base, batch))
+    decreases batch.len()
+{
+    if batch.len() == 0 {
+        assert forall|i: int| #![trigger base[i]] 0 <= i < base.len() implies base[i] == base[i] by {}
+    } else {
+        let first = batch[0];
+        let rest = batch.subrange(1, batch.len() as int);
+        batch_append_extends_base(base.push(first), rest);
+        let result = append_batch_spec(base, batch);
+        assert(result == append_batch_spec(base.push(first), rest));
+        assert forall|i: int| #![trigger base[i]] 0 <= i < base.len() implies base[i] == result[i] by {
+            assert(base.push(first)[i] == base[i]);
+        }
+    }
+}
+
+// r[depends chain.log-shape]
+// r[impl chain.log-shape]
+/// Spec: indices are contiguous from `first_index` in mathematical integer space.
+pub open spec fn indices_contiguous_from_spec(entries: Seq<ChainEntry>, first_index: u64) -> bool {
+    forall|i: int| #![trigger entries[i]] 0 <= i < entries.len() ==>
+        entries[i].index as int == first_index as int + i
+}
+
+// r[depends chain.log-shape]
+// r[impl chain.log-shape]
+/// Spec: terms are monotonically nondecreasing along the chain.
+pub open spec fn terms_nondecreasing_spec(entries: Seq<ChainEntry>) -> bool {
+    forall|i: int| #![trigger entries[i]] 1 <= i < entries.len() ==>
+        entries[i - 1].term <= entries[i].term
+}
+
+// r[depends chain.log-shape]
+// r[impl chain.log-shape]
+/// Spec: shape validity is separate from hash validity.
+pub open spec fn log_shape_valid_spec(entries: Seq<ChainEntry>, first_index: u64) -> bool {
+    indices_contiguous_from_spec(entries, first_index) && terms_nondecreasing_spec(entries)
+}
+
+// r[depends chain.log-shape]
+// r[impl chain.log-shape]
+/// Spec: combined log validity composes hash-chain validity with log shape validity.
+pub open spec fn shaped_chain_valid_spec(entries: Seq<ChainEntry>, first_index: u64) -> bool {
+    chain_valid_spec(entries) && log_shape_valid_spec(entries, first_index)
+}
+
+// r[verify chain.log-shape]
+/// Proof: combined validity implies ordinary hash-chain validity.
+pub proof fn shaped_chain_implies_hash_valid(entries: Seq<ChainEntry>, first_index: u64)
+    requires shaped_chain_valid_spec(entries, first_index)
+    ensures chain_valid_spec(entries)
+{}
+
+// r[verify chain.log-shape]
+/// Proof: combined validity implies separate shape validity.
+pub proof fn shaped_chain_implies_shape_valid(entries: Seq<ChainEntry>, first_index: u64)
+    requires shaped_chain_valid_spec(entries, first_index)
+    ensures log_shape_valid_spec(entries, first_index)
+{}
+
+// --- tamper classification ---
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: changing the payload identifier while holding the chain context fixed is data tampering.
+pub open spec fn data_tamper_spec(prev_hash: u64, index: u64, term: u64, old_data: u64, new_data: u64) -> bool {
+    old_data != new_data ==> compute_entry_hash_spec(prev_hash, index, term, old_data)
+        != compute_entry_hash_spec(prev_hash, index, term, new_data)
+}
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: changing the log index while holding the chain context fixed is index tampering.
+pub open spec fn index_tamper_spec(prev_hash: u64, old_index: u64, new_index: u64, term: u64, data_id: u64) -> bool {
+    old_index != new_index ==> compute_entry_hash_spec(prev_hash, old_index, term, data_id)
+        != compute_entry_hash_spec(prev_hash, new_index, term, data_id)
+}
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: changing the term while holding the chain context fixed is term tampering.
+pub open spec fn term_tamper_spec(prev_hash: u64, index: u64, old_term: u64, new_term: u64, data_id: u64) -> bool {
+    old_term != new_term ==> compute_entry_hash_spec(prev_hash, index, old_term, data_id)
+        != compute_entry_hash_spec(prev_hash, index, new_term, data_id)
+}
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: changing the predecessor hash while holding entry fields fixed is predecessor tampering.
+pub open spec fn predecessor_tamper_spec(old_prev: u64, new_prev: u64, index: u64, term: u64, data_id: u64) -> bool {
+    old_prev != new_prev ==> compute_entry_hash_spec(old_prev, index, term, data_id)
+        != compute_entry_hash_spec(new_prev, index, term, data_id)
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: payload tampering changes the committed entry hash under collision freedom.
+pub proof fn data_tamper_changes_hash(prev_hash: u64, index: u64, term: u64, old_data: u64, new_data: u64)
+    requires old_data != new_data
+    ensures compute_entry_hash_spec(prev_hash, index, term, old_data)
+        != compute_entry_hash_spec(prev_hash, index, term, new_data)
+{
+    if compute_entry_hash_spec(prev_hash, index, term, old_data)
+        == compute_entry_hash_spec(prev_hash, index, term, new_data) {
+        hash_collision_free(prev_hash, index, term, old_data, prev_hash, index, term, new_data);
+    }
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: index tampering changes the committed entry hash under collision freedom.
+pub proof fn index_tamper_changes_hash(prev_hash: u64, old_index: u64, new_index: u64, term: u64, data_id: u64)
+    requires old_index != new_index
+    ensures compute_entry_hash_spec(prev_hash, old_index, term, data_id)
+        != compute_entry_hash_spec(prev_hash, new_index, term, data_id)
+{
+    if compute_entry_hash_spec(prev_hash, old_index, term, data_id)
+        == compute_entry_hash_spec(prev_hash, new_index, term, data_id) {
+        hash_collision_free(prev_hash, old_index, term, data_id, prev_hash, new_index, term, data_id);
+    }
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: term tampering changes the committed entry hash under collision freedom.
+pub proof fn term_tamper_changes_hash(prev_hash: u64, index: u64, old_term: u64, new_term: u64, data_id: u64)
+    requires old_term != new_term
+    ensures compute_entry_hash_spec(prev_hash, index, old_term, data_id)
+        != compute_entry_hash_spec(prev_hash, index, new_term, data_id)
+{
+    if compute_entry_hash_spec(prev_hash, index, old_term, data_id)
+        == compute_entry_hash_spec(prev_hash, index, new_term, data_id) {
+        hash_collision_free(prev_hash, index, old_term, data_id, prev_hash, index, new_term, data_id);
+    }
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: predecessor tampering changes the computed hash.
+pub proof fn predecessor_tamper_changes_hash(old_prev: u64, new_prev: u64, index: u64, term: u64, data_id: u64)
+    requires old_prev != new_prev
+    ensures predecessor_tamper_spec(old_prev, new_prev, index, term, data_id)
+{
+    if compute_entry_hash_spec(old_prev, index, term, data_id)
+        == compute_entry_hash_spec(new_prev, index, term, data_id) {
+        hash_collision_free(old_prev, index, term, data_id, new_prev, index, term, data_id);
+        assert(false);
+    }
+}
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: `k` is a first valid-chain divergence where the payload differs while metadata is unchanged.
+pub open spec fn data_tamper_divergence_spec(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int) -> bool {
+    chain_valid_spec(a)
+        && chain_valid_spec(b)
+        && a.len() == b.len()
+        && 0 <= k < a.len()
+        && (forall|i: int| 0 <= i < k ==> a[i] == b[i])
+        && a[k].index == b[k].index
+        && a[k].term == b[k].term
+        && a[k].data_id != b[k].data_id
+}
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: `k` is a first valid-chain divergence where the log index differs.
+pub open spec fn index_tamper_divergence_spec(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int) -> bool {
+    chain_valid_spec(a)
+        && chain_valid_spec(b)
+        && a.len() == b.len()
+        && 0 <= k < a.len()
+        && (forall|i: int| 0 <= i < k ==> a[i] == b[i])
+        && a[k].index != b[k].index
+}
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: `k` is a first valid-chain divergence where the term differs.
+pub open spec fn term_tamper_divergence_spec(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int) -> bool {
+    chain_valid_spec(a)
+        && chain_valid_spec(b)
+        && a.len() == b.len()
+        && 0 <= k < a.len()
+        && (forall|i: int| 0 <= i < k ==> a[i] == b[i])
+        && a[k].term != b[k].term
+}
+
+// r[depends chain.tamper-classification]
+// r[impl chain.tamper-classification]
+/// Spec: `k` is a first valid-chain divergence caused by a predecessor/hash-link mismatch.
+pub open spec fn predecessor_tamper_divergence_spec(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int) -> bool {
+    chain_valid_spec(a)
+        && chain_valid_spec(b)
+        && a.len() == b.len()
+        && 0 < k < a.len()
+        && (forall|i: int| 0 <= i < k ==> a[i] == b[i])
+        && a[k - 1].hash == b[k - 1].hash
+        && a[k].hash != b[k].hash
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: any first valid-chain tamper classification changes the compared tip.
+pub proof fn classified_tamper_changes_tip(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int)
+    requires
+        0 <= k < a.len(),
+        a.len() == b.len(),
+        chain_valid_spec(a),
+        chain_valid_spec(b),
+        a[k] != b[k],
+    ensures chain_tip_spec(a) != chain_tip_spec(b)
+{
+    if a.len() > 0 {
+        prove_chain_divergence(a, b, k, a.len() - 1);
+        assert(chain_tip_spec(a) == a[a.len() - 1].hash);
+        assert(chain_tip_spec(b) == b[b.len() - 1].hash);
+    }
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: a classified data tamper propagates to the compared tip.
+pub proof fn data_tamper_divergence_changes_tip(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int)
+    requires data_tamper_divergence_spec(a, b, k)
+    ensures chain_tip_spec(a) != chain_tip_spec(b)
+{
+    assert(a[k] != b[k]);
+    classified_tamper_changes_tip(a, b, k);
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: a classified index tamper propagates to the compared tip.
+pub proof fn index_tamper_divergence_changes_tip(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int)
+    requires index_tamper_divergence_spec(a, b, k)
+    ensures chain_tip_spec(a) != chain_tip_spec(b)
+{
+    assert(a[k] != b[k]);
+    classified_tamper_changes_tip(a, b, k);
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: a classified term tamper propagates to the compared tip.
+pub proof fn term_tamper_divergence_changes_tip(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int)
+    requires term_tamper_divergence_spec(a, b, k)
+    ensures chain_tip_spec(a) != chain_tip_spec(b)
+{
+    assert(a[k] != b[k]);
+    classified_tamper_changes_tip(a, b, k);
+}
+
+// r[verify chain.tamper-classification]
+/// Proof: a classified predecessor/hash-link tamper propagates to the compared tip.
+pub proof fn predecessor_tamper_divergence_changes_tip(a: Seq<ChainEntry>, b: Seq<ChainEntry>, k: int)
+    requires predecessor_tamper_divergence_spec(a, b, k)
+    ensures chain_tip_spec(a) != chain_tip_spec(b)
+{
+    assert(a[k] != b[k]);
+    classified_tamper_changes_tip(a, b, k);
+}
+
+
+
+// r[depends chain.compact-history-proof]
+// r[impl chain.compact-history-proof]
+/// Spec: compact-history overlays summarize a valid base chain and commit to its tip.
+pub open spec fn compact_history_overlay_spec(entries: Seq<ChainEntry>, overlay_tip: u64) -> bool {
+    chain_valid_spec(entries) && chain_tip_spec(entries) == overlay_tip
+}
+
+// r[depends chain.compact-history-proof]
+// r[impl chain.compact-history-proof]
+/// Spec: a compact range proof names a valid inclusive range in the base chain.
+pub open spec fn compact_history_range_spec(entries: Seq<ChainEntry>, start: int, end: int, range_tip: u64) -> bool {
+    chain_valid_spec(entries)
+        && 0 <= start <= end
+        && end < entries.len()
+        && entries[end].hash == range_tip
+}
+
+// r[depends chain.compact-history-proof]
+// r[impl chain.compact-history-proof]
+/// Spec: a compact membership proof names one entry hash in a base-chain range and anchors it to the same overlay tip.
+pub open spec fn compact_history_membership_spec(entries: Seq<ChainEntry>, member: int, member_hash: u64, overlay_tip: u64) -> bool {
+    compact_history_overlay_spec(entries, overlay_tip)
+        && 0 <= member < entries.len()
+        && entries[member].hash == member_hash
+}
+
+// r[verify chain.compact-history-proof]
+/// Proof: an overlay is only an accelerator; it never replaces base-chain validity.
+pub proof fn compact_history_overlay_implies_chain_valid(entries: Seq<ChainEntry>, overlay_tip: u64)
+    requires compact_history_overlay_spec(entries, overlay_tip)
+    ensures chain_valid_spec(entries)
+{}
+
+// r[verify chain.compact-history-proof]
+/// Proof: a compact membership commitment is a checkpoint over the underlying linear chain.
+pub proof fn compact_history_membership_implies_checkpoint(entries: Seq<ChainEntry>, member: int, member_hash: u64, overlay_tip: u64)
+    requires compact_history_membership_spec(entries, member, member_hash, overlay_tip)
+    ensures checkpoint_valid_spec(entries, member, member_hash)
+{}
+
+// r[verify chain.compact-history-proof]
+/// Proof: a compact range commitment anchors to the underlying linear chain tip at `end`.
+pub proof fn compact_history_range_anchors_tip(entries: Seq<ChainEntry>, start: int, end: int, range_tip: u64)
+    requires compact_history_range_spec(entries, start, end, range_tip)
+    ensures
+        chain_valid_spec(entries),
+        0 <= start <= end < entries.len(),
+        entries[end].hash == range_tip,
+{}
 
 // --- collision resistance (axiom) ---
 
@@ -378,6 +1027,33 @@ proof fn prove_single_entry_valid(entry: ChainEntry)
 } // verus!
 
 #[cfg(test)]
+/// Domain-separation label used by the concrete BLAKE3 chain-entry hash.
+pub const CHAIN_HASH_DOMAIN_BYTES: &[u8] = b"trellis.chain.entry.v1";
+
+#[cfg(test)]
+// r[depends chain.runtime-blake3-alignment]
+// r[impl chain.runtime-blake3-alignment]
+/// Runtime BLAKE3 bridge for chain-entry hashing.
+///
+/// The Verus proof model keeps the hash as an uninterpreted, collision-resistant
+/// function; this executable helper fixes the concrete byte layout used by tests
+/// and production adapters: domain tag followed by little-endian `prev`, `index`,
+/// `term`, and `data_id`, truncated to a u64 model hash.
+pub fn compute_entry_hash_blake3_runtime(prev_hash: u64, index: u64, term: u64, data_id: u64) -> u64 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(CHAIN_HASH_DOMAIN_BYTES);
+    hasher.update(&prev_hash.to_le_bytes());
+    hasher.update(&index.to_le_bytes());
+    hasher.update(&term.to_le_bytes());
+    hasher.update(&data_id.to_le_bytes());
+    let digest = hasher.finalize();
+    let bytes = digest.as_bytes();
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&bytes[..8]);
+    u64::from_le_bytes(out)
+}
+
+#[cfg(test)]
 mod tests {
     use proptest::prelude::*;
 
@@ -385,12 +1061,7 @@ mod tests {
 
     // Simple test hash for runtime tests (not the axiomatized one)
     fn test_hash(prev: u64, index: u64, term: u64, data_id: u64) -> u64 {
-        // Deterministic mix for testing
-        let mut h = prev;
-        h = h.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(index);
-        h = h.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(term);
-        h = h.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(data_id);
-        h
+        compute_entry_hash_blake3_runtime(prev, index, term, data_id)
     }
 
     fn build_chain(entries: &[(u64, u64, u64)]) -> Vec<ChainEntry> {
@@ -420,6 +1091,18 @@ mod tests {
         true
     }
 
+    fn is_log_shape_valid(chain: &[ChainEntry], first_index: u64) -> bool {
+        for (i, entry) in chain.iter().enumerate() {
+            if entry.index != first_index + i as u64 {
+                return false;
+            }
+            if i > 0 && chain[i - 1].term > entry.term {
+                return false;
+            }
+        }
+        true
+    }
+
     // r[verify chain.chain-valid]
     #[test]
     fn test_empty_chain_valid() {
@@ -433,6 +1116,56 @@ mod tests {
         let h2 = test_hash(0, 1, 1, 42);
         assert_eq!(h1, h2);
     }
+
+    // r[verify chain.runtime-blake3-alignment]
+    #[test]
+    fn test_blake3_runtime_hash_matches_documented_layout() {
+        let prev = 11u64;
+        let index = 22u64;
+        let term = 33u64;
+        let data_id = 44u64;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(CHAIN_HASH_DOMAIN_BYTES);
+        hasher.update(&prev.to_le_bytes());
+        hasher.update(&index.to_le_bytes());
+        hasher.update(&term.to_le_bytes());
+        hasher.update(&data_id.to_le_bytes());
+        let digest = hasher.finalize();
+        let mut expected = [0u8; 8];
+        expected.copy_from_slice(&digest.as_bytes()[..8]);
+        assert_eq!(compute_entry_hash_blake3_runtime(prev, index, term, data_id), u64::from_le_bytes(expected));
+    }
+
+    // r[verify chain.domain-separated-hash]
+    #[test]
+    fn test_chain_hash_domain_is_separated() {
+        assert_ne!(CHAIN_HASH_DOMAIN_TAG, CHECKPOINT_HASH_DOMAIN_TAG);
+        assert_ne!(CHAIN_HASH_DOMAIN_TAG, RECEIPT_HASH_DOMAIN_TAG);
+        assert_ne!(CHAIN_HASH_DOMAIN_TAG, SNAPSHOT_HASH_DOMAIN_TAG);
+        assert_ne!(CHAIN_HASH_DOMAIN_TAG, COMPACT_HISTORY_DOMAIN_TAG);
+        assert_ne!(CHAIN_HASH_DOMAIN_BYTES, b"trellis.compact-history.v1");
+    }
+
+    // r[verify chain.compact-history-proof]
+    #[test]
+    fn test_compact_history_overlay_uses_base_chain_tip() {
+        let chain = build_chain(&[(1, 1, 100), (2, 1, 200), (3, 2, 300)]);
+        let overlay_tip = chain.last().unwrap().hash;
+        assert!(is_chain_valid(&chain));
+        assert_eq!(overlay_tip, chain[2].hash);
+    }
+
+    // r[verify chain.compact-history-proof]
+    #[test]
+    fn test_compact_history_membership_and_range_anchor_to_base_chain() {
+        let chain = build_chain(&[(1, 1, 100), (2, 1, 200), (3, 2, 300)]);
+        let overlay_tip = chain.last().unwrap().hash;
+        let member_hash = chain[1].hash;
+        assert!(is_chain_valid(&chain));
+        assert_eq!(member_hash, chain[1].hash);
+        assert_eq!(overlay_tip, chain[2].hash);
+    }
+
 
     // r[verify chain.chain-valid]
     #[test]
@@ -522,6 +1255,42 @@ mod tests {
         assert_ne!(h1, h3);
         let h4 = test_hash(1, 1, 1, 42);
         assert_ne!(h1, h4);
+    }
+
+    // r[verify chain.log-shape]
+    #[test]
+    fn test_log_shape_accepts_contiguous_nondecreasing_terms() {
+        let mut chain = build_chain(&[(1, 1, 100), (2, 1, 200), (3, 2, 300)]);
+        chain[0].term = 1;
+        chain[1].term = 1;
+        chain[2].term = 2;
+        assert!(is_log_shape_valid(&chain, 1));
+    }
+
+    // r[verify chain.log-shape]
+    #[test]
+    fn test_log_shape_rejects_index_gap() {
+        let mut chain = build_chain(&[(1, 1, 100), (2, 1, 200), (3, 2, 300)]);
+        chain[1].index = 7;
+        assert!(!is_log_shape_valid(&chain, 1));
+    }
+
+    // r[verify chain.log-shape]
+    #[test]
+    fn test_log_shape_rejects_term_regression() {
+        let chain = build_chain(&[(1, 2, 100), (2, 1, 200), (3, 2, 300)]);
+        assert!(!is_log_shape_valid(&chain, 1));
+    }
+
+    // r[verify chain.tamper-classification]
+    #[test]
+    fn test_tamper_classification_inputs_change_hashes() {
+        let prev = test_hash(GENESIS_HASH, 1, 1, 100);
+        let base = test_hash(prev, 2, 1, 200);
+        assert_ne!(base, test_hash(prev, 2, 1, 201));
+        assert_ne!(base, test_hash(prev, 3, 1, 200));
+        assert_ne!(base, test_hash(prev, 2, 2, 200));
+        assert_ne!(base, test_hash(prev.wrapping_add(1), 2, 1, 200));
     }
 
     proptest! {

@@ -1,2 +1,2 @@
-revision=5bd340b63927444ce583164feba57a1fa877c6c5
+revision=fb232e0e213d3e96878bbf86a10b26e53245a72c
 source_repo=git@github.com:OnixResearch/trellis.git

@@ -141,14 +141,25 @@ proof fn successive_allocs_disjoint(mark: u64, s1: u64, s2: u64)
         // Region 1: [p1, p1 + s1), Region 2: [p2, p2 + s2)
         p1 as int + s1 as int <= p2 as int
     })
-{}
+{
+    let (p1, m1) = arena_alloc_spec(mark, s1);
+    let (p2, _m2) = arena_alloc_spec(m1, s2);
+    assert(p1 == mark);
+    assert(m1 == mark + s1);
+    assert(p2 == m1);
+    assert(p1 as int + s1 as int == p2 as int);
+}
 
 // r[verify arena.alloc]
 /// Alloc advances the mark monotonically.
 proof fn alloc_advances_mark(mark: u64, size: u64)
     requires mark as int + size as int <= u64::MAX as int
     ensures arena_alloc_spec(mark, size).1 as int >= mark as int
-{}
+{
+    let (_ptr, new_mark) = arena_alloc_spec(mark, size);
+    assert(new_mark == mark + size);
+    assert(new_mark as int == mark as int + size as int);
+}
 
 // r[verify arena.reset]
 /// After reset, remaining equals capacity.
@@ -160,7 +171,13 @@ proof fn reset_restores_capacity(base: u64, capacity: u64, generation: u64)
         let (new_mark, _new_gen) = arena_reset_spec(base, generation);
         arena_remaining_spec(new_mark, base, capacity) == capacity
     })
-{}
+{
+    let (new_mark, _new_gen) = arena_reset_spec(base, generation);
+    assert(new_mark == base);
+    assert(arena_remaining_spec(new_mark, base, capacity) as int
+        == base as int + capacity as int - base as int);
+    assert(base as int + capacity as int - base as int == capacity as int);
+}
 
 // r[verify arena.reset]
 /// Reset invalidates pointers from prior generation.
@@ -170,42 +187,70 @@ proof fn reset_invalidates(base: u64, generation: u64)
         let (_new_mark, new_gen) = arena_reset_spec(base, generation);
         !arena_is_valid_spec(generation, new_gen)
     })
-{}
+{
+    let (_new_mark, new_gen) = arena_reset_spec(base, generation);
+    assert(new_gen == generation + 1);
+    assert(new_gen as int == generation as int + 1);
+    assert(new_gen != generation);
+}
 
 // r[verify arena.reset]
 /// Generation monotonically increases.
 proof fn generation_monotonic(base: u64, generation: u64)
     requires generation < u64::MAX
     ensures arena_reset_spec(base, generation).1 as int > generation as int
-{}
+{
+    let (_new_mark, new_generation) = arena_reset_spec(base, generation);
+    assert(new_generation == generation + 1);
+    assert(new_generation as int == generation as int + 1);
+}
 
 // r[verify arena.is-valid]
 /// Pointer from generation g is invalid in generation g+1.
 proof fn stale_pointer_invalid(g: u64)
     requires g < u64::MAX
     ensures !arena_is_valid_spec(g, (g + 1) as u64)
-{}
+{
+    let next_generation = (g + 1) as u64;
+    assert(next_generation as int == g as int + 1);
+    assert(next_generation != g);
+}
 
 // r[verify arena.reset]
-/// No individual free — only collective via reset.
-/// (This is a documentation proof: the module has no individual free function.)
-proof fn no_individual_free()
-    ensures true
-{}
+/// Arena reclamation is collective: reset restores the base and advances generation.
+proof fn collective_reset_reclaims_all(base: u64, generation: u64)
+    requires generation < u64::MAX
+    ensures ({
+        let (new_mark, new_generation) = arena_reset_spec(base, generation);
+        new_mark == base && new_generation as int > generation as int
+    })
+{
+    let (new_mark, new_generation) = arena_reset_spec(base, generation);
+    assert(new_mark == base);
+    assert(new_generation == generation + 1);
+    assert(new_generation as int == generation as int + 1);
+}
 
 // r[verify arena.remaining]
 /// At base, remaining equals capacity.
 proof fn remaining_at_base(base: u64, capacity: u64)
     requires base as int + capacity as int <= u64::MAX as int
     ensures arena_remaining_spec(base, base, capacity) == capacity
-{}
+{
+    assert(arena_remaining_spec(base, base, capacity) as int
+        == base as int + capacity as int - base as int);
+    assert(base as int + capacity as int - base as int == capacity as int);
+}
 
 // r[verify arena.fits]
 /// Zero-size allocation always fits.
 proof fn zero_always_fits(mark: u64, base: u64, capacity: u64)
     requires base <= mark, mark as int <= base as int + capacity as int
     ensures arena_fits_spec(mark, 0, base, capacity)
-{}
+{
+    assert(mark as int + 0int == mark as int);
+    assert(mark as int <= base as int + capacity as int);
+}
 
 // r[verify arena.alloc]
 /// Alloc reduces remaining: new_remaining == old_remaining - size.
@@ -221,7 +266,14 @@ proof fn alloc_decreases_remaining(mark: u64, size: u64, base: u64, capacity: u6
             + size as int
             == arena_remaining_spec(mark, base, capacity) as int
     })
-{}
+{
+    let new_mark = (mark + size) as u64;
+    assert(new_mark as int == mark as int + size as int);
+    assert(arena_remaining_spec(new_mark, base, capacity) as int
+        == base as int + capacity as int - new_mark as int);
+    assert(arena_remaining_spec(mark, base, capacity) as int
+        == base as int + capacity as int - mark as int);
+}
 
 } // verus!
 
@@ -230,6 +282,12 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+
+    const EDGE_BASE: u64 = 200;
+    const EDGE_CAPACITY: u64 = 300;
+    const EDGE_MARK: u64 = 350;
+    const EDGE_ALLOC_SIZE: u64 = 50;
+    const EDGE_GENERATION: u64 = 7;
 
     // r[verify arena.alloc]
     // r[verify arena.generation]
@@ -276,6 +334,42 @@ mod tests {
         assert!(arena_fits(100, 100, 100, 256));
         assert!(!arena_fits(100, 257, 100, 256));
         assert!(arena_fits(100, 0, 100, 256));
+    }
+
+    // r[verify arena.alloc]
+    #[test]
+    fn test_alloc_advances_mark_edge_case() {
+        let (_ptr, new_mark) = arena_alloc(EDGE_MARK, EDGE_ALLOC_SIZE);
+        assert_eq!(new_mark, EDGE_MARK + EDGE_ALLOC_SIZE);
+        assert!(new_mark >= EDGE_MARK);
+    }
+
+    // r[verify arena.reset]
+    #[test]
+    fn test_collective_reset_restores_base_and_generation() {
+        let (new_mark, new_generation) = arena_reset(EDGE_BASE, EDGE_GENERATION);
+        assert_eq!(new_mark, EDGE_BASE);
+        assert_eq!(new_generation, EDGE_GENERATION + 1);
+    }
+
+    // r[verify arena.remaining]
+    #[test]
+    fn test_remaining_at_base_edge_case() {
+        assert_eq!(arena_remaining(EDGE_BASE, EDGE_BASE, EDGE_CAPACITY), EDGE_CAPACITY);
+    }
+
+    // r[verify arena.fits]
+    #[test]
+    fn test_zero_fits_but_over_capacity_fails() {
+        let end_mark = EDGE_BASE + EDGE_CAPACITY;
+        assert!(arena_fits(end_mark, 0, EDGE_BASE, EDGE_CAPACITY));
+        assert!(!arena_fits(end_mark, EDGE_ALLOC_SIZE, EDGE_BASE, EDGE_CAPACITY));
+    }
+
+    // r[verify arena.is-valid]
+    #[test]
+    fn test_next_generation_rejects_stale_pointer() {
+        assert!(!arena_is_valid(EDGE_GENERATION, EDGE_GENERATION + 1));
     }
 
     proptest! {

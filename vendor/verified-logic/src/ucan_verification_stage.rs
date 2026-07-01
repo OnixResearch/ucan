@@ -4,6 +4,7 @@
 //! stage facts. Runtime parsing, codecs, hashing, cryptography, resolver/proof-store
 //! backends, revocation freshness, caveat policies, and proof material provenance
 //! remain explicit trusted/runtime boundaries in callers.
+#![allow(clippy::struct_excessive_bools)]
 
 use vstd::prelude::*;
 

@@ -173,14 +173,25 @@ pub fn is_heartbeat(msg: &AppendEntriesMsg) -> (result: bool)
 /// First entry (next_index=1) has prev_log_index=0.
 proof fn first_entry_empty_prefix()
     ensures build_prev_log_index_spec(1) == 0
-{}
+{
+    assert(1 <= 1);
+    assert(build_prev_log_index_spec(1) == 0);
+}
 
 // r[verify append-entries-build.prev-log]
 /// prev_log_index is always less than next_index.
 proof fn prev_log_before_next(next_index: u64)
     requires next_index > 0
     ensures build_prev_log_index_spec(next_index) < next_index
-{}
+{
+    if next_index <= 1 {
+        assert(next_index == 1);
+        assert(build_prev_log_index_spec(next_index) == 0);
+    } else {
+        assert(build_prev_log_index_spec(next_index) == next_index - 1);
+        assert(next_index - 1 < next_index);
+    }
+}
 
 // r[verify append-entries-build.prev-log]
 /// prev_log_term is the term at the right position.
@@ -190,13 +201,22 @@ proof fn prev_log_term_correct(log: Seq<LogEntry>, next_index: u64)
         ((next_index - 2) as int) < log.len(),
     ensures
         build_prev_log_term_spec(log, next_index) == log[(next_index - 2) as int].term
-{}
+{
+    let idx = (next_index - 2) as int;
+    assert(!(next_index <= 1));
+    assert(idx < log.len());
+    assert(build_prev_log_term_spec(log, next_index) == log[idx].term);
+}
 
 // r[verify append-entries-build.entries-count]
 /// Entries count is zero when log is empty.
 proof fn empty_log_no_entries(next_index: u64, max_entries: u64)
     ensures build_entries_count_spec(0, next_index, max_entries) == 0
-{}
+{
+    let start = if next_index == 0 { 0 } else { (next_index - 1) as u64 };
+    assert(start >= 0);
+    assert(build_entries_count_spec(0, next_index, max_entries) == 0);
+}
 
 // r[verify append-entries-build.entries-count]
 /// Entries count does not exceed available entries.
@@ -204,21 +224,49 @@ proof fn entries_bounded_by_log(log_length: u64, next_index: u64, max_entries: u
     requires next_index > 0, next_index <= log_length + 1
     ensures build_entries_count_spec(log_length, next_index, max_entries) as int
         <= log_length as int - (next_index as int - 1)
-{}
+{
+    let start = (next_index - 1) as u64;
+    let available = if start >= log_length { 0 } else { (log_length - start) as u64 };
+    assert(start as int == next_index as int - 1);
+    assert(start <= log_length);
+    assert(available as int == log_length as int - start as int);
+    if max_entries > 0 && available > max_entries {
+        assert(build_entries_count_spec(log_length, next_index, max_entries) == max_entries);
+        assert(max_entries < available);
+    } else {
+        assert(build_entries_count_spec(log_length, next_index, max_entries) == available);
+    }
+}
 
 // r[verify append-entries-build.entries-count]
 /// Entries count does not exceed max_entries when set.
 proof fn entries_bounded_by_max(log_length: u64, next_index: u64, max_entries: u64)
     requires max_entries > 0
     ensures build_entries_count_spec(log_length, next_index, max_entries) <= max_entries
-{}
+{
+    let start = if next_index == 0 { 0 } else { (next_index - 1) as u64 };
+    let available = if start >= log_length { 0 } else { (log_length - start) as u64 };
+    if max_entries > 0 && available > max_entries {
+        assert(build_entries_count_spec(log_length, next_index, max_entries) == max_entries);
+    } else {
+        assert(!(available > max_entries));
+        assert(available <= max_entries);
+        assert(build_entries_count_spec(log_length, next_index, max_entries) == available);
+    }
+}
 
 // r[verify append-entries-build.entries-count]
 /// Caught-up follower gets zero entries.
 proof fn caught_up_no_entries(log_length: u64, max_entries: u64)
     requires log_length < u64::MAX
     ensures build_entries_count_spec(log_length, (log_length + 1) as u64, max_entries) == 0
-{}
+{
+    let next_index = (log_length + 1) as u64;
+    let start = (next_index - 1) as u64;
+    assert(next_index == log_length + 1);
+    assert(start == log_length);
+    assert(build_entries_count_spec(log_length, next_index, max_entries) == 0);
+}
 
 // r[verify append-entries-build.is-heartbeat]
 /// Caught-up follower receives heartbeat.
@@ -227,7 +275,14 @@ proof fn caught_up_is_heartbeat(log: Seq<LogEntry>, max_entries: u64)
     ensures is_heartbeat_spec(
         build_append_entries_spec(log, (log.len() as u64 + 1) as u64, max_entries)
     )
-{}
+{
+    let log_length = log.len() as u64;
+    let next_index = (log_length + 1) as u64;
+    assert(log_length < u64::MAX);
+    caught_up_no_entries(log_length, max_entries);
+    assert(build_entries_count_spec(log_length, next_index, max_entries) == 0);
+    assert(build_append_entries_spec(log, next_index, max_entries).entries_count == 0);
+}
 
 // r[verify append-entries-build.build]
 /// Consistency with check_append_entries: a message built from the
@@ -249,7 +304,17 @@ proof fn build_consistent_with_check(
             ((prev_log_index - 1) as int) < leader_log.len()
             && leader_log[(prev_log_index - 1) as int].term == prev_log_term
     })
-{}
+{
+    let prev_log_index = build_prev_log_index_spec(next_index);
+    let prev_log_term = build_prev_log_term_spec(leader_log, next_index);
+    let idx = (next_index - 2) as int;
+    assert(prev_log_index == next_index - 1);
+    assert(prev_log_index > 0);
+    assert((prev_log_index - 1) as int == idx);
+    assert(idx < leader_log.len());
+    prev_log_term_correct(leader_log, next_index);
+    assert(leader_log[idx].term == prev_log_term);
+}
 
 // r[verify append-entries-build.entries-count]
 /// Zero max_entries means no cap (send all available).
@@ -259,7 +324,17 @@ proof fn zero_max_no_cap(log_length: u64, next_index: u64)
         == build_entries_count_spec(log_length, next_index, u64::MAX)
         || build_entries_count_spec(log_length, next_index, 0)
            <= log_length
-{}
+{
+    let start = if next_index == 0 { 0 } else { (next_index - 1) as u64 };
+    let available = if start >= log_length { 0 } else { (log_length - start) as u64 };
+    assert(build_entries_count_spec(log_length, next_index, 0) == available);
+    if start >= log_length {
+        assert(available == 0);
+    } else {
+        assert(available as int == log_length as int - start as int);
+        assert(available <= log_length);
+    }
+}
 
 } // verus!
 
@@ -269,78 +344,179 @@ mod tests {
 
     use super::*;
 
+    const EMPTY_TERM: u64 = 0;
+    const EMPTY_ENTRIES: u64 = 0;
+    const FIRST_TERM: u64 = 1;
+    const SECOND_TERM: u64 = 2;
+    const THIRD_TERM: u64 = 3;
+    const FOURTH_TERM: u64 = 4;
+    const FIFTH_TERM: u64 = 5;
+    const FIRST_VALUE: u64 = 10;
+    const SECOND_VALUE: u64 = 20;
+    const THIRD_VALUE: u64 = 30;
+    const FOURTH_VALUE: u64 = 40;
+    const FIFTH_VALUE: u64 = 50;
+    const FIRST_NEXT_INDEX: u64 = 1;
+    const SECOND_NEXT_INDEX: u64 = 2;
+    const THIRD_NEXT_INDEX: u64 = 3;
+    const CAUGHT_UP_NEXT_INDEX: u64 = 4;
+    const BEYOND_LOG_NEXT_INDEX: u64 = 5;
+    const NO_MAX_ENTRIES: u64 = 0;
+    const SMALL_MAX_ENTRIES: u64 = 2;
+    const SMALL_LOG_LENGTH: u64 = 3;
+    const CAPPED_LOG_LENGTH: u64 = 5;
+
     fn entry(term: u64, value: u64) -> LogEntry {
         LogEntry { term, value }
+    }
+
+    fn small_log() -> Vec<LogEntry> {
+        vec![
+            entry(FIRST_TERM, FIRST_VALUE),
+            entry(SECOND_TERM, SECOND_VALUE),
+            entry(THIRD_TERM, THIRD_VALUE),
+        ]
+    }
+
+    fn capped_log() -> Vec<LogEntry> {
+        vec![
+            entry(FIRST_TERM, FIRST_VALUE),
+            entry(SECOND_TERM, SECOND_VALUE),
+            entry(THIRD_TERM, THIRD_VALUE),
+            entry(FOURTH_TERM, FOURTH_VALUE),
+            entry(FIFTH_TERM, FIFTH_VALUE),
+        ]
     }
 
     // r[verify append-entries-build.build]
     #[test]
     fn test_build_first_entry() {
-        let log = vec![entry(1, 10), entry(2, 20), entry(3, 30)];
-        let msg = build_append_entries(&log, 1, 0);
-        assert_eq!(msg.prev_log_index, 0);
-        assert_eq!(msg.prev_log_term, 0);
-        assert_eq!(msg.entries_count, 3); // send all 3
+        let log = small_log();
+        let msg = build_append_entries(&log, FIRST_NEXT_INDEX, NO_MAX_ENTRIES);
+        assert_eq!(msg.prev_log_index, EMPTY_ENTRIES);
+        assert_eq!(msg.prev_log_term, EMPTY_TERM);
+        assert_eq!(msg.entries_count, SMALL_LOG_LENGTH);
     }
 
     // r[verify append-entries-build.build]
     #[test]
     fn test_build_middle() {
-        let log = vec![entry(1, 10), entry(2, 20), entry(3, 30)];
-        let msg = build_append_entries(&log, 2, 0); // follower has entry 0
-        assert_eq!(msg.prev_log_index, 1);
-        assert_eq!(msg.prev_log_term, 1); // log[0].term = 1
-        assert_eq!(msg.entries_count, 2); // entries 1, 2
+        let log = small_log();
+        let msg = build_append_entries(&log, SECOND_NEXT_INDEX, NO_MAX_ENTRIES);
+        assert_eq!(msg.prev_log_index, FIRST_NEXT_INDEX);
+        assert_eq!(msg.prev_log_term, FIRST_TERM);
+        assert_eq!(msg.entries_count, SMALL_LOG_LENGTH - FIRST_NEXT_INDEX);
     }
 
     // r[verify append-entries-build.build]
     #[test]
     fn test_build_caught_up() {
-        let log = vec![entry(1, 10), entry(2, 20), entry(3, 30)];
-        let msg = build_append_entries(&log, 4, 0); // follower has all 3
-        assert_eq!(msg.prev_log_index, 3);
-        assert_eq!(msg.prev_log_term, 3);
-        assert_eq!(msg.entries_count, 0); // heartbeat
+        let log = small_log();
+        let msg = build_append_entries(&log, CAUGHT_UP_NEXT_INDEX, NO_MAX_ENTRIES);
+        assert_eq!(msg.prev_log_index, SMALL_LOG_LENGTH);
+        assert_eq!(msg.prev_log_term, THIRD_TERM);
+        assert_eq!(msg.entries_count, EMPTY_ENTRIES);
         assert!(is_heartbeat(&msg));
     }
 
     // r[verify append-entries-build.entries-count]
     #[test]
     fn test_build_with_max() {
-        let log = vec![entry(1, 10), entry(2, 20), entry(3, 30), entry(4, 40), entry(5, 50)];
-        let msg = build_append_entries(&log, 1, 2); // cap at 2
-        assert_eq!(msg.entries_count, 2);
+        let log = capped_log();
+        let msg = build_append_entries(&log, FIRST_NEXT_INDEX, SMALL_MAX_ENTRIES);
+        assert_eq!(msg.entries_count, SMALL_MAX_ENTRIES);
     }
 
     // r[verify append-entries-build.is-heartbeat]
     #[test]
     fn test_is_heartbeat() {
         assert!(is_heartbeat(&AppendEntriesMsg {
-            prev_log_index: 5,
-            prev_log_term: 3,
-            entries_count: 0,
+            prev_log_index: CAPPED_LOG_LENGTH,
+            prev_log_term: THIRD_TERM,
+            entries_count: EMPTY_ENTRIES,
         }));
         assert!(!is_heartbeat(&AppendEntriesMsg {
-            prev_log_index: 5,
-            prev_log_term: 3,
-            entries_count: 1,
+            prev_log_index: CAPPED_LOG_LENGTH,
+            prev_log_term: THIRD_TERM,
+            entries_count: FIRST_NEXT_INDEX,
         }));
     }
 
     // r[verify append-entries-build.build]
     #[test]
     fn test_consistency_with_check() {
-        // Leader log: [t1, t2, t3]
-        // next_index=2: send entries starting from index 1
-        let leader_log = vec![entry(1, 10), entry(2, 20), entry(3, 30)];
-        let msg = build_append_entries(&leader_log, 2, 0);
+        let leader_log = small_log();
+        let msg = build_append_entries(&leader_log, SECOND_NEXT_INDEX, NO_MAX_ENTRIES);
 
-        // A follower with matching prefix should pass check
-        let follower_log = vec![entry(1, 99)]; // same term at index 0
-        assert_eq!(msg.prev_log_index, 1);
-        assert_eq!(msg.prev_log_term, 1);
-        // follower_log[0].term == 1 == prev_log_term → check passes
-        assert_eq!(follower_log[0].term, msg.prev_log_term);
+        let follower_log = vec![entry(FIRST_TERM, FIRST_VALUE)];
+        assert_eq!(msg.prev_log_index, FIRST_NEXT_INDEX);
+        assert_eq!(msg.prev_log_term, FIRST_TERM);
+        assert_eq!(follower_log[EMPTY_ENTRIES as usize].term, msg.prev_log_term);
+    }
+
+    // r[verify append-entries-build.prev-log]
+    #[test]
+    fn test_missing_prev_log_position_returns_zero_term() {
+        let log = vec![entry(FIRST_TERM, FIRST_VALUE)];
+        assert_eq!(build_prev_log_term(&log, THIRD_NEXT_INDEX), EMPTY_TERM);
+    }
+
+    // r[verify append-entries-build.entries-count]
+    #[test]
+    fn test_empty_log_builds_heartbeat_for_late_next_index() {
+        let log = Vec::<LogEntry>::new();
+        let msg = build_append_entries(&log, THIRD_NEXT_INDEX, SMALL_MAX_ENTRIES);
+        assert_eq!(msg.prev_log_term, EMPTY_TERM);
+        assert_eq!(msg.entries_count, EMPTY_ENTRIES);
+        assert!(is_heartbeat(&msg));
+    }
+
+    // r[verify append-entries-build.entries-count]
+    #[test]
+    fn test_zero_max_sends_available_but_positive_max_caps() {
+        let log = capped_log();
+        let uncapped = build_append_entries(&log, FIRST_NEXT_INDEX, NO_MAX_ENTRIES);
+        let capped = build_append_entries(&log, FIRST_NEXT_INDEX, SMALL_MAX_ENTRIES);
+        assert_eq!(uncapped.entries_count, CAPPED_LOG_LENGTH);
+        assert_eq!(capped.entries_count, SMALL_MAX_ENTRIES);
+    }
+
+    // r[verify append-entries-build.build]
+    #[test]
+    fn test_caught_up_boundary_uses_last_entry_term() {
+        let log = small_log();
+        let msg = build_append_entries(&log, CAUGHT_UP_NEXT_INDEX, NO_MAX_ENTRIES);
+        assert_eq!(msg.prev_log_index, SMALL_LOG_LENGTH);
+        assert_eq!(msg.prev_log_term, THIRD_TERM);
+        assert_eq!(msg.entries_count, EMPTY_ENTRIES);
+        assert!(is_heartbeat(&msg));
+    }
+
+    // r[verify append-entries-build.build]
+    #[test]
+    fn test_beyond_log_next_index_has_zero_prev_term_and_no_entries() {
+        let log = small_log();
+        let msg = build_append_entries(&log, BEYOND_LOG_NEXT_INDEX, NO_MAX_ENTRIES);
+        assert_eq!(msg.prev_log_index, BEYOND_LOG_NEXT_INDEX - FIRST_NEXT_INDEX);
+        assert_eq!(msg.prev_log_term, EMPTY_TERM);
+        assert_eq!(msg.entries_count, EMPTY_ENTRIES);
+        assert!(is_heartbeat(&msg));
+    }
+
+    // r[verify append-entries-build.prev-log]
+    #[test]
+    fn test_prev_log_index_one_boundary_is_before_next() {
+        assert_eq!(build_prev_log_index(FIRST_NEXT_INDEX), EMPTY_ENTRIES);
+        assert!(build_prev_log_index(FIRST_NEXT_INDEX) < FIRST_NEXT_INDEX);
+    }
+
+    // r[verify append-entries-build.build]
+    #[test]
+    fn test_minimal_consistency_boundary_uses_first_term() {
+        let leader_log = small_log();
+        let msg = build_append_entries(&leader_log, SECOND_NEXT_INDEX, NO_MAX_ENTRIES);
+        assert_eq!(msg.prev_log_index, FIRST_NEXT_INDEX);
+        assert_eq!(msg.prev_log_term, FIRST_TERM);
     }
 
     proptest! {

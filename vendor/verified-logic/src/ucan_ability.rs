@@ -160,6 +160,7 @@ pub fn is_glob_segment(seg: &Vec<u8>) -> (result: bool)
 }
 
 /// Check whether an ability contains any glob wildcard segment.
+// r[impl ucan-ability.glob-one-level]
 pub fn ability_has_glob_segment(ability: &Ability) -> (result: bool)
     ensures result == ability_has_glob_segment_vec_spec(ability.segments@),
 {
@@ -181,6 +182,7 @@ pub fn ability_has_glob_segment(ability: &Ability) -> (result: bool)
 }
 
 /// Check whether an ability has no glob wildcard segments.
+// r[impl ucan-ability.glob-one-level]
 pub fn ability_is_concrete(ability: &Ability) -> (result: bool)
     ensures result == ability_is_concrete_vec_spec(ability.segments@),
 {

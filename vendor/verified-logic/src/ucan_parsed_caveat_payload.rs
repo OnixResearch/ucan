@@ -6,6 +6,7 @@
 //! base64url decoder correctness, decoded-byte provenance, typed payload parsing,
 //! policy semantics, clocks, counters, and token provenance remain runtime/caller
 //! boundaries.
+#![allow(clippy::struct_excessive_bools)]
 
 use vstd::prelude::*;
 
