@@ -153,13 +153,13 @@ Hegel-backed property tests use `uv` on first run to install the pinned `hegel-c
 
 `vendor/verified-logic` is a checked-in upstream snapshot. Keep it byte-for-byte aligned with upstream and exclude it from this repo's local `fmt`/`clippy` policy; refresh it with the sync script instead of reformatting or relinting it in place.
 
-Refresh the vendored `verified-logic` snapshot from the sibling source repo with:
+Refresh the vendored `verified-logic` snapshot from the sibling Trellis source repo with:
 
 ```bash
-./scripts/sync-verified-logic.sh
+./scripts/sync-verified-logic.sh ../trellis
 ```
 
-That script imports the committed `HEAD` revision from `../verified-logic`, ignores uncommitted sibling changes, and records the imported revision in `vendor/verified-logic-revision.txt`.
+That script imports the committed `HEAD` revision from Trellis, ignores uncommitted sibling changes, and records the imported revision in `vendor/verified-logic-revision.txt`. The Josh path-selection pilot is documented in `docs/verified-logic-josh-sync.md`; `josh/verified-logic.josh` is the canonical filter for the vendored subtree.
 
 ## Verification
 

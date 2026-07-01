@@ -8,7 +8,7 @@ fail() {
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-readonly DEFAULT_SOURCE_REPO="${REPO_ROOT}/../verified-logic"
+readonly DEFAULT_SOURCE_REPO="${REPO_ROOT}/../trellis"
 readonly VENDOR_DIR="${REPO_ROOT}/vendor/verified-logic"
 readonly REVISION_FILE="${REPO_ROOT}/vendor/verified-logic-revision.txt"
 readonly REQUIRED_PATHS=(Cargo.toml src)

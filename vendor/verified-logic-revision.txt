@@ -1,2 +1,2 @@
 revision=5bd340b63927444ce583164feba57a1fa877c6c5
-source_repo=git@github.com:brittonr/verified-logic.git
+source_repo=git@github.com:OnixResearch/trellis.git

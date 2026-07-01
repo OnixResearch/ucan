@@ -30,21 +30,29 @@ r[build.vendored-verified-logic.warning-free-dev-shell-verification]
 #### Scenario: Fresh clone resolves verified-logic dependency
 r[build.vendored-verified-logic.fresh-clone-resolves-dependency]
 
-- GIVEN a fresh clone of `ucan` with no sibling `../verified-logic` checkout present
+- GIVEN a fresh clone of `ucan` with no sibling Trellis checkout present
 - WHEN Cargo resolves the root manifest dependency on `verified-logic`
 - THEN the build MUST use the in-tree `vendor/verified-logic` crate source
 - AND the build MUST not require a sibling checkout to compile
 
 ### Requirement: Contributor sync workflow for vendored verified-logic
 
-The repository MUST document and support a deterministic workflow for refreshing `vendor/verified-logic` from a committed upstream `verified-logic` revision.
+The repository MUST document and support a deterministic workflow for refreshing `vendor/verified-logic` from a committed upstream Trellis revision.
 r[build.verified-logic-sync-workflow]
 
 #### Scenario: Contributor refreshes a stale vendored source
 r[build.verified-logic-sync-workflow.refreshes-stale-vendored-source]
 
-- GIVEN the vendored `verified-logic` source no longer matches the intended upstream revision
+- GIVEN the vendored `verified-logic` source no longer matches the intended upstream Trellis revision
 - WHEN a contributor runs the documented refresh workflow
-- THEN `vendor/verified-logic` MUST contain the committed source imported from that revision
+- THEN `vendor/verified-logic` MUST contain the committed Trellis source imported from that revision
 - AND the repo MUST record which upstream revision was imported
 - AND `nix flake check` MUST still exit with status 0 without the relative `git+file:` deprecation warning
+
+#### Scenario: Josh filter matches the vendored source boundary
+r[build.verified-logic-sync-workflow.josh-filter]
+
+- GIVEN the repo stores a Josh filter for the vendored `verified-logic` subtree
+- WHEN the sync config check runs
+- THEN the filter MUST select the same required and optional source paths as the importer
+- AND contributors MUST be able to verify the checked-in vendor tree against the recorded Trellis revision
