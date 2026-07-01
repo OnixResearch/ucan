@@ -15,6 +15,7 @@
 - Full `nix flake check` now scopes `cargo fmt` and `cargo clippy` to `ucan`/`ucan-core` and allows `clippy::cargo-common-metadata`; otherwise the vendored `verified-logic` snapshot or package metadata gets linted against this repo's policy instead of upstream's.
 - Refresh `vendor/verified-logic` with `./scripts/sync-verified-logic.sh ../trellis`; the script imports the committed `HEAD` revision from the sibling Trellis checkout and records the imported revision in `vendor/verified-logic-revision.txt`.
 - `josh/verified-logic.josh` is the canonical Josh filter for the vendored subtree. Run `rustc scripts/check-verified-logic-josh-sync.rs -o /tmp/check-verified-logic-josh-sync && /tmp/check-verified-logic-josh-sync --source-repo ../trellis` to verify the vendored tree against the recorded Trellis revision.
+- `.pre-commit-config.yaml` intentionally runs only the focused local Nix check for Josh sync config, unit tests, and revision metadata. Do not make pre-commit require a sibling `../trellis` checkout.
 - After archiving an OpenSpec change, validate repository state with `openspec validate --all --strict`; bare `openspec validate --strict` exits with “Nothing to validate”.
 
 ## Gotchas

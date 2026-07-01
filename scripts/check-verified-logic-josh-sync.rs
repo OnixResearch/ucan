@@ -71,12 +71,12 @@ fn main() {
 fn run() -> Result<(), String> {
     let config = parse_args(env::args().skip(1))?;
     validate_filter_file(&config.filter_file)?;
+    let metadata = read_revision_metadata(&config.revision_file)?;
     if config.config_only {
-        println!("verified-logic Josh filter config is valid");
+        println!("verified-logic Josh filter config and revision metadata are valid");
         return Ok(());
     }
 
-    let metadata = read_revision_metadata(&config.revision_file)?;
     let revision = config.revision_override.clone().unwrap_or_else(|| metadata.revision.clone());
 
     ensure_git_checkout(&config.source_repo)?;

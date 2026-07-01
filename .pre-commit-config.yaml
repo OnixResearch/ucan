@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: verified-logic-josh-sync-config
+        name: verified-logic Josh sync config
+        entry: bash -c 'system="$(nix eval --raw --impure --expr builtins.currentSystem)"; nix build ".#checks.${system}.verified-logic-josh-sync-config" --no-link'
+        language: system
+        pass_filenames: false
+        files: '^(flake\.nix|josh/verified-logic\.josh|scripts/check-verified-logic-josh-sync\.rs|vendor/verified-logic-revision\.txt)$'

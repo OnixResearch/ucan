@@ -167,4 +167,13 @@ That script imports the committed `HEAD` revision from Trellis, ignores uncommit
 verus verus/example_spec.rs
 ```
 
+Install and run the local pre-commit hook for the cheap Josh sync boundary check:
+
+```bash
+pre-commit install
+pre-commit run verified-logic-josh-sync-config --all-files
+```
+
+The hook runs the focused Nix check only; it validates the Josh filter, verifier unit tests, and revision metadata without requiring a sibling Trellis checkout.
+
 Verified replay-admission transcript aggregation now gates `verify_invocation_with_replay` replay outcomes before allowing or denying replay-aware invocations; nonce-store truth and durability remain caller-owned. The remaining verified follow-up surfaces now cover proof traversal orchestration, compact-token codec structure, core structural validators, ability helper predicates, and backend transcript aggregation without expanding the claim to parser, crypto, backend, storage, or consumer-policy truth.

@@ -31,7 +31,11 @@ rustc scripts/check-verified-logic-josh-sync.rs -o /tmp/check-verified-logic-jos
 /tmp/check-verified-logic-josh-sync --source-repo ../trellis
 ```
 
-Use `--config-only` when a sandbox cannot access the Trellis checkout and only needs to validate the Josh filter file.
+Use `--config-only` when a sandbox cannot access the Trellis checkout and only needs to validate the Josh filter, verifier unit tests through the Nix check, and revision metadata.
+
+## Pre-commit
+
+`.pre-commit-config.yaml` runs `nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).verified-logic-josh-sync-config --no-link`. That hook is intentionally local-only so commits do not require a sibling Trellis checkout; run the full verifier manually before claiming byte-for-byte parity with an upstream Trellis revision.
 
 ## Graduation criteria
 
