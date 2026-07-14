@@ -10,6 +10,6 @@
 
 The no-std core must not depend on the std shell. The shell may depend on the core and the verified primitive snapshot. The snapshot must be refreshed with `scripts/sync-verified-logic.sh`, not manually reformatted or edited.
 
-Complete texts are in `LICENSES/MPL-2.0.txt` and `LICENSES/AGPL-3.0-or-later.txt`; the synchronized snapshot also carries its upstream `LICENSE`.
+Complete texts are in `LICENSES/MPL-2.0.txt` and `LICENSES/AGPL-3.0-or-later.txt`; the core package and synchronized snapshot also carry their applicable text so package archives are self-contained.
 
 Earlier grants remain valid. Trellis source/proof alignment does not certify UCAN parsing, cryptography, resolver truth, revocation freshness, replay storage, policy semantics, interoperability, or shell correctness. This map does not establish contributor authority or legal compliance.
