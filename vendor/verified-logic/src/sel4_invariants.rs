@@ -66,6 +66,55 @@ pub struct KernelState {
     pub irqs: Vec<IrqLine>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct KernelStepDecision {
+    pub applied: bool,
+    pub reason: u8,
+}
+
+pub const PRESERVATION_STEP_ENDPOINT_SEND_BLOCK: u8 = 1;
+pub const PRESERVATION_STEP_ENDPOINT_SEND_RENDEZVOUS: u8 = 2;
+pub const PRESERVATION_STEP_UNTYPED_REVOKE: u8 = 3;
+
+pub const KERNEL_STEP_REASON_NONE: u8 = 0;
+pub const KERNEL_STEP_REJECT_INVALID_REFERENCE: u8 = 1;
+pub const KERNEL_STEP_REJECT_MISMATCHED_ENDPOINT_TCB: u8 = 2;
+pub const KERNEL_STEP_REJECT_OUT_OF_SCOPE: u8 = 3;
+
+// r[impl sel4-invariants.preservation-matrix]
+// r[depends sel4-invariants.preservation-matrix]
+pub open spec fn preservation_matrix_step_known_spec(step: u8) -> bool {
+    step == PRESERVATION_STEP_ENDPOINT_SEND_BLOCK
+        || step == PRESERVATION_STEP_ENDPOINT_SEND_RENDEZVOUS
+        || step == PRESERVATION_STEP_UNTYPED_REVOKE
+}
+
+// r[impl sel4-invariants.step-preservation-expansion]
+// r[depends sel4-invariants.step-preservation-expansion]
+pub open spec fn rejected_kernel_step_decision_spec(reason: u8) -> KernelStepDecision {
+    KernelStepDecision { applied: false, reason }
+}
+
+// r[impl sel4-invariants.preservation-matrix]
+// r[depends sel4-invariants.preservation-matrix]
+pub open spec fn kernel_state_unchanged_spec(before: KernelState, after: KernelState) -> bool {
+    &&& after.tcbs@ =~= before.tcbs@
+    &&& after.ready_queues.queues@ =~= before.ready_queues.queues@
+    &&& after.endpoints@ =~= before.endpoints@
+    &&& after.notification_count == before.notification_count
+    &&& after.reply_count == before.reply_count
+    &&& after.cdt.parents@ =~= before.cdt.parents@
+    &&& after.cdt.slots@ =~= before.cdt.slots@
+    &&& after.cdt.present@ =~= before.cdt.present@
+    &&& after.cspace.nodes@ =~= before.cspace.nodes@
+    &&& after.cspace.root == before.cspace.root
+    &&& after.untypeds@ =~= before.untypeds@
+    &&& after.asid_pool.ownership_view() =~= before.asid_pool.ownership_view()
+    &&& after.asid_pool.capacity == before.asid_pool.capacity
+    &&& after.vspaces@ =~= before.vspaces@
+    &&& after.irqs@ =~= before.irqs@
+}
+
 // r[impl sel4-invariants.decomposition]
 // r[depends sel4-invariants.decomposition]
 pub open spec fn object_refs_valid_spec(state: KernelState) -> bool {
@@ -214,6 +263,77 @@ pub open spec fn kernel_invariant_spec(state: KernelState) -> bool {
     &&& asid_pool_wf_spec(state)
     &&& vspace_consistent_spec(state)
     &&& irq_unique_spec(state)
+}
+
+// r[verify sel4-invariants.preservation-matrix]
+pub proof fn endpoint_send_block_is_matrix_step()
+    ensures preservation_matrix_step_known_spec(PRESERVATION_STEP_ENDPOINT_SEND_BLOCK)
+{}
+
+// r[verify sel4-invariants.preservation-matrix]
+pub proof fn endpoint_send_rendezvous_is_matrix_step()
+    ensures preservation_matrix_step_known_spec(PRESERVATION_STEP_ENDPOINT_SEND_RENDEZVOUS)
+{}
+
+// r[verify sel4-invariants.preservation-matrix]
+pub proof fn untyped_revoke_is_matrix_step()
+    ensures preservation_matrix_step_known_spec(PRESERVATION_STEP_UNTYPED_REVOKE)
+{}
+
+// r[verify sel4-invariants.preservation-matrix]
+pub proof fn unchanged_state_frames_kernel_invariant(before: KernelState, after: KernelState)
+    requires
+        kernel_invariant_spec(before),
+        kernel_state_unchanged_spec(before, after),
+    ensures kernel_invariant_spec(after)
+{
+    assert(object_refs_valid_spec(after)) by {
+        assert(forall|endpoint_idx: int| #![trigger after.endpoints@[endpoint_idx]]
+            0 <= endpoint_idx < after.endpoints@.len() ==> after.endpoints@[endpoint_idx].wf());
+        assert(forall|tid: int| #![trigger after.tcbs@[tid]] 0 <= tid < after.tcbs@.len() ==> match after.tcbs@[tid].state {
+            TcbState::BlockedOnSend { endpoint } | TcbState::BlockedOnReceive { endpoint } => endpoint < after.endpoints@.len(),
+            TcbState::BlockedOnNotification { notification } => notification < after.notification_count,
+            TcbState::BlockedOnReply { reply } => reply < after.reply_count,
+            TcbState::Runnable | TcbState::Running | TcbState::Restart | TcbState::Inactive => true,
+        });
+        assert(forall|endpoint_idx: int, pos: int| #![trigger after.endpoints@[endpoint_idx].senders@[pos]]
+            0 <= endpoint_idx < after.endpoints@.len()
+                && 0 <= pos < after.endpoints@[endpoint_idx].senders@.len()
+                ==> after.endpoints@[endpoint_idx].senders@[pos].tcb < after.tcbs@.len());
+        assert(forall|endpoint_idx: int, pos: int| #![trigger after.endpoints@[endpoint_idx].receivers@[pos]]
+            0 <= endpoint_idx < after.endpoints@.len()
+                && 0 <= pos < after.endpoints@[endpoint_idx].receivers@.len()
+                ==> after.endpoints@[endpoint_idx].receivers@[pos] < after.tcbs@.len());
+        assert(forall|irq_idx: int| #![trigger after.irqs@[irq_idx]]
+            0 <= irq_idx < after.irqs@.len() ==> match after.irqs@[irq_idx].handler {
+                Some(handler) => handler < after.notification_count,
+                None => true,
+            });
+    };
+    assert(cdt_wf_spec(after));
+    assert(cspace_valid_spec(after));
+    assert(tcb_legal_spec(after));
+    assert(scheduler_consistent_spec(after));
+    assert(untyped_ownership_spec(after));
+    assert(asid_pool_wf_spec(after));
+    assert(vspace_consistent_spec(after));
+    assert(irq_unique_spec(after));
+}
+
+// r[impl sel4-invariants.step-preservation-expansion]
+pub fn reject_kernel_step_noop(state: &mut KernelState, reason: u8) -> (result: KernelStepDecision)
+    ensures
+        result == rejected_kernel_step_decision_spec(reason),
+        kernel_state_unchanged_spec(*old(state), *state),
+        kernel_invariant_spec(*old(state)) ==> kernel_invariant_spec(*state),
+{
+    proof {
+        assert(kernel_state_unchanged_spec(*old(state), *state));
+        if kernel_invariant_spec(*old(state)) {
+            unchanged_state_frames_kernel_invariant(*old(state), *state);
+        }
+    }
+    KernelStepDecision { applied: false, reason }
 }
 
 // Keep initial step-preservation proof factoring local to this module; the
@@ -412,6 +532,7 @@ proof fn ints_below_upper_cast_to_distinct_usizes(a: int, b: int, upper: usize)
 {}
 
 // r[verify sel4-invariants.step-preservation]
+// r[verify sel4-invariants.step-preservation-expansion]
 pub proof fn step_endpoint_send_block_preserves_kernel_invariant(
     before: KernelState,
     after: KernelState,
@@ -630,6 +751,7 @@ proof fn top_level_untypeds_disjoint_preserved_by_update(untypeds: Seq<UntypedMe
 }
 
 // r[verify sel4-invariants.step-preservation]
+// r[verify sel4-invariants.step-preservation-expansion]
 pub proof fn step_untyped_revoke_preserves_kernel_invariant(before: KernelState, after: KernelState, index: int)
     requires
         kernel_invariant_spec(before),
@@ -765,6 +887,7 @@ fn clone_untyped(untyped: &UntypedMemory) -> (result: UntypedMemory)
 }
 
 // r[verify sel4-invariants.step-preservation]
+// r[verify sel4-invariants.step-preservation-expansion]
 pub proof fn step_endpoint_send_rendezvous_preserves_kernel_invariant(
     before: KernelState,
     after: KernelState,
@@ -1204,6 +1327,75 @@ mod tests {
     use crate::sel4_untyped::SEL4_OBJ_FRAME;
     use crate::sel4_untyped::UntypedMemory;
 
+    const NOOP_TEST_UNTYPED_BASE: u64 = 0x3000;
+    const NOOP_TEST_UNTYPED_SIZE: u64 = 0x1000;
+
+    #[derive(Clone, Copy)]
+    struct NoopSnapshot {
+        tcb_count: usize,
+        ready_queue_count: usize,
+        endpoint_count: usize,
+        endpoint_sender_count: usize,
+        endpoint_receiver_count: usize,
+        untyped_count: usize,
+        untyped_child_count: usize,
+        asid_capacity: usize,
+        vspace_count: usize,
+        irq_count: usize,
+    }
+
+    fn noop_snapshot(state: &KernelState) -> NoopSnapshot {
+        NoopSnapshot {
+            tcb_count: state.tcbs.len(),
+            ready_queue_count: state.ready_queues.queues.len(),
+            endpoint_count: state.endpoints.len(),
+            endpoint_sender_count: state.endpoints[0].senders.len(),
+            endpoint_receiver_count: state.endpoints[0].receivers.len(),
+            untyped_count: state.untypeds.len(),
+            untyped_child_count: state.untypeds[0].children.len(),
+            asid_capacity: state.asid_pool.capacity,
+            vspace_count: state.vspaces.len(),
+            irq_count: state.irqs.len(),
+        }
+    }
+
+    fn assert_noop_snapshot(state: &KernelState, before: NoopSnapshot) {
+        assert_eq!(state.tcbs.len(), before.tcb_count);
+        assert_eq!(state.ready_queues.queues.len(), before.ready_queue_count);
+        assert_eq!(state.endpoints.len(), before.endpoint_count);
+        assert_eq!(state.endpoints[0].senders.len(), before.endpoint_sender_count);
+        assert_eq!(state.endpoints[0].receivers.len(), before.endpoint_receiver_count);
+        assert_eq!(state.untypeds.len(), before.untyped_count);
+        assert_eq!(state.untypeds[0].children.len(), before.untyped_child_count);
+        assert_eq!(state.asid_pool.capacity, before.asid_capacity);
+        assert_eq!(state.vspaces.len(), before.vspace_count);
+        assert_eq!(state.irqs.len(), before.irq_count);
+    }
+
+    fn noop_boundary_state() -> KernelState {
+        let mut sender = new_tcb(0, 0);
+        sender.state = TcbState::Running;
+        base_kernel_state(
+            vec![sender],
+            new_ready_queues(1),
+            vec![Endpoint {
+                senders: vec![],
+                receivers: vec![],
+            }],
+            vec![UntypedMemory::new(NOOP_TEST_UNTYPED_BASE, NOOP_TEST_UNTYPED_SIZE)],
+        )
+    }
+
+    fn assert_rejected_noop(reason: u8) {
+        let mut state = noop_boundary_state();
+        let before = noop_snapshot(&state);
+        let decision = reject_kernel_step_noop(&mut state, reason);
+        assert!(!decision.applied);
+        assert_eq!(decision.reason, reason);
+        assert_noop_snapshot(&state, before);
+        assert!(matches!(state.tcbs[0].state, TcbState::Running));
+    }
+
     fn base_kernel_state(
         tcbs: Vec<Tcb>,
         ready_queues: ReadyQueues,
@@ -1311,6 +1503,24 @@ mod tests {
         step_untyped_revoke(&mut state, 0);
 
         assert!(state.untypeds[0].children.is_empty());
+    }
+
+    // r[verify sel4-invariants.step-preservation-expansion]
+    #[test]
+    fn rejected_invalid_reference_request_is_noop() {
+        assert_rejected_noop(KERNEL_STEP_REJECT_INVALID_REFERENCE);
+    }
+
+    // r[verify sel4-invariants.step-preservation-expansion]
+    #[test]
+    fn rejected_mismatched_endpoint_tcb_request_is_noop() {
+        assert_rejected_noop(KERNEL_STEP_REJECT_MISMATCHED_ENDPOINT_TCB);
+    }
+
+    // r[verify sel4-invariants.step-preservation-expansion]
+    #[test]
+    fn rejected_out_of_scope_request_is_noop() {
+        assert_rejected_noop(KERNEL_STEP_REJECT_OUT_OF_SCOPE);
     }
 
     proptest! {

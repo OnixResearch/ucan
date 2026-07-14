@@ -3,17 +3,9 @@
 //! Handles carry per-handle rights and reference a stable kernel object
 //! identity (`koid`). A handle is either bound to a process, in transit,
 //! or closed.
+#![allow(unknown_lints, excessive_file_length)]
 
 use vstd::prelude::*;
-
-use crate::zircon_rights::can_duplicate;
-#[cfg(verus_keep_ghost)]
-use crate::zircon_rights::can_duplicate_spec;
-use crate::zircon_rights::can_replace;
-#[cfg(verus_keep_ghost)]
-use crate::zircon_rights::can_replace_spec;
-#[cfg(verus_keep_ghost)]
-use crate::zircon_rights::rights_subset_spec;
 
 verus! {
 
@@ -21,6 +13,7 @@ pub const ZX_HANDLE_BOUND: u8 = 0u8;
 pub const ZX_HANDLE_IN_TRANSIT: u8 = 1u8;
 pub const ZX_HANDLE_CLOSED: u8 = 2u8;
 
+#[allow(unknown_lints, path_segment_repetition)]
 pub struct ZirconHandle {
     pub koid: u64,
     pub rights: u64,
@@ -104,7 +97,7 @@ pub fn bind(koid: u64, rights: u64, process: u64) -> (result: ZirconHandle)
 pub fn duplicate(handle: &ZirconHandle, requested_rights: u64, new_owner: u64) -> (result: Option<ZirconHandle>)
     requires handle.wf()
     ensures
-        result.is_some() <==> (handle.state == ZX_HANDLE_BOUND && can_duplicate_spec(handle.rights, requested_rights)),
+        result.is_some() <==> (handle.state == ZX_HANDLE_BOUND && crate::zircon_rights::can_duplicate_spec(handle.rights, requested_rights)),
         result.is_some() ==> {
             let h = result.unwrap();
             &&& h.wf()
@@ -113,7 +106,7 @@ pub fn duplicate(handle: &ZirconHandle, requested_rights: u64, new_owner: u64) -
             &&& is_bound_to_spec(h, new_owner)
         },
 {
-    if handle.state == ZX_HANDLE_BOUND && can_duplicate(handle.rights, requested_rights) {
+    if handle.state == ZX_HANDLE_BOUND && crate::zircon_rights::can_duplicate(handle.rights, requested_rights) {
         Some(ZirconHandle {
             koid: handle.koid,
             rights: requested_rights,
@@ -130,7 +123,7 @@ pub fn duplicate(handle: &ZirconHandle, requested_rights: u64, new_owner: u64) -
 pub fn replace(handle: &ZirconHandle, requested_rights: u64, new_owner: u64) -> (result: Option<ZirconHandle>)
     requires handle.wf()
     ensures
-        result.is_some() <==> (handle.state == ZX_HANDLE_BOUND && can_replace_spec(handle.rights, requested_rights)),
+        result.is_some() <==> (handle.state == ZX_HANDLE_BOUND && crate::zircon_rights::can_replace_spec(handle.rights, requested_rights)),
         result.is_some() ==> {
             let h = result.unwrap();
             &&& h.wf()
@@ -139,7 +132,7 @@ pub fn replace(handle: &ZirconHandle, requested_rights: u64, new_owner: u64) -> 
             &&& is_bound_to_spec(h, new_owner)
         },
 {
-    if handle.state == ZX_HANDLE_BOUND && can_replace(handle.rights, requested_rights) {
+    if handle.state == ZX_HANDLE_BOUND && crate::zircon_rights::can_replace(handle.rights, requested_rights) {
         Some(ZirconHandle {
             koid: handle.koid,
             rights: requested_rights,
@@ -222,6 +215,7 @@ pub open spec fn object_live_spec(handles: Seq<ZirconHandle>, koid: u64) -> bool
     object_live_from_spec(handles, koid, 0)
 }
 
+#[allow(unknown_lints, no_recursion)]
 fn object_live_from(handles: &[ZirconHandle], koid: u64, from: usize) -> (result: bool)
     requires
         from <= handles@.len(),
@@ -246,7 +240,7 @@ pub fn object_live(handles: &[ZirconHandle], koid: u64) -> (result: bool)
 
 // r[verify zircon-handle.identity]
 proof fn duplicate_preserves_koid(handle: ZirconHandle, requested_rights: u64, new_owner: u64)
-    requires handle.wf(), handle.state == ZX_HANDLE_BOUND, can_duplicate_spec(handle.rights, requested_rights)
+    requires handle.wf(), handle.state == ZX_HANDLE_BOUND, crate::zircon_rights::can_duplicate_spec(handle.rights, requested_rights)
     ensures (ZirconHandle { koid: handle.koid, rights: requested_rights, state: ZX_HANDLE_BOUND, owner: new_owner }).koid == handle.koid
 {}
 
@@ -271,8 +265,8 @@ proof fn in_transit_keeps_object_live(handle: ZirconHandle, endpoint: u64)
 // r[verify zircon-handle.identity]
 // r[verify zircon-handle.ownership]
 proof fn duplicate_never_adds_rights(handle: ZirconHandle, requested_rights: u64, _new_owner: u64)
-    requires handle.wf(), handle.state == ZX_HANDLE_BOUND, can_duplicate_spec(handle.rights, requested_rights)
-    ensures rights_subset_spec(requested_rights, handle.rights)
+    requires handle.wf(), handle.state == ZX_HANDLE_BOUND, crate::zircon_rights::can_duplicate_spec(handle.rights, requested_rights)
+    ensures crate::zircon_rights::rights_subset_spec(requested_rights, handle.rights)
 {}
 
 } // verus!

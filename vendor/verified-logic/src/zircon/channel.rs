@@ -4,6 +4,14 @@
 //! Sending moves handles to in-transit ownership for the destination
 //! endpoint. Receiving rebinds them to a process. Closing an endpoint
 //! discards unread messages and closes transferred handles.
+#![allow(
+    unknown_lints,
+    path_segment_repetition,
+    unbounded_collection_growth,
+    borrowed_argument_types,
+    no_recursion,
+    bool_naming
+)]
 
 use vstd::prelude::*;
 

@@ -24,9 +24,16 @@ const DEFAULT_SOURCE_REPO: &str = "../trellis";
 const DEFAULT_VENDOR_DIR: &str = "vendor/verified-logic";
 const DEFAULT_REVISION_FILE: &str = "vendor/verified-logic-revision.txt";
 const DEFAULT_FILTER_FILE: &str = "josh/verified-logic.josh";
-const REQUIRED_PATHS: &[&str] = &["Cargo.toml", "src"];
+const REQUIRED_PATHS: &[&str] = &["Cargo.toml", "LICENSE", "src"];
 const OPTIONAL_PATHS: &[&str] = &["README.md", "build.rs", ".cargo"];
-const REQUIRED_FILTER_FRAGMENTS: &[&str] = &["::Cargo.toml", "::README.md", "::build.rs", "::.cargo/", "::src/"];
+const REQUIRED_FILTER_FRAGMENTS: &[&str] = &[
+    "::Cargo.toml",
+    "::LICENSE",
+    "::README.md",
+    "::build.rs",
+    "::.cargo/",
+    "::src/",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Config {
@@ -176,15 +183,22 @@ fn parse_revision_metadata(text: &str) -> Result<RevisionMetadata, String> {
     })
 }
 
+fn missing_filter_fragments(text: &str) -> Vec<&'static str> {
+    REQUIRED_FILTER_FRAGMENTS.iter().copied().filter(|fragment| !text.contains(fragment)).collect()
+}
+
+fn validate_filter_text(text: &str) -> Result<(), String> {
+    let missing = missing_filter_fragments(text);
+    if !missing.is_empty() {
+        return Err(format!("missing required fragments: {}", missing.join(", ")));
+    }
+    Ok(())
+}
+
 fn validate_filter_file(path: &Path) -> Result<(), String> {
     let text =
         fs::read_to_string(path).map_err(|error| format!("failed to read Josh filter {}: {error}", path.display()))?;
-    let missing: Vec<&str> =
-        REQUIRED_FILTER_FRAGMENTS.iter().copied().filter(|fragment| !text.contains(fragment)).collect();
-    if !missing.is_empty() {
-        return Err(format!("Josh filter {} is missing required fragments: {}", path.display(), missing.join(", ")));
-    }
-    Ok(())
+    validate_filter_text(&text).map_err(|error| format!("Josh filter {} is {error}", path.display()))
 }
 
 fn ensure_git_checkout(repo: &Path) -> Result<(), String> {
@@ -424,6 +438,26 @@ mod tests {
 
     const SAMPLE_REVISION: &str = "5bd340b63927444ce583164feba57a1fa877c6c5";
     const SAMPLE_SOURCE_REPO: &str = "git@github.com:OnixResearch/trellis.git";
+
+    #[test]
+    fn accepts_filter_with_license_and_source_fragments() {
+        let filter = REQUIRED_FILTER_FRAGMENTS.join("\n");
+
+        assert!(validate_filter_text(&filter).is_ok());
+    }
+
+    #[test]
+    fn rejects_filter_without_license_fragment() {
+        let filter = REQUIRED_FILTER_FRAGMENTS
+            .iter()
+            .copied()
+            .filter(|fragment| *fragment != "::LICENSE")
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let error = validate_filter_text(&filter).expect_err("missing license fragment must fail");
+        assert!(error.contains("::LICENSE"), "unexpected error: {error}");
+    }
 
     #[test]
     fn parses_revision_metadata_with_source_repo() {

@@ -3529,16 +3529,30 @@ mod tests {
         assert!(pointer_result.admitted);
         assert_eq!(pointer_result.failing_check, RAFT_OPENRAFT_OK);
 
-        let old_progress = RaftIoProgressMetadata { flushed: 1, submitted: 2, accepted: 3 };
-        let new_progress = RaftIoProgressMetadata { flushed: 2, submitted: 3, accepted: 4 };
+        let old_progress = RaftIoProgressMetadata {
+            flushed: 1,
+            submitted: 2,
+            accepted: 3,
+        };
+        let new_progress = RaftIoProgressMetadata {
+            flushed: 2,
+            submitted: 3,
+            accepted: 4,
+        };
         let io_result = raft_openraft_io_progress_admission_result(&old_progress, &new_progress);
         assert!(io_result.admitted);
         assert_eq!(io_result.failing_check, RAFT_OPENRAFT_OK);
 
-        let vote_io = RaftVoteLogIoMetadata { persisted_term: 5, log_term: 4 };
+        let vote_io = RaftVoteLogIoMetadata {
+            persisted_term: 5,
+            log_term: 4,
+        };
         assert!(raft_openraft_vote_log_io_admission_result(&vote_io).admitted);
 
-        let membership = RaftEffectiveMembershipMetadata { committed_epoch: 7, effective_epoch: 8 };
+        let membership = RaftEffectiveMembershipMetadata {
+            committed_epoch: 7,
+            effective_epoch: 8,
+        };
         assert!(raft_openraft_effective_membership_admission_result(&membership).admitted);
 
         let session = RaftReplicationSessionMetadata {
@@ -3546,17 +3560,14 @@ mod tests {
             leader_node: 2,
             membership_log_index: 11,
         };
-        let replication_result = raft_openraft_replication_progress_admission_result(
-            &session,
-            &session,
-            3,
-            4,
-            5,
-        );
+        let replication_result = raft_openraft_replication_progress_admission_result(&session, &session, 3, 4, 5);
         assert!(replication_result.admitted);
         assert_eq!(replication_result.failing_check, RAFT_OPENRAFT_OK);
 
-        let read = RaftReadLinearizerMetadata { read_log_index: 5, last_applied_index: 5 };
+        let read = RaftReadLinearizerMetadata {
+            read_log_index: 5,
+            last_applied_index: 5,
+        };
         assert!(raft_openraft_read_linearizer_admission_result(&read).admitted);
     }
 
@@ -3581,18 +3592,32 @@ mod tests {
         assert!(!pointer_result.admitted);
         assert_eq!(pointer_result.failing_check, RAFT_OPENRAFT_PURGED_AFTER_SNAPSHOT);
 
-        let invalid_old = RaftIoProgressMetadata { flushed: 4, submitted: 3, accepted: 5 };
-        let regressing_new = RaftIoProgressMetadata { flushed: 1, submitted: 2, accepted: 1 };
+        let invalid_old = RaftIoProgressMetadata {
+            flushed: 4,
+            submitted: 3,
+            accepted: 5,
+        };
+        let regressing_new = RaftIoProgressMetadata {
+            flushed: 1,
+            submitted: 2,
+            accepted: 1,
+        };
         let io_result = raft_openraft_io_progress_admission_result(&invalid_old, &regressing_new);
         assert!(!io_result.admitted);
         assert_eq!(io_result.failing_check, RAFT_OPENRAFT_OLD_PROGRESS_INVALID);
 
-        let vote_io = RaftVoteLogIoMetadata { persisted_term: 2, log_term: 3 };
+        let vote_io = RaftVoteLogIoMetadata {
+            persisted_term: 2,
+            log_term: 3,
+        };
         let vote_result = raft_openraft_vote_log_io_admission_result(&vote_io);
         assert!(!vote_result.admitted);
         assert_eq!(vote_result.failing_check, RAFT_OPENRAFT_PRIOR_TERM_METADATA_REQUIRED);
 
-        let bad_membership = RaftEffectiveMembershipMetadata { committed_epoch: 9, effective_epoch: 8 };
+        let bad_membership = RaftEffectiveMembershipMetadata {
+            committed_epoch: 9,
+            effective_epoch: 8,
+        };
         let membership_result = raft_openraft_effective_membership_admission_result(&bad_membership);
         assert!(!membership_result.admitted);
         assert_eq!(membership_result.failing_check, RAFT_OPENRAFT_EFFECTIVE_BEFORE_COMMITTED);
@@ -3602,18 +3627,18 @@ mod tests {
             leader_node: 2,
             membership_log_index: 10,
         };
-        let stale = RaftReplicationSessionMetadata { leader_term: 3, ..current };
-        let replication_result = raft_openraft_replication_progress_admission_result(
-            &current,
-            &stale,
-            8,
-            7,
-            6,
-        );
+        let stale = RaftReplicationSessionMetadata {
+            leader_term: 3,
+            ..current
+        };
+        let replication_result = raft_openraft_replication_progress_admission_result(&current, &stale, 8, 7, 6);
         assert!(!replication_result.admitted);
         assert_eq!(replication_result.failing_check, RAFT_OPENRAFT_STALE_REPLICATION_SESSION);
 
-        let read = RaftReadLinearizerMetadata { read_log_index: 6, last_applied_index: 5 };
+        let read = RaftReadLinearizerMetadata {
+            read_log_index: 6,
+            last_applied_index: 5,
+        };
         let read_result = raft_openraft_read_linearizer_admission_result(&read);
         assert!(!read_result.admitted);
         assert_eq!(read_result.failing_check, RAFT_OPENRAFT_APPLY_CATCHUP_REQUIRED);

@@ -12,7 +12,7 @@ are listed in `openspec/specs/verification-gaps/spec.md` so any weaker
 bridge stays explicit. Requirement coverage is tracked by
 [Tracey](https://tracey.bearcove.eu/).
 
-**10525 Verus proofs · 4765 tests · 1967 requirements · 592 modules · 16 trusted/proof-gap boundaries**
+**10611 Verus proofs · 4824 tests · 2005 requirements · 604 modules · 16 trusted/proof-gap boundaries**
 
 ## How it works
 
@@ -70,6 +70,7 @@ validation commands captured in the change evidence.
 | `sel4_invocation_step` | bounded seL4 invocation transitions preserving invariants | verified |
 | `nix_eval_closure_policy` | Nix/Nickel merge plus reachable closure admission | verified |
 | `chaoscontrol_exploration_core` | deterministic, oracle-checked exploration steps | verified |
+| `integration_adapters` | deterministic user-facing adapters over verified consensus, UCAN, Nix/Nickel, and WAL primitives | adapter |
 
 ### Core arithmetic and data structures
 
@@ -185,6 +186,7 @@ validation commands captured in the change evidence.
 | Module | What it verifies |
 |---|---|
 | `paxos` | single-decree Paxos acceptor: ballot ordering, prepare/accept, promise safety |
+| `quepaxa` | finite deterministic QuePaxa proposal ordering, ISR transitions, abstract propagation, phase guards, fast path, and hedging metadata |
 | `quorum_cert` | quorum certificate aggregation, vote counting, threshold checks |
 | `view_change` | view-based reconfiguration: consecutive views, leader rotation |
 
@@ -381,8 +383,9 @@ validation commands captured in the change evidence.
 |---|---|
 | `register_allocation` | live-range overlap graphs, conflict-free register assignment, and deterministic spill fallback |
 | `stack_frame_layout` | aligned stack-slot placement, exact rounded frame sizing, and explicit safe-reuse checks over live ranges |
-| `wasm_primitives` | exact Wasm value tags, `i32.add` stack discipline, typed local access, linear-memory bounds/grow semantics, control-label branch/return arity, unreachable-stack validation, control-frame stack-height restoration, finite `call_indirect` table/signature admission, and `br_table` target validation |
+| `wasm_primitives` | exact Wasm value tags, `i32.add` stack discipline, typed local access, linear-memory bounds/grow semantics, control-label branch/return arity, unreachable-stack validation, control-frame stack-height restoration, finite indirect-call table/signature admission, and branch-table target validation |
 | `gpu_primitives` | finite GPU program shapes, launch/grid/block/thread bounds, pitched/tensor memory-layout, coalesced access, and shared-tile admission |
+| `hdl_ir` / `hdl_emit` / `hdl_adapters` / `hdl_validation` | finite HDL IR admission, deterministic Verilog/SystemVerilog emission, adapter refinement, generated-vector collateral, and tool-evidence classification |
 
 ### Scheduling primitives
 
@@ -478,6 +481,7 @@ validation commands captured in the change evidence.
 | `choreography_step` | one-step global/local reduction and shared-prefix alignment |
 | `debruijn` | de Bruijn shifting, substitution, beta reduction, and scope preservation |
 | `acid` | atomicity, consistency, isolation, durability over state vectors |
+| `verification_frontier` | finite contract implication, type-bound facts, slice-access certificates, arena provenance, progress budgets, and external-reference admission |
 
 ### Cross-module properties
 
@@ -528,15 +532,16 @@ The drift checker treats the compact lists below as README catalog entries for p
 - **physics**: `physics_collision_envelope`, `physics_contact_manifold`, `physics_energy_budget`, `physics_integrator_step`, `physics_momentum_budget`, `physics_time_horizon`, `physics_units`, `physics_vector_bounds`
 - **policy**: `policy_action`, `policy_authorization`, `policy_conflict`, `policy_delegation`, `policy_grant_denial`, `policy_principal`, `policy_resource`, `policy_rule`
 - **probability**: `probability_statistics`
-- **proof**: `proof_gap_boundary_audit`
+- **proof**: `proof`, `proof_gap_boundary_audit`
 - **raft**: `raft_consensus_core`
 - **rect**: `rect_grid_index`
 - **resource**: `resource_accounting`
 - **scheduling**: `scheduling_calendar`
-- **sel4**: `sel4_asid`, `sel4_cap_rights`, `sel4_cdt`, `sel4_cspace`, `sel4_endpoint`, `sel4_fault_ipc`, `sel4_invariants`, `sel4_invocation`, `sel4_irq`, `sel4_notification`, `sel4_ready_queue`, `sel4_reply`, `sel4_tcb`, `sel4_untyped`, `sel4_vspace`
+- **sel4**: `sel4_asid`, `sel4_cap_rights`, `sel4_cdt`, `sel4_cspace`, `sel4_endpoint`, `sel4_fault_ipc`, `sel4_invariants` (kernel invariant plus preservation matrix), `sel4_invocation`, `sel4_irq`, `sel4_notification`, `sel4_ready_queue`, `sel4_reply`, `sel4_tcb`, `sel4_untyped`, `sel4_vspace`
 - **serialization**: `serialization_codec`
 - **shamir**: `shamir_field`, `shamir_lagrange`, `shamir_poly`, `shamir_reconstruct`, `shamir_split`, `shamir_threshold`
 - **signal**: `signal_processing`
+- **spreadsheet**: `spreadsheet_address`, `spreadsheet_dependency`, `spreadsheet_formula`, `spreadsheet_recalc`
 - **state**: `state_machine_workflow`
 - **storage**: `storage_index`
 - **surelock**: `surelock_deadlock`, `surelock_id`, `surelock_key`, `surelock_level`, `surelock_lockset`
@@ -569,12 +574,28 @@ let ok = can_start_op(false);  // true (not draining)
 ```
 
 For normal `cargo build`, the `vstd` crate erases all ghost code. No
-runtime cost from specs, proofs, requires, or ensures.
+runtime cost from specs, proofs, requires, or ensures. See
+[docs/runtime-cost.md](docs/runtime-cost.md) for reproducible normal-build
+evidence records.
+
+## Runnable examples
+
+Each runtime example compiles through normal Cargo without invoking Verus. For Verus-focused spec/exec/ensures walkthroughs, see [docs/proof-examples.md](docs/proof-examples.md).
+
+- [`examples/core_basics.rs`](examples/core_basics.rs): `cargo run --example core_basics`
+- [`examples/consensus_admission.rs`](examples/consensus_admission.rs): `cargo run --example consensus_admission`
+- [`examples/ucan_web_of_trust.rs`](examples/ucan_web_of_trust.rs): `cargo run --example ucan_web_of_trust`
+- [`examples/r1cs_single_row.rs`](examples/r1cs_single_row.rs): `cargo run --example r1cs_single_row`
+- [`examples/storage_allocator.rs`](examples/storage_allocator.rs): `cargo run --example storage_allocator`
+- [`examples/integration_adapters.rs`](examples/integration_adapters.rs): `cargo run --example integration_adapters`
 
 ## Development
 
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the public workflow, module template, Tracey annotation rules, proof-gap policy, and baseline/final validation expectations. Use [docs/module-guide.md](docs/module-guide.md) to choose modules by task or problem domain, [docs/module-index.md](docs/module-index.md) for objective module maturity facts, [docs/invariant-surface-catalog.md](docs/invariant-surface-catalog.md) for invariant evidence rows, [docs/proof-evidence-bundles.md](docs/proof-evidence-bundles.md) for downstream evidence export, [docs/kani-boundary.md](docs/kani-boundary.md) for complementary Kani evidence boundaries, [docs/proof-artifact-manifest.md](docs/proof-artifact-manifest.md) for exported primitive manifest rows, [docs/ucan-bridge-coverage.md](docs/ucan-bridge-coverage.md) for UCAN bridge coverage, and [docs/cookbook.md](docs/cookbook.md) for short workflow recipes.
+
 ```bash
 nix develop                # enter devshell
+pre-commit install         # install the local Octet pre-commit hook
 cargo check                # compile (ghost code erased)
 cargo test                 # 4617 unit/property + 13 doc tests
 cargo clippy --all-targets -- -D warnings
@@ -584,15 +605,64 @@ cargo clippy --all-targets -- -D warnings
 
 ```bash
 ./scripts/verify.rs        # all gates: clippy → tests → verus → coverage
+nix build .#checks.$(nix eval --raw --impure --expr 'builtins.currentSystem').octet --no-link -L # Octet lints
 ./scripts/verus.sh         # verus only
 ./scripts/check-coverage.rs   # every pub fn has r[impl] annotation
 ./scripts/check-ensures.rs    # every pub fn in verus! has ensures
 ./scripts/checker-fixtures.rs # valid/invalid regression fixtures for checker behavior
 ./scripts/check-verification-policy.rs # Nickel policy typecheck/export freshness
 ./scripts/check-readme-module-catalog.rs # README module catalog drift and fixture self-test
+./scripts/check-crate-metadata.rs # Cargo package metadata discoverability and local path validation
+./scripts/check-module-guide.rs # task-oriented module guide link drift and fixture self-test
+./scripts/check-module-index.rs # generated module maturity index drift and fixture self-test
+./scripts/check-cookbook.rs # cookbook recipe field/link drift and fixture self-test
+./scripts/check-examples.rs # runnable example link/run-command drift and fixture self-test
+./scripts/check-proof-examples.sh # positive and expected-failure runnable proof examples
+cargo run --quiet --bin proof_evidence -- check # deterministic proof-evidence bundle validation
+./scripts/check-runtime-evidence.rs # runtime-cost evidence record metadata and fixture self-test
+./scripts/check-kani-boundary.rs # Kani external-evidence boundary docs and positive/negative fixtures
+./scripts/check-verified-primitive-manifest.rs # exported primitive manifest freshness and positive/negative fixtures
+./scripts/check-ucan-bridge-coverage.rs # UCAN bridge coverage manifest and positive/negative fixtures
 ./scripts/check-readme-metrics.rs # README headline metrics drift; --full refreshes command-backed counts
 ./scripts/check-proof-gap-inventory.rs # proof-gap counts, exact sites, classifications, and rationale manifest
+./scripts/check-upstream-verus-corpus.rs # typed catalog and boundary validation; add --self-test for negative cases
+nix build .#checks.$(nix eval --raw --impure --expr 'builtins.currentSystem').upstream-verus-corpus --no-link -L
+nix build .#checks.$(nix eval --raw --impure --expr 'builtins.currentSystem').verusfmt-ratchet --no-link -L
+nix build .#checks.$(nix eval --raw --impure --expr 'builtins.currentSystem').verus-upgrade-trial --no-link -L
 ```
+
+`upstream-verus-corpus/catalog.ncl` pins source snapshots for verifier-upgrade
+regression selection. Its source-intake check validates exact fixed-output
+hashes, license files, and sentinels; it does not run or import upstream proofs.
+Promotion to Trellis formal evidence still requires an exact local verifier run,
+assumption account, source/proof/tool bindings, and Trellis-owned receipt.
+
+The fail-closed May 17 trial validates Octet Verus `0.2026.05.17.e479cce`:
+both complete Trellis runs report `10712 verified, 0 errors`; adapted IronKV
+reports `312 verified, 0 errors`; adapted verified-memory-allocator reports
+`732 verified, 0 errors`; and unmodified verified-node-replication reports
+`254 verified, 0 errors`. The two patches are BLAKE3-bound, preserve assumption
+and trusted-marker counts, and are reported only as adapted-source results. The
+SOSP microcases remain diagnostic-only and VerusBelt remains a Rocq
+semantic-reference audit.
+
+Octet revision `374bd16b26cee2af34211a29bfa531c016811f51` is published and
+locked as the exact provider. Trellis's default proof check and wrapper now
+consume Octet Verus `0.2026.05.17.e479cce`; the former
+`0.2026.03.22.5e66329` package remains only as the receipt's historical
+comparison baseline.
+
+The pinned `verusfmt` rail consumes Octet's revision-bound formatter and typed
+profile packages; Trellis does not reconstruct a local release fallback. It uses
+`upstream-verus-corpus/verusfmt-baseline.txt` as an exact migration ratchet rather
+than rewriting the existing proof corpus wholesale. A new nonconforming file, a
+stale baseline entry, or central-profile drift fails. The promoted verifier is
+admitted by the separate May 17 compatibility receipt; package identity and
+baseline membership alone still do not claim formatting or proof success.
+
+The Octet check uses `octet-baseline.json` to accept current warning-level
+findings while rejecting any new unbaselined stable finding ID. The local
+pre-commit hook delegates to that same pinned Nix check.
 
 ## Structure
 
@@ -600,7 +670,7 @@ cargo clippy --all-targets -- -D warnings
 src/lib.rs              ← crate root, 581 public module declarations
 src/<module>.rs         ← spec fn + exec fn + proof fn + #[cfg(test)] tests
 docs/requirements.md    ← canonical requirement prose and Tracey anchors
-scripts/verus.sh        ← verus wrapper with nix store paths
+scripts/verus.sh        ← Octet production-Verus package resolver
 scripts/verify.rs       ← full verification pipeline
 scripts/check-*.rs      ← annotation enforcement
 ```
@@ -659,3 +729,22 @@ In addition to `external_body`, the current audit also tracks:
 - `0` placeholder-spec surfaces
 
 All trusted/proof-gap items remain listed in `openspec/specs/verification-gaps/spec.md`, and `docs/proof-gap-sites.tsv` is the checked per-site source for exact trusted-boundary rationale.
+
+## License
+
+Trellis and the `verified-logic` crate are licensed under `MPL-2.0`; see [LICENSE](LICENSE). Modifications to covered files remain available under MPL terms, while a larger work may keep separate files under other licenses subject to the MPL.
+
+Earlier grants remain valid, and third-party references retain their own terms. Machine-checked properties are bounded to the admitted source, verifier, assumptions, and receipts; MPL metadata does not certify downstream behavior or transfer whole-system proof authority.
+
+## References
+
+- Lattice/Salt verification-product patterns — external design reference only; not vendored, executed, or treated as trusted Trellis validation evidence.
+- [Kani: A Model Checker for Rust](https://arxiv.org/html/2607.01504v1) — external Kani model-checking reference for complementary runtime evidence only; not treated as a Trellis proof artifact.
+- [verus-lang/verus-belt](https://github.com/verus-lang/verus-belt) — semantic-foundation and assumption-audit corpus tied to its recorded Verus snapshot; not a soundness certificate for later releases.
+- [verus-lang/paper-sosp24-artifact](https://github.com/verus-lang/paper-sosp24-artifact) — pinned reproducibility and verifier-upgrade benchmark corpus with mixed upstream license boundaries.
+- [verus-lang/verified-memory-allocator](https://github.com/verus-lang/verified-memory-allocator) — allocator/raw-pointer proof-pattern corpus only; its feature omissions preclude production allocator adoption here.
+- [verus-lang/verified-ironkv](https://github.com/verus-lang/verified-ironkv) — host-layer proof and distributed-boundary regression corpus; no crash-recovery or whole-distributed-system claim transfers.
+- [verus-lang/verified-node-replication](https://github.com/verus-lang/verified-node-replication) — local multicore/NUMA proof corpus only; May 17 compatibility does not turn it into network replication, consensus, or an admitted runtime dependency.
+- [verus-lang/verusfmt](https://github.com/verus-lang/verusfmt) — pinned source-format ratchet; formatter output is not proof evidence.
+- [Steel](https://github.com/mattwparas/steel) — external Scheme interpreter reference for finite reader, interning, module, contract, bytecode, and value-graph primitive ideas only; not vendored, executed, or treated as trusted Trellis validation evidence.
+- [`stonysystems/jetpack` at `c03e318ec355b11edd42aac56c68d0765f88d1d2`](https://github.com/stonysystems/jetpack/tree/c03e318ec355b11edd42aac56c68d0765f88d1d2) and the [OSDI 2026 paper](https://www.usenix.org/system/files/osdi26-tang.pdf) — pinned MIT-licensed design, TLA+, and fault-scenario references for reusable crash-fault fast-path proof obligations; external proofs, implementation behavior, and benchmark claims do not transfer to Trellis.

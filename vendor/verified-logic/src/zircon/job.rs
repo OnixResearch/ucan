@@ -4,6 +4,7 @@
 //! Kill propagation is modeled as subtree membership. A critical process
 //! with non-zero exit status kills its owning job. A parent stays live when
 //! any running process exists in its subtree.
+#![allow(unknown_lints, excessive_file_length)]
 
 use vstd::prelude::*;
 
@@ -49,6 +50,7 @@ proof fn well_formed_jobs_suffix(parents: Seq<Option<int>>, from: int)
     }
 }
 
+#[allow(unknown_lints, no_recursion)]
 fn well_formed_jobs_from_exec(parents: &[Option<usize>], from: usize) -> (result: bool)
     requires from <= parents@.len()
     ensures result == well_formed_jobs_from_spec(parents_view(parents@), from as int)
@@ -64,8 +66,7 @@ fn well_formed_jobs_from_exec(parents: &[Option<usize>], from: usize) -> (result
     }
 }
 
-// r[impl zircon-job.containment]
-pub fn well_formed_jobs(parents: &[Option<usize>]) -> (result: bool)
+fn well_formed_core(parents: &[Option<usize>]) -> (result: bool)
     ensures result == well_formed_jobs_spec(parents_view(parents@))
 {
     well_formed_jobs_from_exec(parents, 0)
@@ -79,8 +80,7 @@ pub open spec fn unique_parent_spec(parents: Seq<Option<int>>, job: int) -> bool
     }
 }
 
-// r[impl zircon-job.containment]
-pub fn unique_parent(parents: &[Option<usize>], job: usize) -> (result: bool)
+fn unique_parent_core(parents: &[Option<usize>], job: usize) -> (result: bool)
     requires job < parents@.len()
     ensures result == unique_parent_spec(parents_view(parents@), job as int)
 {
@@ -97,8 +97,7 @@ pub open spec fn process_owner_spec(owners: Seq<int>, process: int) -> int
     owners[process]
 }
 
-// r[impl zircon-job.containment]
-pub fn process_owner(owners: &[usize], process: usize) -> (result: usize)
+fn process_owner_core(owners: &[usize], process: usize) -> (result: usize)
     requires process < owners@.len()
     ensures result as int == process_owner_spec(owners_view(owners@), process as int)
 {
@@ -126,7 +125,8 @@ pub open spec fn job_in_subtree_spec(parents: Seq<Option<int>>, root: int, job: 
     job_in_subtree_fuel(parents, root, job, (job + 1) as nat)
 }
 
-fn job_in_subtree_fuel_exec(parents: &[Option<usize>], root: usize, job: usize, fuel: usize) -> (result: bool)
+#[allow(unknown_lints, no_recursion)]
+fn subtree_fuel_exec(parents: &[Option<usize>], root: usize, job: usize, fuel: usize) -> (result: bool)
     requires
         root < parents@.len(),
         job < parents@.len(),
@@ -166,12 +166,12 @@ fn job_in_subtree_fuel_exec(parents: &[Option<usize>], root: usize, job: usize, 
                     assert(match pv[j] { Some(p) => 0 <= p < j, None => true });
                 }
                 assert(parent < job);
-                let result = job_in_subtree_fuel_exec(parents, root, parent, fuel - 1);
+                let is_contained = subtree_fuel_exec(parents, root, parent, fuel - 1);
                 proof {
                     assert(job_in_subtree_fuel(pv, r, j, (fuel as int + 1) as nat)
                         == job_in_subtree_fuel(pv, r, parent as int, fuel as nat));
                 }
-                result
+                is_contained
             }
             None => {
                 proof {
@@ -194,19 +194,17 @@ pub open spec fn process_in_subtree_spec(parents: Seq<Option<int>>, owners: Seq<
     job_in_subtree_spec(parents, root, owners[process])
 }
 
-// r[impl zircon-job.kill-propagation]
-pub fn job_in_subtree(parents: &[Option<usize>], root: usize, job: usize) -> (result: bool)
+fn contains_core(parents: &[Option<usize>], root: usize, job: usize) -> (result: bool)
     requires
         root < parents@.len(),
         job < parents@.len(),
         well_formed_jobs_spec(parents_view(parents@)),
     ensures result == job_in_subtree_spec(parents_view(parents@), root as int, job as int)
 {
-    job_in_subtree_fuel_exec(parents, root, job, job)
+    subtree_fuel_exec(parents, root, job, job)
 }
 
-// r[impl zircon-job.kill-propagation]
-pub fn process_in_subtree(parents: &[Option<usize>], owners: &[usize], root: usize, process: usize) -> (result: bool)
+fn process_in_subtree_core(parents: &[Option<usize>], owners: &[usize], root: usize, process: usize) -> (result: bool)
     requires
         root < parents@.len(),
         process < owners@.len(),
@@ -219,7 +217,7 @@ pub fn process_in_subtree(parents: &[Option<usize>], owners: &[usize], root: usi
         process as int,
     )
 {
-    job_in_subtree(parents, root, owners[process])
+    contains_core(parents, root, owners[process])
 }
 
 // r[depends zircon-job.critical-process]
@@ -228,7 +226,7 @@ pub open spec fn critical_exit_kills_job_spec(is_critical: bool, exit_code: i32)
 }
 
 // r[impl zircon-job.critical-process]
-pub fn critical_exit_kills_job(is_critical: bool, exit_code: i32) -> (result: bool)
+pub fn critical_exit_is_fatal(is_critical: bool, exit_code: i32) -> (result: bool)
     ensures result == critical_exit_kills_job_spec(is_critical, exit_code)
 {
     is_critical && exit_code != 0
@@ -273,12 +271,47 @@ fn running_in_subtree_from_exec(
     )
     decreases running@.len() - from
 {
-    if from >= running.len() {
-        false
-    } else {
-        (running[from] && process_in_subtree(parents, owners, job, from))
-            || running_in_subtree_from_exec(parents, owners, running, job, from + 1)
+    let ghost parents_spec = parents_view(parents@);
+    let ghost owners_spec = owners_view(owners@);
+    let ghost running_spec = running@;
+    let ghost job_spec = job as int;
+    let mut i: usize = running.len();
+    let mut has_running_descendant = false;
+    while i > from
+        invariant
+            from <= i <= running@.len(),
+            job < parents@.len(),
+            owners@.len() == running@.len(),
+            parents_spec == parents_view(parents@),
+            owners_spec == owners_view(owners@),
+            running_spec == running@,
+            job_spec == job as int,
+            forall|idx: int| 0 <= idx < owners@.len() ==> #[trigger] owners@[idx] < parents@.len(),
+            well_formed_jobs_spec(parents_view(parents@)),
+            has_running_descendant == running_in_subtree_from_spec(parents_spec, owners_spec, running_spec, job_spec, i as int),
+        decreases i - from,
+    {
+        let next_i = i;
+        i = i - 1;
+        assert(i + 1 == next_i);
+        assert(i < running@.len());
+        assert(i < owners@.len());
+        assert(job < parents@.len());
+        assert(owners@[i as int] < parents@.len());
+        assert(has_running_descendant == running_in_subtree_from_spec(parents_spec, owners_spec, running_spec, job_spec, next_i as int));
+        let is_running = running[i];
+        let is_child = process_in_subtree_core(parents, owners, job, i);
+        assert(is_running == running_spec[i as int]);
+        assert(is_child == process_in_subtree_spec(parents_spec, owners_spec, job_spec, i as int));
+        assert(next_i as int == i as int + 1);
+        assert(running_in_subtree_from_spec(parents_spec, owners_spec, running_spec, job_spec, i as int)
+            == ((running_spec[i as int] && process_in_subtree_spec(parents_spec, owners_spec, job_spec, i as int))
+                || running_in_subtree_from_spec(parents_spec, owners_spec, running_spec, job_spec, next_i as int)));
+        has_running_descendant = (is_running && is_child) || has_running_descendant;
+        assert(has_running_descendant == running_in_subtree_from_spec(parents_spec, owners_spec, running_spec, job_spec, i as int));
     }
+    assert(i == from);
+    has_running_descendant
 }
 
 // r[depends zircon-job.parent-lifetime]
@@ -297,8 +330,7 @@ pub open spec fn parent_kept_live_spec(
     running_in_subtree_from_spec(parents, owners, running, job, 0)
 }
 
-// r[impl zircon-job.parent-lifetime]
-pub fn parent_kept_live(parents: &[Option<usize>], owners: &[usize], running: &[bool], job: usize) -> (result: bool)
+fn parent_kept_live_core(parents: &[Option<usize>], owners: &[usize], running: &[bool], job: usize) -> (result: bool)
     requires
         job < parents@.len(),
         owners@.len() == running@.len(),
@@ -343,13 +375,141 @@ proof fn clean_exit_does_not_kill_job(is_critical: bool)
 
 } // verus!
 
+fn usize_from_u64(value: u64) -> Option<usize> {
+    usize::try_from(value).ok()
+}
+
+fn u64_from_usize(value: usize) -> u64 {
+    match u64::try_from(value) {
+        Ok(converted) => converted,
+        Err(_) => u64::MAX,
+    }
+}
+
+fn parents_to_usize(parents: &[Option<u64>]) -> Option<Vec<Option<usize>>> {
+    let mut converted = Vec::with_capacity(parents.len());
+    for parent in parents {
+        converted.push(match *parent {
+            Some(index) => Some(usize_from_u64(index)?),
+            None => None,
+        });
+    }
+    Some(converted)
+}
+
+fn owners_to_usize(owners: &[u64]) -> Option<Vec<usize>> {
+    let mut converted = Vec::with_capacity(owners.len());
+    for owner in owners {
+        converted.push(usize_from_u64(*owner)?);
+    }
+    Some(converted)
+}
+
+fn owners_in_range(owners: &[usize], parent_count: usize) -> bool {
+    owners.iter().all(|owner| *owner < parent_count)
+}
+
+// r[impl zircon-job.containment]
+pub fn well_formed(parents: &[Option<u64>]) -> bool {
+    let Some(converted) = parents_to_usize(parents) else {
+        return false;
+    };
+    well_formed_core(&converted)
+}
+
+// r[impl zircon-job.containment]
+pub fn has_unique_parent(parents: &[Option<u64>], job: u64) -> bool {
+    let Some(converted) = parents_to_usize(parents) else {
+        return false;
+    };
+    let Some(job_index) = usize_from_u64(job) else {
+        return false;
+    };
+    if job_index >= converted.len() {
+        return false;
+    }
+    unique_parent_core(&converted, job_index)
+}
+
+// r[impl zircon-job.containment]
+pub fn process_owner(owners: &[u64], process: u64) -> Option<u64> {
+    let converted = owners_to_usize(owners)?;
+    let process_index = usize_from_u64(process)?;
+    if process_index >= converted.len() {
+        return None;
+    }
+    Some(u64_from_usize(process_owner_core(&converted, process_index)))
+}
+
+// r[impl zircon-job.kill-propagation]
+pub fn subtree_contains(parents: &[Option<u64>], root: u64, job: u64) -> bool {
+    let Some(converted) = parents_to_usize(parents) else {
+        return false;
+    };
+    let Some(root_index) = usize_from_u64(root) else {
+        return false;
+    };
+    let Some(job_index) = usize_from_u64(job) else {
+        return false;
+    };
+    if root_index >= converted.len() || job_index >= converted.len() || !well_formed_core(&converted) {
+        return false;
+    }
+    contains_core(&converted, root_index, job_index)
+}
+
+// r[impl zircon-job.kill-propagation]
+pub fn process_in_subtree(parents: &[Option<u64>], owners: &[u64], root: u64, process: u64) -> bool {
+    let Some(converted_parents) = parents_to_usize(parents) else {
+        return false;
+    };
+    let Some(converted_owners) = owners_to_usize(owners) else {
+        return false;
+    };
+    let Some(root_index) = usize_from_u64(root) else {
+        return false;
+    };
+    let Some(process_index) = usize_from_u64(process) else {
+        return false;
+    };
+    if root_index >= converted_parents.len()
+        || process_index >= converted_owners.len()
+        || converted_owners[process_index] >= converted_parents.len()
+        || !well_formed_core(&converted_parents)
+    {
+        return false;
+    }
+    process_in_subtree_core(&converted_parents, &converted_owners, root_index, process_index)
+}
+
+// r[impl zircon-job.parent-lifetime]
+pub fn parent_kept_live(parents: &[Option<u64>], owners: &[u64], running: &[bool], job: u64) -> bool {
+    let Some(converted_parents) = parents_to_usize(parents) else {
+        return false;
+    };
+    let Some(converted_owners) = owners_to_usize(owners) else {
+        return false;
+    };
+    let Some(job_index) = usize_from_u64(job) else {
+        return false;
+    };
+    if job_index >= converted_parents.len()
+        || converted_owners.len() != running.len()
+        || !owners_in_range(&converted_owners, converted_parents.len())
+        || !well_formed_core(&converted_parents)
+    {
+        return false;
+    }
+    parent_kept_live_core(&converted_parents, &converted_owners, running, job_index)
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
 
     use super::*;
 
-    fn parents() -> Vec<Option<usize>> {
+    fn parents() -> Vec<Option<u64>> {
         vec![None, Some(0), Some(1), Some(1)]
     }
 
@@ -357,37 +517,37 @@ mod tests {
     #[test]
     fn test_unique_parent_and_owner() {
         let ps = parents();
-        let owners = vec![2usize, 3usize];
-        assert!(well_formed_jobs(&ps));
-        assert!(unique_parent(&ps, 1));
-        assert_eq!(process_owner(&owners, 0), 2);
+        let owners = vec![2u64, 3u64];
+        assert!(well_formed(&ps));
+        assert!(has_unique_parent(&ps, 1));
+        assert_eq!(process_owner(&owners, 0), Some(2));
     }
 
     // r[verify zircon-job.kill-propagation]
     #[test]
     fn test_kill_propagates_to_subtree() {
         let ps = parents();
-        let owners = vec![2usize, 3usize];
-        assert!(job_in_subtree(&ps, 1, 2));
-        assert!(job_in_subtree(&ps, 1, 3));
+        let owners = vec![2u64, 3u64];
+        assert!(subtree_contains(&ps, 1, 2));
+        assert!(subtree_contains(&ps, 1, 3));
         assert!(process_in_subtree(&ps, &owners, 1, 0));
         assert!(process_in_subtree(&ps, &owners, 1, 1));
-        assert!(!job_in_subtree(&ps, 2, 3));
+        assert!(!subtree_contains(&ps, 2, 3));
     }
 
     // r[verify zircon-job.critical-process]
     #[test]
     fn test_critical_process() {
-        assert!(critical_exit_kills_job(true, 1));
-        assert!(!critical_exit_kills_job(true, 0));
-        assert!(!critical_exit_kills_job(false, 1));
+        assert!(critical_exit_is_fatal(true, 1));
+        assert!(!critical_exit_is_fatal(true, 0));
+        assert!(!critical_exit_is_fatal(false, 1));
     }
 
     // r[verify zircon-job.parent-lifetime]
     #[test]
     fn test_parent_kept_live_by_running_descendant() {
         let ps = parents();
-        let owners = vec![2usize, 3usize];
+        let owners = vec![2u64, 3u64];
         let running = vec![true, false];
         assert!(parent_kept_live(&ps, &owners, &running, 1));
         assert!(parent_kept_live(&ps, &owners, &running, 0));
@@ -398,7 +558,7 @@ mod tests {
         // r[verify zircon-job.critical-process]
         #[test]
         fn prop_critical_exit_matches_pred(is_critical: bool, exit_code: i32) {
-            prop_assert_eq!(critical_exit_kills_job(is_critical, exit_code), is_critical && exit_code != 0_i32);
+            prop_assert_eq!(critical_exit_is_fatal(is_critical, exit_code), is_critical && exit_code != 0_i32);
         }
     }
 }

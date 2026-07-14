@@ -1217,33 +1217,45 @@ pub fn memory_store(memory: &mut LinearMemory, addr: usize, data: &[u8]) -> (res
         result ==> forall|i: int| 0 <= i < old(memory).bytes@.len() && !(addr as int <= i < (addr + data@.len()) as int) ==> memory.bytes@[i] == old(memory).bytes@[i],
         !result ==> memory.bytes@ == old(memory).bytes@,
 {
-    match addr.checked_add(data.len()) {
-        Some(end) if end <= memory.bytes.len() => {
-            let mut data_index: usize = 0usize;
-            let mut target_index: usize = addr;
-            while target_index < end
-                invariant
-                    0 <= data_index <= data@.len(),
-                    addr <= target_index <= end,
-                    target_index == addr + data_index,
-                    end == addr + data@.len(),
-                    end <= old(memory).bytes@.len(),
-                    memory.pages == old(memory).pages,
-                    memory.bytes@.len() == old(memory).bytes@.len(),
-                    forall|i: int| 0 <= i < data_index as int ==> memory.bytes@[addr as int + i] == data@[i],
-                    forall|i: int| 0 <= i < old(memory).bytes@.len() && !(addr as int <= i < addr as int + data_index as int) ==> memory.bytes@[i] == old(memory).bytes@[i],
-                decreases end - target_index,
-            {
-                assert(target_index < memory.bytes.len());
-                memory.bytes.set(target_index, data[data_index]);
-                assert(memory.bytes@.len() == old(memory).bytes@.len());
-                target_index += 1usize;
-                data_index += 1usize;
-            }
-            true
-        }
-        _ => false,
+    let initial_pages = memory.pages;
+    let ghost initial_bytes = memory.bytes@;
+    let end = match addr.checked_add(data.len()) {
+        Some(end) => end,
+        None => {
+            assert(memory.pages == initial_pages);
+            assert(memory.bytes@ == initial_bytes);
+            return false;
+        },
+    };
+    if end > memory.bytes.len() {
+        assert(memory.pages == initial_pages);
+        assert(memory.bytes@ == initial_bytes);
+        return false;
     }
+
+    let mut data_index: usize = 0usize;
+    let mut target_index: usize = addr;
+    while target_index < end
+        invariant
+            0 <= data_index <= data@.len(),
+            addr <= target_index <= end,
+            target_index == addr + data_index,
+            end == addr + data@.len(),
+            end <= initial_bytes.len(),
+            memory.pages == initial_pages,
+            memory.bytes@.len() == initial_bytes.len(),
+            forall|i: int| 0 <= i < data_index as int ==> memory.bytes@[addr as int + i] == data@[i],
+            forall|i: int| 0 <= i < initial_bytes.len() && !(addr as int <= i < addr as int + data_index as int) ==> memory.bytes@[i] == initial_bytes[i],
+        decreases end - target_index,
+    {
+        assert(target_index < memory.bytes.len());
+        memory.bytes.set(target_index, data[data_index]);
+        assert(memory.bytes@.len() == initial_bytes.len());
+        target_index += 1usize;
+        data_index += 1usize;
+    }
+    assert(memory.pages == initial_pages);
+    true
 }
 
 // r[impl wasm-memory.grow]

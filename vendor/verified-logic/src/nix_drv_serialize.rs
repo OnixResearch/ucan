@@ -768,7 +768,10 @@ proof fn serialize_drv_platform_field_differs(
     let sb = serialize_drv_spec(
         outputs, input_drvs, input_srcs, platform_b, builder, args, env);
     if ea.len() != eb.len() {
-        // Different escape lengths → different total serialization lengths.
+        // Every field except the escaped platform is identical, so removing the
+        // platform contribution leaves the same framing length on both sides.
+        assert(sa.len() as int - ea.len() as int == sb.len() as int - eb.len() as int);
+        assert(sa.len() != sb.len());
     } else {
         // Same escape length, different content.
         // Both serializations share the same prefix up to the platform field.

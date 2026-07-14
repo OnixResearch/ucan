@@ -8,6 +8,7 @@
 
 use vstd::prelude::*;
 
+use crate::r1cs_boolean::R1csBoolean;
 use crate::r1cs_boolean::r1cs_boolean_modulus_coeff_valid;
 #[cfg(verus_keep_ghost)]
 use crate::r1cs_boolean::r1cs_boolean_modulus_coeff_valid_spec;
@@ -19,7 +20,7 @@ use crate::r1cs_boolean::r1cs_boolean_satisfied;
 use crate::r1cs_boolean::r1cs_boolean_satisfied_spec;
 #[cfg(verus_keep_ghost)]
 use crate::r1cs_boolean::r1cs_boolean_valid_spec;
-use crate::r1cs_boolean::R1csBoolean;
+use crate::r1cs_constraint::R1csWitness;
 #[cfg(verus_keep_ghost)]
 use crate::r1cs_constraint::r1cs_element_valid_spec;
 use crate::r1cs_constraint::r1cs_len_valid;
@@ -28,7 +29,6 @@ use crate::r1cs_constraint::r1cs_len_valid_spec;
 use crate::r1cs_constraint::r1cs_witness_valid;
 #[cfg(verus_keep_ghost)]
 use crate::r1cs_constraint::r1cs_witness_valid_spec;
-use crate::r1cs_constraint::R1csWitness;
 
 verus! {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -177,3 +177,9 @@ pre-commit run verified-logic-josh-sync-config --all-files
 The hook runs the focused Nix check only; it validates the Josh filter, verifier unit tests, and revision metadata without requiring a sibling Trellis checkout.
 
 Verified replay-admission transcript aggregation now gates `verify_invocation_with_replay` replay outcomes before allowing or denying replay-aware invocations; nonce-store truth and durability remain caller-owned. The remaining verified follow-up surfaces now cover proof traversal orchestration, compact-token codec structure, core structural validators, ability helper predicates, and backend transcript aggregation without expanding the claim to parser, crypto, backend, storage, or consumer-policy truth.
+
+## License
+
+`ucan-core` and the synchronized `verified-logic` snapshot are `MPL-2.0`; the root `ucan` std shell is `AGPL-3.0-or-later`. Complete texts and the package/vendor map are in [LICENSES](LICENSES) and [docs/licensing.md](docs/licensing.md).
+
+The snapshot records a committed Trellis source revision and preserves its license artifacts. That alignment does not certify UCAN shell behavior, external protocol interoperability, resolver truth, revocation freshness, replay durability, or whole-system correctness. Earlier grants and third-party terms remain intact.

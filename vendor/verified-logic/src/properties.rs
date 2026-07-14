@@ -7953,17 +7953,17 @@ mod zircon_kernel_proofs {
     use crate::zircon_handle::ZirconHandle;
     use crate::zircon_handle::object_live_spec;
     use crate::zircon_job::process_in_subtree_spec;
-    use crate::zircon_port::PortPacket;
-    use crate::zircon_port::PortRegistration;
+    use crate::zircon_port::Packet;
+    use crate::zircon_port::Registration;
     use crate::zircon_rights::can_duplicate_spec;
     use crate::zircon_rights::rights_subset_spec;
+    use crate::zircon_socket::Endpoint;
     use crate::zircon_socket::ZX_SOCKET_PEER_CLOSED;
     use crate::zircon_socket::ZX_SOCKET_READABLE;
-    use crate::zircon_socket::ZirconSocketEndpoint;
     use crate::zircon_socket::socket_signals_spec;
+    use crate::zircon_timer::Deadline;
     use crate::zircon_timer::ZX_TIMER_ARMED;
     use crate::zircon_timer::ZX_TIMER_SIGNALED_STATE;
-    use crate::zircon_timer::ZirconTimer;
     use crate::zircon_wait::wait_ready_spec;
 
     verus! {
@@ -7999,7 +7999,7 @@ mod zircon_kernel_proofs {
         _event_user: u64,
         _event_peer_live: bool,
         _channel: ChannelEndpoint,
-        _socket: ZirconSocketEndpoint,
+        _socket: Endpoint,
         _fifo: ZirconFifoEndpoint,
     ) -> bool {
         true
@@ -8010,7 +8010,7 @@ mod zircon_kernel_proofs {
         event_user: u64,
         event_peer_live: bool,
         channel: ChannelEndpoint,
-        socket: ZirconSocketEndpoint,
+        socket: Endpoint,
         fifo: ZirconFifoEndpoint,
     )
         requires channel.wf(), socket.wf(), fifo.wf()
@@ -8044,15 +8044,15 @@ mod zircon_kernel_proofs {
     {}
 
     // r[impl properties.zircon-port-wait]
-    pub open spec fn zircon_port_wait_prop(reg: PortRegistration, observed: u64) -> bool {
+    pub open spec fn zircon_port_wait_prop(reg: Registration, observed: u64) -> bool {
         wait_ready_spec(observed, reg.mask) ==> {
-            let pkt = PortPacket { key: reg.key, observed, user_queued: false };
+            let pkt = Packet { key: reg.key, observed, user_queued: false };
             pkt.key == reg.key && pkt.observed == observed && !pkt.user_queued
         }
     }
 
     // r[verify properties.zircon-port-wait]
-    proof fn prove_zircon_port_wait(reg: PortRegistration, observed: u64)
+    proof fn prove_zircon_port_wait(reg: Registration, observed: u64)
         ensures zircon_port_wait_prop(reg, observed)
     {}
 
@@ -8060,8 +8060,8 @@ mod zircon_kernel_proofs {
     pub open spec fn zircon_timer_deadline_prop(a_deadline: u64, b_deadline: u64, now: u64) -> bool {
         is_earlier_spec(a_deadline, b_deadline) && now >= b_deadline
             ==> {
-                let a = ZirconTimer { koid: 1, state: ZX_TIMER_ARMED, deadline: a_deadline };
-                let b = ZirconTimer { koid: 2, state: ZX_TIMER_ARMED, deadline: b_deadline };
+                let a = Deadline { koid: 1, state: ZX_TIMER_ARMED, deadline: a_deadline };
+                let b = Deadline { koid: 2, state: ZX_TIMER_ARMED, deadline: b_deadline };
                 a.wf() && b.wf() && now >= a.deadline
             }
     }

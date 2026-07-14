@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/ucan-core"]
+exclude = ["vendor/verified-logic"]
 resolver = "2"
 
 [workspace.metadata.tigerstyle]

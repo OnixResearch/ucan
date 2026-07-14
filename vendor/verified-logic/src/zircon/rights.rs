@@ -21,7 +21,7 @@ pub open spec fn rights_subset_spec(derived: u64, source: u64) -> bool {
 }
 
 // r[impl zircon-rights.attenuation]
-pub fn rights_subset(derived: u64, source: u64) -> (result: bool)
+pub fn is_subset(derived: u64, source: u64) -> (result: bool)
     ensures result == rights_subset_spec(derived, source)
 {
     (derived & !source) == 0
@@ -60,7 +60,7 @@ pub open spec fn can_duplicate_spec(source: u64, requested: u64) -> bool {
 pub fn can_duplicate(source: u64, requested: u64) -> (result: bool)
     ensures result == can_duplicate_spec(source, requested)
 {
-    has_right(source, ZX_RIGHT_DUPLICATE) && rights_subset(requested, source)
+    has_right(source, ZX_RIGHT_DUPLICATE) && is_subset(requested, source)
 }
 
 // r[depends zircon-rights.attenuation]
@@ -195,7 +195,7 @@ mod tests {
         let requested = ZX_RIGHT_TRANSFER | ZX_RIGHT_WAIT;
         let derived = attenuate(source, requested);
         assert_eq!(derived, requested);
-        assert!(rights_subset(derived, source));
+        assert!(is_subset(derived, source));
     }
 
     // r[verify zircon-rights.attenuation]
@@ -229,7 +229,7 @@ mod tests {
         #[test]
         fn prop_attenuate_is_subset(source: u64, requested: u64) {
             let derived = attenuate(source, requested);
-            prop_assert!(rights_subset(derived, source));
+            prop_assert!(is_subset(derived, source));
         }
 
         // r[verify zircon-rights.attenuation]
@@ -237,7 +237,7 @@ mod tests {
         fn prop_duplicate_accepts_only_subsets(source: u64, requested: u64) {
             let ok = can_duplicate(source | ZX_RIGHT_DUPLICATE, requested);
             if ok {
-                prop_assert!(rights_subset(requested, source | ZX_RIGHT_DUPLICATE));
+                prop_assert!(is_subset(requested, source | ZX_RIGHT_DUPLICATE));
             }
         }
 

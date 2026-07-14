@@ -3,6 +3,12 @@
 //! Events are pure user-signal carriers. Eventpairs add derived peer-close
 //! state: if the peer endpoint has no live handles, the local endpoint
 //! observes PEER_CLOSED.
+#![allow(
+    unknown_lints,
+    underscore_in_module_filename,
+    non_trait_imports,
+    path_segment_repetition
+)]
 
 use vstd::prelude::*;
 

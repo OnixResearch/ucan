@@ -2,8 +2,22 @@
 name = "verified-logic"
 version = "0.2.0"
 edition = "2024"
-license = "AGPL-3.0-or-later"
+license = "MPL-2.0"
 description = "Trellis: composable verified-logic building blocks, machine-checked with Verus"
+repository = "https://github.com/OnixResearch/trellis"
+homepage = "https://github.com/OnixResearch/trellis"
+documentation = "https://docs.rs/verified-logic"
+readme = "README.md"
+keywords = ["verification", "verus", "logic", "proofs", "systems"]
+categories = ["algorithms", "data-structures", "development-tools"]
+
+[workspace]
+members = ["."]
+resolver = "3"
+
+[workspace.metadata.octet]
+default_scope = ["-p", "verified-logic"]
+cargo_check_args = ["--lib"]
 
 [dependencies]
 anyhow = "1.0"

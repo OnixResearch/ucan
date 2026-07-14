@@ -59,6 +59,31 @@ pub open spec fn is_valid_partition_spec(intervals: Seq<(u64, u64)>) -> bool {
     is_valid_prefix_spec(intervals, intervals.len() as int)
 }
 
+proof fn valid_prefix_extend(intervals: Seq<(u64, u64)>, i: int)
+    requires
+        0 <= i < intervals.len(),
+        is_valid_prefix_spec(intervals, i),
+        is_non_empty_interval_spec(intervals[i].0, intervals[i].1),
+        i > 0 ==> intervals[i - 1].0 <= intervals[i].0,
+        i > 0 ==> is_adjacent_pair_spec(intervals[i - 1].1, intervals[i].0),
+    ensures
+        is_valid_prefix_spec(intervals, i + 1),
+{
+    assert forall|j: int| 0 <= j < i + 1 implies {
+        &&& is_non_empty_interval_spec(intervals[j].0, intervals[j].1)
+        &&& (j + 1 < i + 1 ==> is_adjacent_pair_spec(intervals[j].1, intervals[j + 1].0))
+        &&& (j > 0 ==> intervals[j - 1].0 <= intervals[j].0)
+    } by {
+        if j < i {
+            if j + 1 == i {
+                assert(i > 0);
+            }
+        } else {
+            assert(j == i);
+        }
+    }
+}
+
 // r[impl partition.is-valid]
 /// Validates that intervals form a valid partition.
 /// Checks: (1) non-empty intervals, (2) sorted by start, (3) adjacent pairs.
@@ -97,6 +122,9 @@ pub fn is_valid_partition(intervals: &[(u64, u64)]) -> (result: bool)
             }
         }
 
+        proof {
+            valid_prefix_extend(intervals@, i as int);
+        }
         i = i + 1;
     }
 

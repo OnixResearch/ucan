@@ -278,7 +278,11 @@ proof fn gcd_divides(a: u64, b: u64)
         lemma_fundamental_div_mod(a as int, b as int);
         lemma_fundamental_div_mod(b as int, g as int);
         lemma_fundamental_div_mod((a % b) as int, g as int);
-        assert((a as int) == ((a / b) as int) * (b as int) + ((a % b) as int));
+        assert((a / b) as int == (a as int) / (b as int));
+        assert((a % b) as int == (a as int) % (b as int));
+        assert((a as int) == (b as int) * ((a / b) as int) + ((a % b) as int));
+        assert((a as int) == ((a / b) as int) * (b as int) + ((a % b) as int)) by(nonlinear_arith)
+            requires (a as int) == (b as int) * ((a / b) as int) + ((a % b) as int);
         assert((b as int) == (((b / g) as int) * (g as int)) + ((b % g) as int));
         assert(((a % b) as int) == ((((a % b) / g) as int) * (g as int)) + (((a % b) % g) as int));
         assert((b as int) == ((b / g) as int) * (g as int));

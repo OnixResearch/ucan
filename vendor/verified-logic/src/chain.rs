@@ -1166,7 +1166,6 @@ mod tests {
         assert_eq!(overlay_tip, chain[2].hash);
     }
 
-
     // r[verify chain.chain-valid]
     #[test]
     fn test_chain_valid() {

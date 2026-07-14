@@ -11,7 +11,7 @@ readonly REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly DEFAULT_SOURCE_REPO="${REPO_ROOT}/../trellis"
 readonly VENDOR_DIR="${REPO_ROOT}/vendor/verified-logic"
 readonly REVISION_FILE="${REPO_ROOT}/vendor/verified-logic-revision.txt"
-readonly REQUIRED_PATHS=(Cargo.toml src)
+readonly REQUIRED_PATHS=(Cargo.toml LICENSE src)
 readonly OPTIONAL_PATHS=(README.md build.rs .cargo)
 
 source_repo="${1:-${DEFAULT_SOURCE_REPO}}"

@@ -134,27 +134,61 @@ pub fn merge_dirty(dst: &mut Vec<bool>, src: &Vec<bool>)
     ensures
         dst@ =~= merge_dirty_spec(old(dst)@, src@),
 {
+    let ghost initial = dst@;
     let len = dst.len();
     let mut i: usize = 0;
     while i < len
         invariant
             0 <= i <= len,
-            len == old(dst)@.len(),
+            len == initial.len(),
             len == src@.len(),
             dst@.len() == len,
             // Already merged bits.
             forall|k: int| 0 <= k < i as int ==>
-                dst@[k] == (old(dst)@[k] || src@[k]),
+                dst@[k] == (initial[k] || src@[k]),
             // Untouched bits.
             forall|k: int| i as int <= k < len as int ==>
-                dst@[k] == old(dst)@[k],
+                dst@[k] == initial[k],
         decreases len - i,
     {
+        let ghost before = dst@;
+        proof {
+            assert forall|k: int| 0 <= k < i as int implies
+                before[k] == (initial[k] || src@[k]) by {}
+            assert forall|k: int| i as int <= k < len as int implies
+                before[k] == initial[k] by {}
+        }
         if src[i] {
             dst.set(i, true);
+            assert(dst@[i as int]);
+        } else {
+            assert(dst@[i as int] == initial[i as int]);
+        }
+        assert(dst@[i as int] == (initial[i as int] || src@[i as int]));
+        assert forall|k: int| 0 <= k < i as int + 1 implies
+            dst@[k] == (initial[k] || src@[k]) by {
+            if k < i as int {
+                assert(before[k] == (initial[k] || src@[k]));
+                assert(dst@[k] == before[k]);
+            } else {
+                assert(k == i as int);
+                assert(dst@[k] == (initial[k] || src@[k]));
+            }
+        }
+        assert forall|k: int| i as int + 1 <= k < len as int implies
+            dst@[k] == initial[k] by {
+            assert(before[k] == initial[k]);
+            assert(dst@[k] == before[k]);
         }
         i += 1;
     }
+    assert forall|k: int| 0 <= k < dst@.len() implies
+        dst@[k] == merge_dirty_spec(initial, src@)[k] by {
+        assert(dst@[k] == (initial[k] || src@[k]));
+        merge_accumulates(initial, src@, k);
+        assert(merge_dirty_spec(initial, src@)[k] == (initial[k] || src@[k]));
+    }
+    assert(dst@ =~= merge_dirty_spec(initial, src@));
 }
 
 // ────────────────────────────────────────────────────────────────────

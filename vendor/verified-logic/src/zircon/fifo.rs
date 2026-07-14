@@ -2,6 +2,14 @@
 //!
 //! FIFOs move whole fixed-size elements only. Reads and writes are bounded
 //! by free/available element slots.
+#![allow(
+    unknown_lints,
+    underscore_in_module_filename,
+    non_trait_imports,
+    path_segment_repetition,
+    unbounded_collection_growth,
+    usize_in_public_api
+)]
 
 use vstd::prelude::*;
 
@@ -154,16 +162,16 @@ pub fn fifo_signals(end: &ZirconFifoEndpoint) -> (result: u64)
     requires end.wf()
     ensures result == fifo_signals_spec(*end)
 {
-    let readable = !end.rx.is_empty();
-    let writable = end.rx.len() < end.capacity;
-    let peer_closed = !end.peer_live;
-    let result = (if readable { ZX_FIFO_READABLE } else { 0u64 })
-        | (if writable { ZX_FIFO_WRITABLE } else { 0u64 })
-        | (if peer_closed { ZX_FIFO_PEER_CLOSED } else { 0u64 });
+    let is_readable = !end.rx.is_empty();
+    let is_writable = end.rx.len() < end.capacity;
+    let has_peer_closed = !end.peer_live;
+    let result = (if is_readable { ZX_FIFO_READABLE } else { 0u64 })
+        | (if is_writable { ZX_FIFO_WRITABLE } else { 0u64 })
+        | (if has_peer_closed { ZX_FIFO_PEER_CLOSED } else { 0u64 });
     proof {
-        assert(readable == (end.rx@.len() > 0));
-        assert(writable == (end.rx@.len() < end.capacity as int));
-        assert(peer_closed == (!end.peer_live));
+        assert(is_readable == (end.rx@.len() > 0));
+        assert(is_writable == (end.rx@.len() < end.capacity as int));
+        assert(has_peer_closed == (!end.peer_live));
     }
     result
 }

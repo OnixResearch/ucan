@@ -9,12 +9,12 @@ use vstd::prelude::*;
 
 verus! {
 
-pub struct FutexWakeResult {
+pub struct WakeResult {
     pub released: u64,
     pub remaining: u64,
 }
 
-pub struct FutexRequeueResult {
+pub struct RequeueResult {
     pub woken: u64,
     pub moved: u64,
     pub src_remaining: u64,
@@ -52,27 +52,27 @@ pub open spec fn wake_released_spec(waiters: u64, count: u64) -> u64 {
 }
 
 // r[depends zircon-futex.wake-bound]
-pub open spec fn wake_result_spec(waiters: u64, count: u64) -> FutexWakeResult {
+pub open spec fn wake_result_spec(waiters: u64, count: u64) -> WakeResult {
     let released = wake_released_spec(waiters, count);
-    FutexWakeResult { released, remaining: (waiters - released) as u64 }
+    WakeResult { released, remaining: (waiters - released) as u64 }
 }
 
 // r[impl zircon-futex.wake-bound]
-pub fn wake(waiters: u64, count: u64) -> (result: FutexWakeResult)
+pub fn wake(waiters: u64, count: u64) -> (result: WakeResult)
     ensures
         result.released == wake_result_spec(waiters, count).released,
         result.remaining == wake_result_spec(waiters, count).remaining,
 {
     let released = if count < waiters { count } else { waiters };
-    FutexWakeResult { released, remaining: waiters - released }
+    WakeResult { released, remaining: waiters - released }
 }
 
 // r[depends zircon-futex.requeue]
-pub open spec fn requeue_result_spec(src_waiters: u64, dst_waiters: u64, wake_count: u64, move_count: u64) -> FutexRequeueResult {
+pub open spec fn requeue_result_spec(src_waiters: u64, dst_waiters: u64, wake_count: u64, move_count: u64) -> RequeueResult {
     let woken = wake_released_spec(src_waiters, wake_count);
     let after_wake = (src_waiters - woken) as u64;
     let moved = if move_count < after_wake { move_count } else { after_wake };
-    FutexRequeueResult {
+    RequeueResult {
         woken,
         moved,
         src_remaining: (after_wake - moved) as u64,
@@ -81,7 +81,7 @@ pub open spec fn requeue_result_spec(src_waiters: u64, dst_waiters: u64, wake_co
 }
 
 // r[impl zircon-futex.requeue]
-pub fn requeue(src_waiters: u64, dst_waiters: u64, wake_count: u64, move_count: u64) -> (result: FutexRequeueResult)
+pub fn requeue(src_waiters: u64, dst_waiters: u64, wake_count: u64, move_count: u64) -> (result: RequeueResult)
     requires dst_waiters <= u64::MAX - if move_count < src_waiters { move_count } else { src_waiters }
     ensures
         result.woken == requeue_result_spec(src_waiters, dst_waiters, wake_count, move_count).woken,
@@ -92,7 +92,7 @@ pub fn requeue(src_waiters: u64, dst_waiters: u64, wake_count: u64, move_count: 
     let woken = if wake_count < src_waiters { wake_count } else { src_waiters };
     let after_wake = src_waiters - woken;
     let moved = if move_count < after_wake { move_count } else { after_wake };
-    FutexRequeueResult {
+    RequeueResult {
         woken,
         moved,
         src_remaining: after_wake - moved,

@@ -116,6 +116,9 @@
 //!   transfer over the shared raw IR
 //! - `ssa_construction` — iterated-dominance-frontier phi placement, SSA renaming, and phi
 //!   elimination
+//! - `spreadsheet_address` / `spreadsheet_formula` / `spreadsheet_dependency` /
+//!   `spreadsheet_recalc` — finite spreadsheet address/range, formula, dependency, cycle, recalc,
+//!   dirty-propagation, and error admission
 //! - `ct_select` — branchless constant-time conditional selection for u64/u8
 //! - `conversion` — checked narrowing (u32/u16/u8), sign conversion (i64↔u64)
 //! - `cow` — copy-on-write decision logic, ref counting, snapshot isolation
@@ -156,6 +159,9 @@
 //! - `gpu_primitives` — finite GPU program shapes, launch/grid/block/thread checks, pitched/tensor
 //!   memory-layout, coalesced memory, and shared-tile admission
 //! - `gossip` — gossip infection bounds and convergence
+//! - `hdl_ir` / `hdl_emit` / `hdl_adapters` / `hdl_validation` — finite HDL IR admission,
+//!   deterministic Verilog/SystemVerilog emission, adapter refinement/emission planning, and
+//!   validation evidence
 //! - `expiration` — TTL calculation, lease/key expiration, time remaining
 //! - `hash_bucket` — hash-to-bucket assignment, modular and power-of-two
 //! - `hazard_pointer` — hazard pointer protocol: protect, unprotect, reclaim, no-use-after-free
@@ -294,7 +300,8 @@
 //! - `sel4_endpoint` — endpoint sender/receiver rendezvous, queue cancellation, and badge transfer
 //! - `sel4_fault_ipc` — structured fault encode/decode and handler-facing delivery
 //! - `sel4_invocation` — abstract typed invocation decode over explicit capability contexts
-//! - `sel4_invariants` — composed kernel-state invariants over the local seL4 models
+//! - `sel4_invariants` — composed kernel-state invariants and a preservation matrix over the local
+//!   seL4 models
 //! - `sel4_notification` — badge accumulation, wait/poll consume semantics, and binding wakeups
 //! - `sel4_reply` — reply-cap lifecycle, caller/callee pairing, and invalidate-on-cancel/revoke
 //! - `sel4_irq` — IRQ handler binding, mask-aware delivery, and acknowledge consumption
@@ -327,12 +334,18 @@
 //! - `type_unification` — first-order type syntax, occurs check, substitution application and
 //!   composition
 //! - `token_timestamp` — UCAN token expiration, future rejection, refresh threshold
+//! - `verification_frontier` — finite contract implication, type facts, slice certificates, arena
+//!   provenance, progress budgets, external-reference admission, and outcome invariant bundles
+//! - `proof::artifact::provenance` — finite proof-artifact identity, local-property boundary,
+//!   non-claim, and downstream handoff-role admission
 //! - `transfer` — value transfer validation: conservation, idempotency, status codes
 //! - `trust_level` — trust resolution with block precedence and access control
 //! - `two_phase` — two-phase commit decision: unanimity, abort safety
 //! - `vector_clock` — causality tracking with partial order and merge lattice
 //! - `view_change` — view-based reconfiguration: view monotonicity, leader rotation, quorum-gated
 //!   transitions
+//! - `quepaxa` — finite deterministic QuePaxa safety/admission primitives for proposal ordering,
+//!   ISR transitions, abstract propagation, phase guards, fast path, and hedging metadata
 //! - `quorum_cert` — quorum certificate: vote counting, QC ordering, commit rule via consecutive
 //!   certificates
 //! - `voter_set` — voter set promotion: add learner, replace node, quorum preservation
@@ -386,6 +399,8 @@
 //! - `segregated_free` — segregated free lists by size class: cross-class uniqueness
 //! - `coalesce_policy` — immediate vs deferred coalescing: convergence, total preservation
 //! - `fragmentation` — fragmentation metrics: external/internal bounds, can-satisfy
+
+#![cfg_attr(verus_keep_ghost, verifier::deprecated_postcondition_mut_ref_style(true))]
 
 pub mod ability_effect;
 pub mod access_mode;
@@ -610,6 +625,10 @@ pub mod graph_shortest_path_envelope;
 pub mod graph_topological_order;
 pub mod hash_bucket;
 pub mod hazard_pointer;
+pub mod hdl_adapters;
+pub mod hdl_emit;
+pub mod hdl_ir;
+pub mod hdl_validation;
 pub mod heap_index;
 pub mod heartbeat;
 pub mod hypervisor_dirty_log;
@@ -631,6 +650,7 @@ pub mod index_select;
 pub mod install_snapshot;
 pub mod instruction_selection;
 pub mod integer;
+pub mod integration_adapters;
 pub mod interval;
 pub mod job_cancel;
 pub mod job_dag;
@@ -785,8 +805,10 @@ pub mod priority_election;
 pub mod priority_inversion;
 pub mod probability_statistics;
 pub mod process_state;
+pub mod proof;
 pub mod proof_gap_boundary_audit;
 pub mod properties;
+pub mod quepaxa;
 pub mod query_cost;
 pub mod quorum;
 pub mod quorum_cert;
@@ -869,6 +891,10 @@ pub mod snapshot_isolation;
 pub mod snapshot_transfer;
 pub mod spin_backoff;
 pub mod split_coalesce;
+pub mod spreadsheet_address;
+pub mod spreadsheet_dependency;
+pub mod spreadsheet_formula;
+pub mod spreadsheet_recalc;
 pub mod ssa_construction;
 pub mod stack_frame_layout;
 pub mod state_machine_safety;
@@ -967,6 +993,7 @@ pub mod ucan_temporal_order;
 pub mod ucan_token;
 pub mod ucan_verification_stage;
 pub mod vector_clock;
+pub mod verification_frontier;
 pub mod verified_compiler_pipeline;
 pub mod verified_lsm_ingest;
 pub mod view_change;
@@ -997,14 +1024,25 @@ pub mod work_stealing;
 pub mod write_buffer;
 pub mod write_policy;
 pub mod zeroize;
+#[path = "zircon/channel.rs"]
 pub mod zircon_channel;
+#[path = "zircon/event.rs"]
 pub mod zircon_event;
+#[path = "zircon/fifo.rs"]
 pub mod zircon_fifo;
+#[path = "zircon/futex.rs"]
 pub mod zircon_futex;
+#[path = "zircon/handle.rs"]
 pub mod zircon_handle;
+#[path = "zircon/job.rs"]
 pub mod zircon_job;
+#[path = "zircon/port.rs"]
 pub mod zircon_port;
+#[path = "zircon/rights.rs"]
 pub mod zircon_rights;
+#[path = "zircon/socket.rs"]
 pub mod zircon_socket;
+#[path = "zircon/timer.rs"]
 pub mod zircon_timer;
+#[path = "zircon/wait.rs"]
 pub mod zircon_wait;
