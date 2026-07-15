@@ -20,5 +20,6 @@
 ## Phase 4: Documentation and verification
 
 - [x] [serial] Render or check operator documentation from the same support catalog/profile data without treating prose matching as structural parity. r[ucan.integration_support_profiles.freshness]
-- [ ] [serial] Run profile contract checks, support-catalog/report freshness, focused readiness and limit tests, positive/negative fixture checks, workspace tests, Cairn validation, and proposal/design/tasks gates. r[ucan.integration_support_profiles.fixtures] r[ucan.integration_support_profiles.freshness]
+- [x] [serial] Run profile contract checks, support-catalog/report freshness, focused readiness and limit tests, positive/negative fixture checks, workspace tests, Cairn validation, and proposal/design/tasks gates. r[ucan.integration_support_profiles.fixtures] r[ucan.integration_support_profiles.freshness]
+  - PASS: the BLAKE3-bound checker admits two profiles and one public manifest, rejects fourteen negative cases, strict Clippy and workspace tests pass, current Cairn validation and all three gates pass, and pure `nix flake check` reports all checks passed.
 - [x] [serial] Document that support-profile conformance does not prove resolver truth, key custody, cryptography, revocation/replay freshness, backend durability, or application authorization completeness. r[ucan.integration_support_profiles.runtime_boundary]
