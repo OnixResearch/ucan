@@ -110,11 +110,16 @@
             }
           );
 
-          production-readiness = pkgs.runCommand "ucan-production-readiness" { } ''
-            cd ${./.}
-            ${pkgs.python3}/bin/python scripts/check-production-readiness.py
-            touch $out
-          '';
+          production-readiness =
+            pkgs.runCommand "ucan-production-readiness"
+              {
+                nativeBuildInputs = [ pkgs.nickel ];
+              }
+              ''
+                cd ${./.}
+                ${ucan}/bin/check-production-readiness check --root . --nickel ${pkgs.nickel}/bin/nickel
+                touch $out
+              '';
 
           verified-logic-josh-sync-config =
             pkgs.runCommand "ucan-verified-logic-josh-sync-config"
@@ -140,6 +145,7 @@
             cargo-nextest
             cargo-watch
             rust-analyzer
+            nickel
             uv
           ];
 

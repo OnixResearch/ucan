@@ -1,7 +1,11 @@
 #![allow(clippy::module_name_repetitions)]
 
+use serde::Deserialize;
+use serde::Serialize;
+
 /// Evidence-backed support label for a production-relevant surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SupportLevel {
     /// Verified for controlled integrations where the caller wires all external truth.
     ControlledIntegrationReady,
@@ -39,6 +43,19 @@ pub struct ReadinessSurface {
     pub boundary: &'static str,
 }
 
+/// One closed integration choice and its current support label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadinessOption {
+    /// Stable option identifier used by integration profiles.
+    pub id: &'static str,
+    /// Current support label.
+    pub level: SupportLevel,
+    /// Short evidence summary for reviewers.
+    pub evidence: &'static str,
+    /// Boundary retained by the consuming application.
+    pub boundary: &'static str,
+}
+
 /// The explicit integration profile required for controlled production use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntegrationProfile {
@@ -59,6 +76,12 @@ pub struct ProductionReadinessReport {
     pub crate_level: SupportLevel,
     /// Current production-relevant surface labels.
     pub surfaces: &'static [ReadinessSurface],
+    /// Closed DID method choices.
+    pub did_methods: &'static [ReadinessOption],
+    /// Closed compact-token signature algorithm choices.
+    pub signing_algorithms: &'static [ReadinessOption],
+    /// Closed signing and verification key class choices.
+    pub key_classes: &'static [ReadinessOption],
     /// Explicit integration profile for controlled production use.
     pub integration_profile: IntegrationProfile,
 }
@@ -82,6 +105,51 @@ const FAIL_CLOSED_INPUTS: &[&str] = &[
     "missing or rejected caveat policy",
     "unsupported DID method, signing algorithm, or key type",
     "verification limit overflow",
+];
+
+const DID_METHODS: &[ReadinessOption] = &[
+    ReadinessOption {
+        id: "did:key",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "compact-token issuance and verification support Ed25519 did:key identifiers",
+        boundary: "key provenance, custody, trust roots, and resolver freshness remain caller-owned",
+    },
+    ReadinessOption {
+        id: "remote-did-method",
+        level: SupportLevel::Unsupported,
+        evidence: "no remote DID method resolver is built into this crate",
+        boundary: "method admission, network resolution, trust roots, caching, and freshness remain caller-owned",
+    },
+];
+
+const SIGNING_ALGORITHMS: &[ReadinessOption] = &[
+    ReadinessOption {
+        id: "EdDSA",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "compact-token signing and verification support Ed25519 with the EdDSA header",
+        boundary: "key custody, key provenance, and deployment hardening remain caller-owned",
+    },
+    ReadinessOption {
+        id: "non-EdDSA",
+        level: SupportLevel::Unsupported,
+        evidence: "no alternative compact-token signature algorithm is admitted",
+        boundary: "future algorithms require explicit parsing, mismatch, signature, and failure evidence",
+    },
+];
+
+const KEY_CLASSES: &[ReadinessOption] = &[
+    ReadinessOption {
+        id: "Ed25519",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "Ed25519 signing and verification are covered by compact-token tests and examples",
+        boundary: "secret material storage, rotation, provenance, and custody remain caller-owned",
+    },
+    ReadinessOption {
+        id: "non-Ed25519",
+        level: SupportLevel::Unsupported,
+        evidence: "no other signing or verification key class is admitted",
+        boundary: "future key classes require explicit format, algorithm, mismatch, and failure evidence",
+    },
 ];
 
 const SURFACES: &[ReadinessSurface] = &[
@@ -214,6 +282,9 @@ pub const fn production_readiness_report() -> ProductionReadinessReport {
         schema_version: 1,
         crate_level: SupportLevel::ControlledIntegrationReady,
         surfaces: SURFACES,
+        did_methods: DID_METHODS,
+        signing_algorithms: SIGNING_ALGORITHMS,
+        key_classes: KEY_CLASSES,
         integration_profile: IntegrationProfile {
             id: "caller-wired-controlled-integration",
             required_inputs: REQUIRED_INPUTS,
@@ -260,6 +331,29 @@ mod tests {
                     .any(|surface| { surface.id == surface_id && surface.level == SupportLevel::Unsupported })
             );
         }
+    }
+
+    #[test]
+    fn closed_integration_options_preserve_supported_and_unsupported_choices() {
+        let report = production_readiness_report();
+        assert!(
+            report
+                .did_methods
+                .iter()
+                .any(|option| { option.id == "did:key" && option.level == SupportLevel::ControlledIntegrationReady })
+        );
+        assert!(
+            report
+                .signing_algorithms
+                .iter()
+                .any(|option| { option.id == "non-EdDSA" && option.level == SupportLevel::Unsupported })
+        );
+        assert!(
+            report
+                .key_classes
+                .iter()
+                .any(|option| { option.id == "non-Ed25519" && option.level == SupportLevel::Unsupported })
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@
 pub use ucan_core as core;
 
 pub mod error;
+pub mod integration_profile;
 pub mod readiness;
 pub mod shell;
 pub mod token;
@@ -13,6 +14,7 @@ pub use error::Error;
 pub use error::Result;
 pub use readiness::IntegrationProfile;
 pub use readiness::ProductionReadinessReport;
+pub use readiness::ReadinessOption;
 pub use readiness::ReadinessSurface;
 pub use readiness::SupportLevel;
 pub use readiness::production_readiness_report;

@@ -2,7 +2,7 @@
 
 ## Primary token workflow
 
-Production-readiness labels for this API are tracked in `docs/production-readiness.md` and `docs/production-readiness.json`. The public `production_readiness_report()` API exposes the same crate-level `controlled-integration-ready` classification and per-surface support labels for integrators that need a machine-readable guardrail.
+Production-readiness labels for this API are tracked in `docs/production-readiness.md` and `docs/production-readiness.json`. The public `production_readiness_report()` API is the authority for the crate-level `controlled-integration-ready` classification, per-surface labels, and closed DID/signature/key choices. Authoring-time Nickel integration profiles are BLAKE3-bound subsets of that catalog; runtime APIs do not discover or evaluate them.
 
 New integrations should start with:
 

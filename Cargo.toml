@@ -22,6 +22,10 @@ version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 
+[[bin]]
+name = "check-production-readiness"
+path = "tools/check-production-readiness/main.rs"
+
 [dependencies]
 base64 = "0.22"
 blake3 = "1.5"
