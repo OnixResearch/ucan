@@ -944,13 +944,10 @@ dependencies = [
  "blake3",
  "bs58",
  "ed25519-dalek",
- "pretty_assertions",
- "proptest",
  "redb",
  "regex",
  "serde",
  "serde_json",
- "tempfile",
  "vstd",
 ]
 
