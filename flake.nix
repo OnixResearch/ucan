@@ -32,8 +32,18 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Keep the vendored verified-logic crate inside the cleaned Cargo source.
-        src = craneLib.cleanCargoSource ./.;
+        # Keep Cargo sources plus the Aeneas checker's compile-time evidence fixtures.
+        proofSource = ./proofs;
+        proofSourceString = toString proofSource;
+        proofSourcePrefix = "${proofSourceString}/";
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter =
+            path: type:
+            craneLib.filterCargoSources path type
+            || toString path == proofSourceString
+            || pkgs.lib.hasPrefix proofSourcePrefix (toString path);
+        };
 
         # Common build inputs
         nativeBuildInputs = with pkgs; [
