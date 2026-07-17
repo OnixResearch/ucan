@@ -144,11 +144,11 @@ r[ucan.aeneas_time_bounds.evidence_chain] UCAN MUST report property evidence onl
 
 ### Requirement: Negative proof paths are maintained
 
-r[ucan.aeneas_time_bounds.negative_evidence] UCAN MUST maintain intentionally false and vacuous `True` Lean theorems outside positive selection plus negative fixtures for invalid bounds, extraction-policy drift, source/manifest/intermediate-stage drift, theorem approval or trust-closure mismatch, budget failure, receipt mismatch, and overclaiming evidence.
+r[ucan.aeneas_time_bounds.negative_evidence] When exact-source feasibility is supported, UCAN MUST maintain intentionally false and vacuous `True` Lean theorems outside positive selection. In both supported and blocked outcomes, UCAN MUST maintain applicable negative fixtures for invalid bounds, extraction-policy drift, source/manifest/intermediate-stage drift, theorem approval or trust-closure mismatch, budget failure, receipt mismatch, and overclaiming evidence.
 
 #### Scenario: False and vacuous theorems are rejected at distinct gates
 
-- GIVEN the intentionally false theorem and vacuous `True` theorem are evaluated with the exact provider/policy used by the positive pilot
+- GIVEN exact-source feasibility is supported and the intentionally false theorem and vacuous `True` theorem are evaluated with the exact provider/policy used by the positive pilot
 - WHEN the negative rail runs
 - THEN Lean MUST reject the false theorem, adequacy admission MUST reject the vacuous theorem, and no UCAN, Octet, or Valence artifact may report either as passed property evidence.
 

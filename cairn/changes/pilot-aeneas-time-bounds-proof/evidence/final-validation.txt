@@ -122,6 +122,13 @@ A bounded VibeThinker review attempt returned `fetch failed`; it is not counted
 as evidence. Deterministic source, artifact, negative, build, Nix, and Cairn
 checks remain the completion basis.
 
+A final semantic audit repaired the lifecycle specification so false/vacuous
+Lean theorem execution is explicitly conditional on a supported exact-source
+generated model, while applicable feasibility and overclaim negatives remain
+mandatory for the blocked outcome. This matches the proposal's blocked route,
+theorem-phase heading, task wording, and final-validation requirement; it does
+not weaken any future supported theorem gate.
+
 ## Lifecycle validation
 
 Using the canonical Cairn policy explicitly because this repository has no

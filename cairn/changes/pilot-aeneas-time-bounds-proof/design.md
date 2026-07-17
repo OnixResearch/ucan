@@ -44,7 +44,7 @@ The theorem map records exact Rust integer types, Aeneas-generated types, error 
 
 ### 6. Negative evidence is mandatory
 
-**Choice:** Runtime tests cover accepted and rejected boundary values. The proof rail includes an intentionally false theorem that must fail under the exact Lean toolchain and a vacuous `True` theorem that may check in Lean but must fail adequacy admission. Tamper fixtures cover errorful extraction, `skip_borrowck`, target/profile drift, source changes, stale LLBC, stale or mismatched `translation.json`, cross-run `def_id` reuse, stale generated Lean, wrong theorem/statement/requirement/claim identity, changed or undeclared trust inputs, wrong provider/Valence receipt, absent artifact verification, and overclaim text.
+**Choice:** Runtime tests cover accepted and rejected boundary values. When exact-source feasibility is supported, the proof rail includes an intentionally false theorem that must fail under the exact Lean toolchain and a vacuous `True` theorem that may check in Lean but must fail adequacy admission. Supported and blocked outcomes retain the applicable tamper inventory for errorful extraction, `skip_borrowck`, target/profile drift, source changes, stale LLBC, stale or mismatched `translation.json`, cross-run `def_id` reuse, stale generated Lean, wrong theorem/statement/requirement/claim identity, changed or undeclared trust inputs, wrong provider/Valence receipt, absent artifact verification, and overclaim text; theorem-stage cases remain gated until an exact generated model exists.
 
 **Rationale:** A first consumer pilot must demonstrate fail-closed behavior before its receipt can influence readiness documentation.
 
