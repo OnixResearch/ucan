@@ -26,6 +26,10 @@ license = "AGPL-3.0-or-later"
 name = "check-production-readiness"
 path = "tools/check-production-readiness/main.rs"
 
+[[bin]]
+name = "check-aeneas-time-bounds-proof"
+path = "tools/check-aeneas-time-bounds-proof/main.rs"
+
 [dependencies]
 base64 = "0.22"
 blake3 = "1.5"

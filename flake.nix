@@ -121,6 +121,17 @@
                 touch $out
               '';
 
+          aeneas-time-bounds-proof =
+            pkgs.runCommand "ucan-aeneas-time-bounds-proof"
+              {
+                nativeBuildInputs = [ pkgs.nickel ];
+              }
+              ''
+                cd ${./.}
+                ${ucan}/bin/check-aeneas-time-bounds-proof check --root . --nickel ${pkgs.nickel}/bin/nickel
+                touch $out
+              '';
+
           verified-logic-josh-sync-config =
             pkgs.runCommand "ucan-verified-logic-josh-sync-config"
               {
