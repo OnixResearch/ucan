@@ -1,12 +1,10 @@
-# Verus Specifications
+# Verus specifications
 
-This directory contains [Verus](https://verus-lang.github.io/verus/guide/) formal
-verification specs for this project.
+This directory contains formal [Verus](https://verus-lang.github.io/verus/guide/) specifications for UCAN.
 
-Each `*_spec.rs` file defines invariants, preconditions, and postconditions that
-are machine-checked by the Verus verifier.
+Each `*_spec.rs` file defines invariants, preconditions, and postconditions. The Verus verifier checks these properties.
 
-## Running verification
+## Run verification
 
 ```bash
 # If verus is in your devShell:
