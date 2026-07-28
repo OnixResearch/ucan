@@ -185,3 +185,7 @@ Verified replay-admission transcript aggregation now gates `verify_invocation_wi
 `ucan-core` and the synchronized `verified-logic` snapshot are `MPL-2.0`; the root `ucan` std shell is `AGPL-3.0-or-later`. Complete texts and the package/vendor map are in [LICENSES](LICENSES) and [docs/licensing.md](docs/licensing.md).
 
 The snapshot records a committed Trellis source revision and preserves its license artifacts. That alignment does not certify UCAN shell behavior, external protocol interoperability, resolver truth, revocation freshness, replay durability, or whole-system correctness. Earlier grants and third-party terms remain intact.
+
+## References
+
+- [Nostr protocol and NIPs](https://github.com/nostr-protocol/nips) — signed-event and request-authentication interoperability reference. UCAN retains token algorithms, DIDs, and authority boundaries.
