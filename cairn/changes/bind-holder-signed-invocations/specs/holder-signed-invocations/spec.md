@@ -44,7 +44,7 @@ r[ucan.holder_invocation.borrowed_verification] Holder verification MUST borrow 
 
 ### Requirement: Success proves the verified audience key signed the exact request
 
-r[ucan.holder_invocation.holder_proof] UCAN MUST resolve the key for the audience DID obtained from the verified token and MUST verify that key's signature over the exact canonical holder request before success.
+r[ucan.holder_invocation.holder_proof] UCAN MUST resolve the key for the audience DID obtained from the verified token, MUST confirm that the resolved public key encodes that DID, and MUST verify that key's signature over the exact canonical holder request before success.
 
 #### Scenario: A different holder signs the request
 
@@ -94,7 +94,7 @@ r[ucan.holder_invocation.integration_tests] The integration suite MUST accept bo
 
 ### Requirement: Security substitutions and verification failures fail closed
 
-r[ucan.holder_invocation.security_tests] The suite MUST reject wrong-holder signatures, duplicate replay, malformed or substituted nonce, request-binding substitution, ability substitution, resource substitution, profile substitution, malformed signatures, excessive configured limits, excessive total canonical size, allocation failure, invalid time, missing or invalid proof, revocation, caveat denial, and unknown profiles; call-order tests MUST prove that failed prior checks do not reach later injected boundaries.
+r[ucan.holder_invocation.security_tests] The suite MUST reject wrong-holder signatures, resolved-key DID substitution, duplicate replay, malformed or substituted nonce, request-binding substitution, ability substitution, resource substitution, profile substitution, malformed signatures, excessive configured limits, excessive total canonical size, allocation failure, invalid time, missing or invalid proof, revocation, caveat denial, and unknown profiles; call-order tests MUST prove that failed prior checks do not reach later injected boundaries.
 
 #### Scenario: Signed request data is substituted
 

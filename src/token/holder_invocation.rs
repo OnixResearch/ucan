@@ -653,6 +653,7 @@ pub enum HolderInvocationError {
     Token { source: TokenError },
     Authorization { reason: AuthorizationDenialReason },
     KeyResolution { source: KeyResolverError },
+    ResolvedAudienceKeyMismatch,
     Signer { source: SignerError },
     SignerAudienceMismatch,
     OperationProfile { source: OperationProfileAdmissionError },
@@ -670,6 +671,9 @@ impl fmt::Display for HolderInvocationError {
             Self::Token { source } => write!(formatter, "compact token verification failed: {source}"),
             Self::Authorization { reason } => write!(formatter, "audience capability authorization failed: {reason:?}"),
             Self::KeyResolution { source } => write!(formatter, "audience key resolution failed: {source}"),
+            Self::ResolvedAudienceKeyMismatch => {
+                formatter.write_str("resolved audience public key does not encode the verified audience DID")
+            }
             Self::Signer { source } => write!(formatter, "holder signer failed: {source}"),
             Self::SignerAudienceMismatch => {
                 formatter.write_str("holder signer DID does not equal the supplied audience DID")
@@ -696,7 +700,10 @@ impl std::error::Error for HolderInvocationError {
             Self::OperationProfile { source } => Some(source),
             Self::SignaturePrimitive { source } => Some(source),
             Self::Replay { source } => Some(source),
-            Self::Authorization { .. } | Self::SignerAudienceMismatch | Self::InvalidHolderSignature => None,
+            Self::Authorization { .. }
+            | Self::ResolvedAudienceKeyMismatch
+            | Self::SignerAudienceMismatch
+            | Self::InvalidHolderSignature => None,
         }
     }
 }
@@ -782,6 +789,10 @@ pub fn verify_holder_signed_invocation(
         .key_resolver
         .resolve_key(&audience_issuer)
         .map_err(|source| HolderInvocationError::KeyResolution { source })?;
+    let resolved_key_issuer = public_key.issuer().map_err(|source| HolderInvocationError::Token { source })?;
+    if resolved_key_issuer != audience_issuer {
+        return Err(HolderInvocationError::ResolvedAudienceKeyMismatch);
+    }
     let valid = verify_ed25519_signature(public_key.as_bytes(), canonical.as_ref(), request.signature.as_bytes())
         .map_err(|source| HolderInvocationError::SignaturePrimitive { source })?;
     if !valid {
@@ -951,7 +962,11 @@ mod tests {
     use super::super::DenyUnknownCaveats;
     use super::super::ED25519_SECRET_KEY_BYTES;
     use super::super::Ed25519InMemorySigner;
+    use super::super::Ed25519PublicKey;
+    use super::super::IssuerDid;
     use super::super::KeyResolutionContext;
+    use super::super::KeyResolver;
+    use super::super::KeyResolverError;
     use super::super::NoRevocations;
     use super::super::ProofCollection;
     use super::super::ProofReferences;
@@ -1108,6 +1123,22 @@ mod tests {
                 token: child,
                 keys,
                 proofs: ProofCollection::from_tokens(vec![parent]),
+            }
+        }
+    }
+
+    struct SubstitutingAudienceResolver<'a> {
+        inner: &'a KeyResolutionContext,
+        audience: IssuerDid,
+        substitute: Ed25519PublicKey,
+    }
+
+    impl KeyResolver for SubstitutingAudienceResolver<'_> {
+        fn resolve_key(&self, issuer: &IssuerDid) -> Result<Ed25519PublicKey, KeyResolverError> {
+            if issuer == &self.audience {
+                Ok(self.substitute.clone())
+            } else {
+                self.inner.resolve_key(issuer)
             }
         }
     }
@@ -1447,6 +1478,63 @@ mod tests {
             .expect_err("wrong holder signature must fail");
 
         assert!(matches!(error, HolderInvocationError::InvalidHolderSignature));
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn resolved_audience_key_must_encode_verified_audience_did() {
+        let fixture = DirectFixture::new();
+        let wrong_holder = signer(WRONG_HOLDER_KEY_BYTE);
+        let token_reference = token_reference(fixture.token.as_str());
+        let canonical = canonical_request(
+            &token_reference,
+            &fixture.audience,
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            HolderInvocationLimits::default(),
+        )
+        .expect("test canonical request must build");
+        let wrong_signature = wrong_holder.sign(canonical.as_ref()).expect("wrong key must sign test bytes");
+        let audience =
+            IssuerDid::new(fixture.audience.as_str().to_owned()).expect("audience issuer form must validate");
+        let resolver = SubstitutingAudienceResolver {
+            inner: &fixture.keys,
+            audience,
+            substitute: wrong_holder.public_key().expect("wrong holder public key must derive"),
+        };
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = RecordingReplay::default();
+        let token_context = HolderTokenVerificationContext::new(
+            VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            &resolver,
+            &proofs,
+            &revocations,
+            VerificationLimits::default(),
+        );
+        let policy_context = HolderInvocationPolicyContext::new(
+            &DenyUnknownCaveats,
+            &profiles,
+            &replay,
+            HolderInvocationLimits::default(),
+        );
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            &wrong_signature,
+        );
+
+        let error = verify_holder_signed_invocation(&request, &token_context, &policy_context)
+            .expect_err("substituted audience key must fail DID binding");
+
+        assert!(matches!(error, HolderInvocationError::ResolvedAudienceKeyMismatch));
+        assert_eq!(profiles.calls.get(), 0);
         assert_eq!(replay.calls.get(), 0);
     }
 

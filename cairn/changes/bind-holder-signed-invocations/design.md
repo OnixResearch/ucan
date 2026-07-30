@@ -12,7 +12,7 @@ Completion requires all of the following evidence:
 - every variable field is bounded by reviewed hard maxima before allocation;
 - the total canonical size is bounded and exact allocation failure returns an error;
 - one documented canonical format binds all required fields;
-- the verified audience key validates the signature;
+- the resolved audience key encodes the verified audience DID and validates the signature;
 - an explicit profile admission boundary rejects unknown profiles;
 - non-consuming profile and caveat observations finish before nonce admission;
 - the nonce/replay boundary runs exactly once as the final commit point;
@@ -69,7 +69,7 @@ The shell enforces reviewed hard maxima of 1,024 audience bytes, 16,384 resource
 
 ### Decision: Separate signing from verified admission
 
-**Choice:** A signing helper bounds its borrowed fields, checks that the signer DID equals the supplied audience DID, derives the complete token digest, and signs the canonical bytes. The verification API ignores caller claims about audience and uses only the audience from the verified token.
+**Choice:** A signing helper bounds its borrowed fields, checks that the signer DID equals the supplied audience DID, derives the complete token digest, and signs the canonical bytes. The verification API ignores caller claims about audience, uses only the verified token audience, and rejects a resolver result whose public key encodes a different DID.
 
 **Rationale:** A holder needs a portable signing helper. The verifier must establish token truth independently before it trusts the audience identity.
 
