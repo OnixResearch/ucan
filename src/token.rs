@@ -505,13 +505,13 @@ impl Drop for SecretBytes {
 }
 
 impl SecretBytes {
-    fn from_slice(bytes: &[u8]) -> TokenResult<Self> {
+    fn from_slice(bytes: &[u8]) -> Self {
         let mut owned = Zeroizing::new(vec![0_u8; bytes.len()].into_boxed_slice());
         owned.as_mut().copy_from_slice(bytes);
-        Ok(Self {
+        Self {
             bytes: owned,
             initialized_len: bytes.len(),
-        })
+        }
     }
 
     fn zeroed_exact_len(len: usize) -> Self {
@@ -536,7 +536,7 @@ impl SecretBytes {
         self.bytes.as_mut()
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.initialized_len
     }
 
@@ -544,7 +544,7 @@ impl SecretBytes {
         self.bytes.len()
     }
 
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.initialized_len == 0
     }
 
@@ -610,13 +610,13 @@ impl CompactToken {
     pub fn new(token: &str) -> TokenResult<Self> {
         enforce_compact_token_size(token, VerificationLimits::default())?;
         validate_compact_token_string(token)?;
-        Self::from_validated_bytes(token.as_bytes())
+        Ok(Self::from_validated_bytes(token.as_bytes()))
     }
 
-    fn from_validated_bytes(bytes: &[u8]) -> TokenResult<Self> {
-        Ok(Self {
-            bytes: SecretBytes::from_slice(bytes)?,
-        })
+    fn from_validated_bytes(bytes: &[u8]) -> Self {
+        Self {
+            bytes: SecretBytes::from_slice(bytes),
+        }
     }
 
     fn from_secret_bytes(bytes: SecretBytes) -> TokenResult<Self> {
@@ -627,6 +627,10 @@ impl CompactToken {
     }
 
     /// Borrow the compact token without creating an owned copy.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the private validated-byte invariant is broken.
     #[must_use]
     pub fn as_str(&self) -> &str {
         std::str::from_utf8(self.bytes.as_slice()).expect("validated compact token bytes remain UTF-8")
@@ -1953,11 +1957,11 @@ impl TokenSigner for Ed25519SigningKey {
     }
 
     fn issuer(&self) -> TokenResult<IssuerDid> {
-        Ed25519SigningKey::issuer(self)
+        self.issuer()
     }
 
     fn public_key(&self) -> TokenResult<Ed25519PublicKey> {
-        Ed25519SigningKey::public_key(self)
+        self.public_key()
     }
 
     fn sign(&self, signing_input: &[u8]) -> SignerResult<SignerSignature> {
@@ -2738,7 +2742,7 @@ pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken<'_>
     parse_compact_token_str_bounded(token.as_str(), VerificationLimits::default())
 }
 
-fn parse_compact_token_str_bounded<'a>(token: &'a str, limits: VerificationLimits) -> TokenResult<DecodedToken<'a>> {
+fn parse_compact_token_str_bounded(token: &str, limits: VerificationLimits) -> TokenResult<DecodedToken<'_>> {
     enforce_compact_token_size(token, limits)?;
     validate_compact_token_string(token)?;
     let parts = compact_parts(token)?;
@@ -2765,7 +2769,7 @@ fn parse_compact_token_str_bounded<'a>(token: &'a str, limits: VerificationLimit
 /// # Errors
 ///
 /// Returns [`TokenError`] when the token header or decoded claim shape is invalid.
-pub fn validate_decoded_token<'a>(decoded: DecodedToken<'a>) -> TokenResult<StructurallyValidToken<'a>> {
+pub fn validate_decoded_token(decoded: DecodedToken<'_>) -> TokenResult<StructurallyValidToken<'_>> {
     let header = decode_json_bytes::<DecodedHeader<'_>>(decoded.header_json.as_slice(), CompactPart::Header)?;
     validate_header(&header)?;
     let claims = decode_json_bytes::<DecodedClaims<'_>>(decoded.claims_json.as_slice(), CompactPart::Payload)?;
@@ -4398,7 +4402,7 @@ mod tests {
 
     impl SecureTestTokenCopy for CompactToken {
         fn clone(&self) -> CompactToken {
-            CompactToken::new(self.as_str()).expect("test token copy must remain zeroizing")
+            Self::new(self.as_str()).expect("test token copy must remain zeroizing")
         }
     }
 
