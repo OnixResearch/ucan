@@ -21,5 +21,5 @@
 
 ## Phase 4: Validation and lifecycle
 
-- [ ] [serial] Run focused and workspace tests, all targets, format, strict Clippy, readiness, pre-commit, Nix, and canonical Cairn policy gates. r[ucan.holder_invocation.final_validation]
+- [x] [serial] Run focused and workspace tests, all targets, format, strict Clippy, readiness, pre-commit, Nix, and canonical Cairn policy gates. r[ucan.holder_invocation.final_validation]
 - [ ] [serial] Sync accepted requirements and archive with `CAIRN_ARCHIVE_DATE=2026-07-30`, then run post-archive validation. r[ucan.holder_invocation.final_validation]
