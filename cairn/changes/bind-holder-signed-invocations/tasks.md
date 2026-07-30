@@ -17,7 +17,7 @@
 - [x] [parallel] Add direct and delegated holder-signed invocation success tests. r[ucan.holder_invocation.integration_tests]
 - [x] [parallel] Add wrong-holder, replay, nonce, substitution, malformed signature, and oversize tests. r[ucan.holder_invocation.security_tests]
 - [x] [parallel] Add time, proof, revocation, caveat, and unknown-profile denial tests. r[ucan.holder_invocation.security_tests]
-- [ ] [serial] Update the invocation example, readiness evidence, public API docs, verified boundaries, and exact non-claims. r[ucan.holder_invocation.documentation]
+- [x] [serial] Update the invocation example, readiness evidence, public API docs, verified boundaries, and exact non-claims. r[ucan.holder_invocation.documentation]
 
 ## Phase 4: Validation and lifecycle
 

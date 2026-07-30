@@ -12,24 +12,42 @@ use ucan::CaveatPolicy;
 use ucan::CaveatPolicySet;
 use ucan::ED25519_SECRET_KEY_BYTES;
 use ucan::Ed25519InMemorySigner;
-use ucan::InvocationRequest;
-use ucan::InvocationResult;
+use ucan::HolderInvocationLimits;
+use ucan::HolderInvocationNonce;
+use ucan::HolderInvocationPolicyContext;
+use ucan::HolderInvocationReplayAdmission;
+use ucan::HolderInvocationReplayCandidate;
+use ucan::HolderInvocationReplayError;
+use ucan::HolderInvocationRequest;
+use ucan::HolderInvocationSigningRequest;
+use ucan::HolderTokenVerificationContext;
 use ucan::KeyResolutionContext;
+use ucan::NoRevocations;
+use ucan::OperationBinding;
+use ucan::OperationProfileAdmission;
+use ucan::OperationProfileAdmissionError;
+use ucan::OperationProfileId;
 use ucan::ProofCollection;
-use ucan::ProofReference;
 use ucan::ProofReferences;
-use ucan::ReplayAdmission;
-use ucan::ReplayAdmissionError;
+use ucan::RequestBindingDigest;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
-use ucan::VerificationContext;
+use ucan::VerificationLimits;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
-use ucan::verify_invocation_with_replay;
+use ucan::sign_holder_invocation;
+use ucan::verify_holder_signed_invocation;
 
 const ISSUER_KEY_BYTE: u8 = 7;
 const AUDIENCE_KEY_BYTE: u8 = 9;
+const INVOCATION_NONCE_BYTE: u8 = 11;
 const VERIFY_AT_SECONDS: u64 = 1_500;
+const TOKEN_NOT_BEFORE_SECONDS: u64 = 1_000;
+const TOKEN_EXPIRES_SECONDS: u64 = 2_000;
+const RESOURCE: &str = "did:key:z6Mkresource/photos";
+const ABILITY: &str = "store/add";
+const OPERATION_PROFILE: &[u8] = b"basalt.closed-action.store-add.v1";
+const DOWNSTREAM_REQUEST: &[u8] = b"basalt-request:target=photos;action=store-add";
 
 struct PayloadEqualsPolicy;
 
@@ -50,35 +68,45 @@ struct ExamplePolicies {
     policy: PayloadEqualsPolicy,
 }
 
-#[derive(Default)]
-struct ExampleReplayAdmission {
-    seen: RefCell<HashSet<(ProofReference, String, String)>>,
-}
-
-impl ReplayAdmission for ExampleReplayAdmission {
-    fn admit_invocation(
-        &self,
-        token_reference: &ProofReference,
-        resource: &str,
-        ability: &str,
-    ) -> Result<(), ReplayAdmissionError> {
-        let key = (token_reference.clone(), resource.to_owned(), ability.to_owned());
-        if self.seen.borrow_mut().insert(key) {
-            Ok(())
-        } else {
-            Err(ReplayAdmissionError::Duplicate {
-                reference: token_reference.clone(),
-            })
-        }
-    }
-}
-
 impl CaveatPolicySet for ExamplePolicies {
     fn policy_for(&self, caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy> {
         if caveat == &self.identity {
             Some(&self.policy)
         } else {
             None
+        }
+    }
+}
+
+struct ExampleProfiles {
+    known: OperationProfileId,
+}
+
+impl OperationProfileAdmission for ExampleProfiles {
+    fn admit_operation_profile(&self, profile: &OperationProfileId) -> Result<(), OperationProfileAdmissionError> {
+        if profile == &self.known {
+            Ok(())
+        } else {
+            Err(OperationProfileAdmissionError::UnknownProfile)
+        }
+    }
+}
+
+#[derive(Default)]
+struct ExampleReplayAdmission {
+    seen: RefCell<HashSet<(String, [u8; blake3::OUT_LEN])>>,
+}
+
+impl HolderInvocationReplayAdmission for ExampleReplayAdmission {
+    fn admit_holder_invocation(
+        &self,
+        candidate: &HolderInvocationReplayCandidate<'_>,
+    ) -> Result<(), HolderInvocationReplayError> {
+        let key = (candidate.audience().as_str().to_owned(), *candidate.nonce().as_bytes());
+        if self.seen.borrow_mut().insert(key) {
+            Ok(())
+        } else {
+            Err(HolderInvocationReplayError::Duplicate)
         }
     }
 }
@@ -99,32 +127,43 @@ fn main() -> Result<(), Box<dyn Error>> {
         &audience,
         &capabilities,
         &ProofReferences::empty(),
-        TokenTimeBounds::new(1_000, 2_000)?,
+        TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_SECONDS)?,
     )?;
-    let context = VerificationContext::new(
-        VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
-        KeyResolutionContext::new(vec![issuer.verification_key()?]),
-        ProofCollection::empty(),
-    );
+    let keys = KeyResolutionContext::new(vec![issuer.verification_key()?, audience_key.verification_key()?]);
+    let proofs = ProofCollection::empty();
+    let revocations = NoRevocations;
     let policies = ExamplePolicies {
         identity: CaveatIdentifier::new("example", "payload-equals", "gate")?,
         policy: PayloadEqualsPolicy,
     };
-    let replay = ExampleReplayAdmission::default();
-    let result = verify_invocation_with_replay(
-        &InvocationRequest::new(&token, &context, "did:key:z6Mkresource/photos", "store/add", &policies),
-        &replay,
+    let operation_profile = OperationProfileId::from_bytes(*blake3::hash(OPERATION_PROFILE).as_bytes());
+    let operation = OperationBinding::new(
+        operation_profile,
+        RequestBindingDigest::from_bytes(*blake3::hash(DOWNSTREAM_REQUEST).as_bytes()),
     );
+    let nonce = HolderInvocationNonce::from_bytes([INVOCATION_NONCE_BYTE; blake3::OUT_LEN]);
+    let signature = sign_holder_invocation(
+        &HolderInvocationSigningRequest::new(token.as_str(), &audience, RESOURCE, ABILITY, operation, nonce),
+        &audience_key,
+        VerificationLimits::default(),
+        HolderInvocationLimits::default(),
+    )?;
+    let profiles = ExampleProfiles {
+        known: operation_profile,
+    };
+    let replay = ExampleReplayAdmission::default();
+    let token_context = HolderTokenVerificationContext::new(
+        VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+        &keys,
+        &proofs,
+        &revocations,
+        VerificationLimits::default(),
+    );
+    let policy_context =
+        HolderInvocationPolicyContext::new(&policies, &profiles, &replay, HolderInvocationLimits::default());
+    let request = HolderInvocationRequest::new(token.as_str(), RESOURCE, ABILITY, operation, nonce, &signature);
+    let authorized = verify_holder_signed_invocation(&request, &token_context, &policy_context)?;
 
-    match result {
-        InvocationResult::Allowed { invocation } => {
-            println!(
-                "invocation allowed for {} via {}",
-                invocation.audience(),
-                invocation.matched_capability().ability
-            );
-        }
-        InvocationResult::Denied { reason } => println!("invocation denied: {reason:?}"),
-    }
+    println!("holder-signed invocation allowed for {} with {}", authorized.audience(), authorized.ability());
     Ok(())
 }

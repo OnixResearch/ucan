@@ -1584,8 +1584,9 @@ pub fn revocation_reference_is_listed(revoked_references: &[Vec<u8>], reference:
 /// Check concrete invocation admission against a leaf audience and concrete leaf capability.
 ///
 /// This is the shell bridge to verified-logic's invocation authorization primitive. It
-/// checks only the structural invoker/audience match, request-resource prefix refinement,
-/// and exact ability equality. Wildcard ability containment, caveat policy evaluation,
+/// checks only caller-supplied invoker/audience byte equality, request-resource prefix
+/// refinement, and exact ability equality. Equality does not prove key possession,
+/// sender identity, or a holder signature. Wildcard ability containment, caveat policy evaluation,
 /// proof traversal, signatures, and revocation checks remain in their existing shell paths.
 #[must_use]
 pub fn invocation_request_is_authorized(

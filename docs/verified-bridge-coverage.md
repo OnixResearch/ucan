@@ -66,7 +66,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `derive_ed25519_public_key` | `live-path` | `src/token.rs` reference; uses fixed arrays after vendored length admission. |
 | `encode_ed25519_did_key` | `live-path` | `src/token.rs` reference |
 | `invocation_chain_is_authorized` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
-| `invocation_request_is_authorized` | `live-path` | `src/token.rs` reference |
+| `invocation_request_is_authorized` | `public-helper` | `src/lib.rs` public export only; structural invoker/audience equality is not holder possession. |
 | `parsed_capability_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_caveat_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_caveat_payloads_are_valid` | `live-path` | `src/token.rs` reference |

@@ -84,6 +84,10 @@ impl fmt::Display for HolderInvocationInputError {
 
 impl std::error::Error for HolderInvocationInputError {}
 
+/// A downstream-owned stable BLAKE3 profile identity.
+///
+/// UCAN compares and signs this fixed identity. It does not interpret the
+/// downstream action vocabulary or profile document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OperationProfileId([u8; HOLDER_INVOCATION_DIGEST_BYTES]);
 
@@ -108,6 +112,9 @@ impl OperationProfileId {
     }
 }
 
+/// The downstream canonical request's exact BLAKE3 digest.
+///
+/// The consumer owns canonical request construction and digest provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestBindingDigest([u8; HOLDER_INVOCATION_DIGEST_BYTES]);
 
@@ -185,6 +192,7 @@ impl HolderInvocationRequestDigest {
     }
 }
 
+/// Fixed evidence that binds a downstream profile to one exact request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OperationBinding {
     profile: OperationProfileId,
@@ -549,6 +557,11 @@ impl<'a> HolderInvocationPolicyContext<'a> {
     }
 }
 
+/// Live holder-signed authorization returned after the final replay commit.
+///
+/// This value has private construction and has no clone or serde surface. It
+/// does not prove transport identity, downstream action semantics, request
+/// canonicalizer correctness, nonce durability, rate-limit effects, or safe execution.
 pub struct HolderInvocationAuthorized {
     issuer: IssuerDid,
     audience: AudienceDid,
@@ -2126,5 +2139,28 @@ mod tests {
         assert!(!production.contains(serialize_impl.as_str()));
         assert!(!production.contains(deserialize_impl.as_str()));
         assert!(!struct_block.lines().skip(1).any(|line| line.trim_start().starts_with("pub ")));
+
+        let verify_start = production
+            .find("pub fn verify_holder_signed_invocation")
+            .expect("holder verifier must exist");
+        let verify_end = production[verify_start..]
+            .find("\n}\n\nfn authorize_request")
+            .map(|offset| verify_start + offset)
+            .expect("holder verifier end must exist");
+        let verify_body = &production[verify_start..verify_end];
+        let success_build = verify_body
+            .find("let authorized = HolderInvocationAuthorized")
+            .expect("live success must be prepared");
+        let replay_commit = verify_body
+            .find(".admit_holder_invocation")
+            .expect("replay commit must exist");
+        assert!(success_build < replay_commit);
+        let after_replay = &verify_body[replay_commit..];
+        assert!(!after_replay.contains(".clone()"));
+        assert!(!after_replay.contains(".to_owned()"));
+        assert!(!after_replay.contains("canonical_request("));
+        assert!(!after_replay.contains("resolve_key("));
+        assert!(!after_replay.contains("admit_operation_profile("));
+        assert!(after_replay.contains("Ok(authorized)"));
     }
 }
