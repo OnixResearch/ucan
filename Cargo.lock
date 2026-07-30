@@ -903,6 +903,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "blake3",
+ "ed25519-dalek",
  "hegeltest",
  "pretty_assertions",
  "proptest",
@@ -912,6 +913,7 @@ dependencies = [
  "tempfile",
  "ucan-core",
  "verified-logic",
+ "zeroize",
 ]
 
 [[package]]
