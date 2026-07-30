@@ -41,7 +41,7 @@ The existing explicit time, resolver, proof, revocation, and limit inputs remain
 
 ### 2. Use non-cloneable zeroizing owners
 
-`CompactToken` owns a zeroizing byte buffer. It does not implement or derive `Debug`, `Display`, `Serialize`, `Deserialize`, or `Clone`.
+`CompactToken` owns a fixed zeroizing byte buffer. Manual `Debug` reports only length and `<redacted>`. The type has no `Display`, serde, or `Clone` implementation.
 
 The type exposes a narrow borrowed view for verification and transport integration. It does not expose `String`, `Vec`, or an unwiped consuming reconstruction.
 
@@ -55,11 +55,11 @@ Verification consumes the value only for the recursive call. It stores the BLAKE
 
 ### 4. Use exact buffers and deterministic two-pass encoding
 
-Base64 decoding calculates the exact unpadded output length. It initializes one zeroizing vector at that length and calls `decode_slice`.
+Base64 decoding calculates the exact unpadded output length. It initializes one fixed zeroizing boxed slice and calls `decode_slice`.
 
-Issuance counts deterministic JSON output first. It then writes into one preallocated zeroizing vector and rejects any capacity change or length mismatch.
+Issuance counts deterministic JSON output first. It then writes into one fixed zeroizing boxed slice and rejects a length mismatch.
 
-Base64 encoding writes into exact initialized zeroizing output. Signing-input and compact-token assembly use checked exact lengths and do not grow.
+Base64 encoding writes into fixed zeroizing output. Signing-input and compact-token assembly use checked exact lengths and cannot grow.
 
 ### 5. Constrain serde to its reviewed borrowing path
 
@@ -89,14 +89,15 @@ The current resolver, proof, revocation, replay, clock, persistence, authorizati
 
 The implementation relies on these reviewed source facts:
 
-- `zeroize 1.8.2` uses volatile writes and a compiler fence. Its `Vec` implementation wipes length and spare capacity, but it cannot wipe prior reallocations.
+- `zeroize 1.8.2` uses volatile writes and a compiler fence. Fixed boxed slices avoid prior reallocations.
 - `base64 0.22.1` `decode_slice` and `encode_slice` do not allocate output storage.
-- `serde_json 1.0.149` borrows unescaped strings from slice input. Escaped strings use an ordinary scratch vector and are therefore rejected before parsing.
+- `serde_json 1.0.149` borrows unescaped strings from slice input. Escaped strings use ordinary scratch storage and are rejected before parsing.
+- `ed25519-dalek 2.2.0` accepts borrowed messages and fixed arrays. The live path bypasses vendored signature wrappers that require ordinary vectors.
 
 ## Validation Strategy
 
 Runtime tests cover borrowed success, malformed and oversized input, proof chains, early errors, exact capacities, and unchanged authorization behavior.
 
-Source tests reject forbidden secret traits, ordinary reconstruction, proof-token cloning, allocating base64 helpers, and bearer-building `format!` paths.
+Source tests reject forbidden secret traits, ordinary reconstruction, proof-token cloning, allocating codec helpers, bearer-building `format!` paths, and verified bearer-copy wrappers.
 
 The final rail includes focused tests, workspace tests, formatting, strict Clippy, readiness checks, Cairn gates, sync, archive, and post-archive validation.
