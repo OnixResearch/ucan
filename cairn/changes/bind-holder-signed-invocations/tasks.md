@@ -1,7 +1,7 @@
 ## Phase 1: Contract and core
 
-- [ ] [serial] Define the domain-separated canonical holder-request format and field limits in the no-std functional core. r[ucan.holder_invocation.canonical]
-- [ ] [serial] Add positive and negative canonical-format tests, including exact length and substitution differences. r[ucan.holder_invocation.core_tests]
+- [x] [serial] Define the domain-separated canonical holder-request format and field limits in the no-std functional core. r[ucan.holder_invocation.canonical]
+- [x] [serial] Add positive and negative canonical-format tests, including exact length and substitution differences. r[ucan.holder_invocation.core_tests]
 - [ ] [serial] Add fixed typed profile, request-binding, nonce, signature, and limits inputs. r[ucan.holder_invocation.typed_binding]
 
 ## Phase 2: Injected shell
