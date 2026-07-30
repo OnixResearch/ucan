@@ -9,12 +9,14 @@ use ucan::Ed25519VerificationKey;
 use ucan::IssueRequest;
 use ucan::KeyResolutionContext;
 use ucan::ProofCollection;
+use ucan::ProofReferences;
 use ucan::ProofStoreError;
 use ucan::TokenError;
 use ucan::TokenTimeBounds;
 use ucan::VerificationContext;
 use ucan::VerificationTime;
 use ucan::issue_token;
+use ucan::proof_reference;
 use ucan::verify_compact_token;
 use ucan::verify_compact_token_str;
 
@@ -56,11 +58,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         AudienceDid::from(audience_key.issuer()?),
         TokenTimeBounds::new(NOT_BEFORE_SECONDS, EXPIRES_AT_SECONDS)?,
     )?;
+    let parent_reference = proof_reference(&parent_proof);
+    drop(parent_proof);
     let missing_proof_request = IssueRequest::builder()
         .signing_key(audience_key.clone())
         .audience(child_audience)
         .capabilities(CapabilitySet::single(RESOURCE_DID, ABILITY)?)
-        .proofs(ProofCollection::from_tokens(vec![parent_proof]))
+        .proofs(ProofReferences::from_references(vec![parent_reference]))
         .time_bounds(TokenTimeBounds::new(NOT_BEFORE_SECONDS, EXPIRES_AT_SECONDS)?)
         .build()?;
     let missing_proof_child = issue_token(&missing_proof_request)?;
@@ -102,7 +106,7 @@ fn issue_simple_token(
         .signing_key(signing_key.clone())
         .audience(audience)
         .capabilities(CapabilitySet::single(RESOURCE_DID, ABILITY)?)
-        .proofs(ProofCollection::empty())
+        .proofs(ProofReferences::empty())
         .time_bounds(time_bounds)
         .build()?;
     Ok(issue_token(&request)?)

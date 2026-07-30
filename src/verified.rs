@@ -1,22 +1,22 @@
 use core::fmt;
 
+use ed25519_dalek::Signer;
+use ed25519_dalek::Verifier;
+use ed25519_dalek::VerifyingKey;
 use verified_logic::scope;
 use verified_logic::token_timestamp;
 use verified_logic::ucan_ability;
 use verified_logic::ucan_backend_transcript;
-use verified_logic::ucan_base64url;
 use verified_logic::ucan_capability_merge;
 use verified_logic::ucan_caveat;
 use verified_logic::ucan_caveat_evaluation;
 use verified_logic::ucan_caveat_preservation;
 use verified_logic::ucan_chain;
 use verified_logic::ucan_claims_presence;
-use verified_logic::ucan_compact;
 use verified_logic::ucan_delegation_depth;
 use verified_logic::ucan_did;
 use verified_logic::ucan_header;
 use verified_logic::ucan_invocation;
-use verified_logic::ucan_json;
 use verified_logic::ucan_parsed_capability_shape;
 use verified_logic::ucan_parsed_caveat_payload;
 use verified_logic::ucan_parsed_caveat_shape;
@@ -39,6 +39,7 @@ use verified_logic::web_of_trust_policy;
 use verified_logic::web_of_trust_principal;
 use verified_logic::web_of_trust_revocation;
 use verified_logic::web_of_trust_ucan_authorizer;
+use zeroize::Zeroizing;
 
 use crate::shell::CapabilityDocument;
 
@@ -53,6 +54,7 @@ pub enum VerifiedPrimitiveError {
     EmptyTimeWindowChain,
     InvalidSecretKeyLength { actual: usize },
     InvalidPublicKeyLength { actual: usize },
+    InvalidPublicKeyEncoding,
     InvalidSignatureLength { actual: usize },
     InvalidPrincipalDigestLength { actual: usize },
     TokenValidation { failure: TokenValidationFailure },
@@ -69,6 +71,7 @@ impl fmt::Display for VerifiedPrimitiveError {
             Self::InvalidPublicKeyLength { actual } => {
                 write!(formatter, "ed25519 public keys must be {} bytes, got {actual}", ucan_signature::PUBLIC_KEY_LEN)
             }
+            Self::InvalidPublicKeyEncoding => formatter.write_str("ed25519 public key encoding is invalid"),
             Self::InvalidSignatureLength { actual } => {
                 write!(formatter, "ed25519 signatures must be {} bytes, got {actual}", ucan_signature::SIGNATURE_LEN)
             }
@@ -91,6 +94,7 @@ impl std::error::Error for VerifiedPrimitiveError {
             Self::EmptyTimeWindowChain
             | Self::InvalidSecretKeyLength { .. }
             | Self::InvalidPublicKeyLength { .. }
+            | Self::InvalidPublicKeyEncoding
             | Self::InvalidSignatureLength { .. }
             | Self::InvalidPrincipalDigestLength { .. }
             | Self::TokenValidation { .. } => None,
@@ -170,40 +174,8 @@ pub struct TokenEnvelopeInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedCompactTokenParts {
-    pub header: Vec<u8>,
-    pub payload: Vec<u8>,
-    pub signature: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedCompactTokenEnvelope {
-    pub compact: Vec<u8>,
-    pub parts: VerifiedCompactTokenParts,
-    pub signing_input: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedProofReferenceDigest {
     pub bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedBase64UrlSegment {
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedJsonObjectBytes {
-    pub bytes: Vec<u8>,
-    pub first_significant_index: usize,
-    pub last_significant_index: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedParsedHeader {
-    pub algorithm: Vec<u8>,
-    pub token_type: Vec<u8>,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -362,13 +334,6 @@ pub struct VerifiedReplayAdmissionTranscript {
 pub struct VerifiedReplayAdmissionTranscriptOutcome {
     pub accepted: bool,
     pub first_failed_outcome: VerifiedReplayAdmissionOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedSigningInputByteProvenance {
-    pub header: Vec<u8>,
-    pub payload: Vec<u8>,
-    pub signing_input: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -883,111 +848,6 @@ pub fn invocation_chain_is_authorized(
     ))
 }
 
-/// Check that compact-token bytes match a verified separator-free three-part split.
-///
-/// This is a data-only bridge to vendored verified-logic. It checks that the
-/// caller/shell-supplied encoded compact-token parts contain no embedded compact
-/// separators and that the compact bytes equal `header.payload.signature`.
-///
-/// It does not perform the string split, decode base64url, parse JSON, derive
-/// proof references, hash, sign, verify signatures, resolve keys, fetch proofs,
-/// query revocation backends, access storage/network backends, persist state,
-/// replay-protect, or read an ambient clock.
-#[must_use]
-pub fn compact_token_split_is_valid(compact: &[u8], parts: &VerifiedCompactTokenParts) -> bool {
-    let parts = ucan_compact::CompactTokenParts {
-        header: parts.header.clone(),
-        payload: parts.payload.clone(),
-        signature: parts.signature.clone(),
-    };
-    ucan_compact::compact_split_matches_parts(&compact.to_vec(), &parts)
-}
-
-/// Check that compact-token bytes and signing input match verified framing.
-///
-/// This is a data-only bridge to vendored verified-logic. It checks only the
-/// canonical byte framing over already-encoded compact-token parts:
-/// `header.payload.signature` for the compact token and `header.payload` for
-/// the signing input.
-///
-/// It does not split compact strings, decode base64url, parse JSON, derive
-/// proof references, hash, sign, verify signatures, resolve keys, fetch proofs,
-/// query revocation backends, access storage/network backends, persist state,
-/// replay-protect, or read an ambient clock.
-#[must_use]
-pub fn compact_token_envelope_is_valid(envelope: &VerifiedCompactTokenEnvelope) -> bool {
-    let parts = ucan_compact::CompactTokenParts {
-        header: envelope.parts.header.clone(),
-        payload: envelope.parts.payload.clone(),
-        signature: envelope.parts.signature.clone(),
-    };
-    ucan_compact::compact_envelope_matches_parts(&envelope.compact, &parts, &envelope.signing_input)
-}
-
-/// Check encoded base64url-no-pad segment admission through vendored verified logic.
-///
-/// This bridge accepts only structural encoded-byte facts: URL-safe no-padding
-/// alphabet bytes and an unpadded length class that base64url can represent.
-/// It intentionally does not decode base64url, parse JSON, hash proof
-/// references, verify signatures, resolve proofs, query revocation backends,
-/// prove token provenance, access storage/network backends, persist state,
-/// replay-protect, or read an ambient clock.
-#[must_use]
-pub fn base64url_segment_is_valid(segment: &VerifiedBase64UrlSegment) -> bool {
-    ucan_base64url::base64url_no_pad_segment_is_valid(&segment.bytes)
-}
-
-/// Validate decoded JSON object byte-envelope facts before callers rely on
-/// serde-derived header or claim semantics.
-///
-/// This proves only finite byte-level object-envelope admission using
-/// caller/shell-supplied significant-byte indexes. It does not parse JSON,
-/// verify UTF-8 or canonicalization, validate claim/header fields, decode
-/// base64url, hash, sign, verify cryptographic signatures, prove token
-/// provenance, access storage/network backends, persist state, replay-protect,
-/// or read an ambient clock.
-#[must_use]
-pub fn json_object_bytes_are_valid(object: &VerifiedJsonObjectBytes) -> bool {
-    ucan_json::json_object_admission_is_valid(
-        &object.bytes,
-        object.first_significant_index,
-        object.last_significant_index,
-    )
-}
-
-/// Discover and validate decoded JSON object significant-byte indexes before
-/// callers rely on serde-derived header or claim semantics.
-///
-/// This routes index discovery through vendored `verified-logic` instead of
-/// trusting shell-computed first/last significant-byte facts. It proves only
-/// finite byte-level object-envelope admission over already-decoded bytes. It
-/// does not parse JSON, verify UTF-8 or canonicalization, validate
-/// claim/header fields, decode base64url, hash, sign, verify cryptographic
-/// signatures, prove token provenance, access storage/network backends,
-/// persist state, replay-protect, or read an ambient clock.
-#[must_use]
-pub fn verified_json_object_bytes(bytes: &[u8]) -> Option<VerifiedJsonObjectBytes> {
-    let bytes = bytes.to_vec();
-    let indexes = ucan_json::json_object_significant_indexes(&bytes)?;
-    Some(VerifiedJsonObjectBytes {
-        bytes,
-        first_significant_index: indexes.first,
-        last_significant_index: indexes.last,
-    })
-}
-
-/// Validate parsed compact-token header field admission before structural validation.
-///
-/// This proves only exact byte equality over shell/serde-supplied parsed fields:
-/// algorithm `EdDSA` and token type `JWT`. It does not parse JSON, verify UTF-8
-/// or canonicalization, decode base64url, verify signing input provenance, hash,
-/// sign, verify cryptographic signatures, access storage/network backends,
-/// persist state, replay-protect, or read an ambient clock.
-#[must_use]
-pub fn parsed_header_is_valid(header: &VerifiedParsedHeader) -> bool {
-    ucan_header::parsed_header_admission_is_valid(&header.algorithm, &header.token_type)
-}
-
 /// Validate signer-reported algorithm admission before signer-based issuance.
 ///
 /// This proves only exact byte equality over shell/signer-supplied algorithm
@@ -1193,13 +1053,6 @@ pub fn replay_admission_transcript_first_failed_outcome(
     transcript: &VerifiedReplayAdmissionTranscript,
 ) -> VerifiedReplayAdmissionOutcome {
     replay_admission_transcript_outcome(transcript).first_failed_outcome
-}
-
-/// Validate signing input byte provenance from already-encoded compact parts.
-#[must_use]
-pub fn signing_input_byte_provenance_is_valid(provenance: &VerifiedSigningInputByteProvenance) -> bool {
-    let expected = ucan_compact::compact_signing_input(&provenance.header, &provenance.payload);
-    ucan_compact::bytes_equal(&expected, &provenance.signing_input)
 }
 
 /// Exposes the vendored opaque caveat identifier preservation predicate.
@@ -1854,9 +1707,10 @@ pub fn decode_did_key(encoded: &[u8]) -> Option<VerifiedDidKey> {
 ///
 /// Returns [`VerifiedPrimitiveError::InvalidSecretKeyLength`] when the secret
 /// key is not 32 bytes long.
-pub fn derive_ed25519_public_key(secret_key_bytes: &[u8]) -> VerifiedResult<Vec<u8>> {
-    let secret_key = build_secret_key(secret_key_bytes)?;
-    Ok(ucan_signature::public_from_secret(&secret_key).bytes)
+pub fn derive_ed25519_public_key(secret_key_bytes: &[u8]) -> VerifiedResult<[u8; ucan_signature::PUBLIC_KEY_LEN]> {
+    let secret_key = fixed_secret_key(secret_key_bytes)?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_key);
+    Ok(signing_key.verifying_key().to_bytes())
 }
 
 /// Sign a message with an Ed25519 secret key.
@@ -1865,9 +1719,10 @@ pub fn derive_ed25519_public_key(secret_key_bytes: &[u8]) -> VerifiedResult<Vec<
 ///
 /// Returns [`VerifiedPrimitiveError::InvalidSecretKeyLength`] when the secret
 /// key is not 32 bytes long.
-pub fn sign_ed25519(secret_key_bytes: &[u8], message: &[u8]) -> VerifiedResult<Vec<u8>> {
-    let secret_key = build_secret_key(secret_key_bytes)?;
-    Ok(ucan_signature::sign(&secret_key, &message.to_vec()).bytes)
+pub fn sign_ed25519(secret_key_bytes: &[u8], message: &[u8]) -> VerifiedResult<[u8; ucan_signature::SIGNATURE_LEN]> {
+    let secret_key = fixed_secret_key(secret_key_bytes)?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_key);
+    Ok(signing_key.sign(message).to_bytes())
 }
 
 /// Verify an Ed25519 signature against a public key and message.
@@ -1881,9 +1736,20 @@ pub fn verify_ed25519_signature(
     message: &[u8],
     signature_bytes: &[u8],
 ) -> VerifiedResult<bool> {
-    let public_key = build_public_key(public_key_bytes)?;
-    let signature = build_signature(signature_bytes)?;
-    Ok(ucan_signature::verify(&public_key, &message.to_vec(), &signature))
+    validate_public_key_length(public_key_bytes)?;
+    validate_signature_length(signature_bytes)?;
+    let public_key_array: &[u8; ucan_signature::PUBLIC_KEY_LEN] =
+        public_key_bytes.try_into().map_err(|_| VerifiedPrimitiveError::InvalidPublicKeyLength {
+            actual: public_key_bytes.len(),
+        })?;
+    let public_key =
+        VerifyingKey::from_bytes(public_key_array).map_err(|_| VerifiedPrimitiveError::InvalidPublicKeyEncoding)?;
+    let signature = ed25519_dalek::Signature::from_slice(signature_bytes).map_err(|_| {
+        VerifiedPrimitiveError::InvalidSignatureLength {
+            actual: signature_bytes.len(),
+        }
+    })?;
+    Ok(public_key.verify(message, &signature).is_ok())
 }
 
 fn validate_capability_document(document: &CapabilityDocument) -> VerifiedResult<()> {
@@ -2118,25 +1984,11 @@ const fn map_validation_failure(error: &ucan_token::ValidationError) -> TokenVal
     }
 }
 
-fn build_secret_key(secret_key_bytes: &[u8]) -> VerifiedResult<ucan_signature::SecretKey> {
+fn fixed_secret_key(secret_key_bytes: &[u8]) -> VerifiedResult<Zeroizing<[u8; ucan_signature::SECRET_KEY_LEN]>> {
     validate_secret_key_length(secret_key_bytes)?;
-    Ok(ucan_signature::SecretKey {
-        bytes: secret_key_bytes.to_vec(),
-    })
-}
-
-fn build_public_key(public_key_bytes: &[u8]) -> VerifiedResult<ucan_signature::PublicKey> {
-    validate_public_key_length(public_key_bytes)?;
-    Ok(ucan_signature::PublicKey {
-        bytes: public_key_bytes.to_vec(),
-    })
-}
-
-fn build_signature(signature_bytes: &[u8]) -> VerifiedResult<ucan_signature::Ed25519Signature> {
-    validate_signature_length(signature_bytes)?;
-    Ok(ucan_signature::Ed25519Signature {
-        bytes: signature_bytes.to_vec(),
-    })
+    let mut fixed = Zeroizing::new([0_u8; ucan_signature::SECRET_KEY_LEN]);
+    fixed.copy_from_slice(secret_key_bytes);
+    Ok(fixed)
 }
 
 fn validate_secret_key_length(secret_key_bytes: &[u8]) -> VerifiedResult<()> {
@@ -2176,20 +2028,15 @@ mod tests {
     use super::VerifiedBackendOperation;
     use super::VerifiedBackendOperationFact;
     use super::VerifiedBackendTranscript;
-    use super::VerifiedBase64UrlSegment;
     use super::VerifiedCapability;
     use super::VerifiedCaveatEvaluationFact;
     use super::VerifiedCaveatEvaluationTranscript;
     use super::VerifiedCaveatPreservation;
     use super::VerifiedChainEntry;
-    use super::VerifiedCompactTokenEnvelope;
-    use super::VerifiedCompactTokenParts;
     use super::VerifiedInvocationChainRequest;
-    use super::VerifiedJsonObjectBytes;
     use super::VerifiedParsedClaimsPresence;
     use super::VerifiedParsedDidClaim;
     use super::VerifiedParsedDidClaims;
-    use super::VerifiedParsedHeader;
     use super::VerifiedParsedTemporalOrder;
     use super::VerifiedPrimitiveError;
     use super::VerifiedProofReferenceDigest;
@@ -2212,23 +2059,18 @@ mod tests {
     use super::attenuation_chain_is_valid;
     use super::backend_transcript_accepts;
     use super::backend_transcript_first_failed_operation;
-    use super::base64url_segment_is_valid;
     use super::capability_set_authorizes;
     use super::caveat_evaluation_first_failed_index;
     use super::caveat_evaluation_transcript_accepts;
     use super::caveat_preservation_is_valid;
-    use super::compact_token_envelope_is_valid;
-    use super::compact_token_split_is_valid;
     use super::compose_time_window_chain;
     use super::decode_did_key;
     use super::derive_ed25519_public_key;
     use super::encode_ed25519_did_key;
     use super::invocation_chain_is_authorized;
     use super::invocation_request_is_authorized;
-    use super::json_object_bytes_are_valid;
     use super::parsed_claims_presence_is_valid;
     use super::parsed_did_claims_are_valid;
-    use super::parsed_header_is_valid;
     use super::parsed_temporal_order_is_valid;
     use super::proof_depth_within_budget;
     use super::proof_link_is_valid;
@@ -2249,7 +2091,6 @@ mod tests {
     use super::typed_caveat_set_is_satisfied;
     use super::validate_token_envelope;
     use super::verification_stage_transcript_outcome;
-    use super::verified_json_object_bytes;
     use super::verify_ed25519_signature;
     use super::web_of_trust_attestation_is_active_at;
     use super::web_of_trust_attestation_payload_bytes;
@@ -2362,62 +2203,6 @@ mod tests {
             assert!(!replay_admission_transcript_accepts(&transcript));
             assert_eq!(replay_admission_transcript_first_failed_outcome(&transcript), outcome);
         }
-    }
-
-    #[test]
-    fn compact_token_split_uses_verified_separator_admission() {
-        let parts = VerifiedCompactTokenParts {
-            header: b"header".to_vec(),
-            payload: b"payload".to_vec(),
-            signature: b"signature".to_vec(),
-        };
-        assert!(compact_token_split_is_valid(b"header.payload.signature", &parts));
-
-        let embedded_separator = VerifiedCompactTokenParts {
-            header: b"header".to_vec(),
-            payload: b"pay.load".to_vec(),
-            signature: b"signature".to_vec(),
-        };
-        assert!(!compact_token_split_is_valid(b"header.pay.load.signature", &embedded_separator));
-        assert!(!compact_token_split_is_valid(b"header.payload", &parts));
-    }
-
-    #[test]
-    fn base64url_segment_uses_verified_admission() {
-        assert!(base64url_segment_is_valid(&VerifiedBase64UrlSegment {
-            bytes: b"eyJhbGciOiJFZERTQSJ9".to_vec(),
-        }));
-        assert!(base64url_segment_is_valid(&VerifiedBase64UrlSegment { bytes: Vec::new() }));
-        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment {
-            bytes: b"abc=".to_vec()
-        }));
-        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment {
-            bytes: b"abc+".to_vec()
-        }));
-        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment {
-            bytes: b"abc/".to_vec()
-        }));
-        assert!(!base64url_segment_is_valid(&VerifiedBase64UrlSegment { bytes: b"A".to_vec() }));
-    }
-
-    #[test]
-    fn parsed_header_uses_verified_admission() {
-        assert!(parsed_header_is_valid(&VerifiedParsedHeader {
-            algorithm: b"EdDSA".to_vec(),
-            token_type: b"JWT".to_vec(),
-        }));
-        assert!(!parsed_header_is_valid(&VerifiedParsedHeader {
-            algorithm: b"ES256".to_vec(),
-            token_type: b"JWT".to_vec(),
-        }));
-        assert!(!parsed_header_is_valid(&VerifiedParsedHeader {
-            algorithm: b"EdDSA".to_vec(),
-            token_type: b"JWS".to_vec(),
-        }));
-        assert!(!parsed_header_is_valid(&VerifiedParsedHeader {
-            algorithm: b"EdDSA\0".to_vec(),
-            token_type: b"JWT".to_vec(),
-        }));
     }
 
     #[test]
@@ -2649,22 +2434,6 @@ mod tests {
     }
 
     #[test]
-    fn signing_input_byte_provenance_uses_verified_admission() {
-        let accepted = super::VerifiedSigningInputByteProvenance {
-            header: b"header".to_vec(),
-            payload: b"payload".to_vec(),
-            signing_input: b"header.payload".to_vec(),
-        };
-        assert!(super::signing_input_byte_provenance_is_valid(&accepted));
-
-        let rejected = super::VerifiedSigningInputByteProvenance {
-            signing_input: b"header-PAYLOAD".to_vec(),
-            ..accepted
-        };
-        assert!(!super::signing_input_byte_provenance_is_valid(&rejected));
-    }
-
-    #[test]
     fn caveat_preservation_uses_verified_admission() {
         let preservation = VerifiedCaveatPreservation {
             parent_caveat_ids: vec![b"a".to_vec(), b"b".to_vec()],
@@ -2728,38 +2497,6 @@ mod tests {
     }
 
     #[test]
-    fn json_object_bytes_use_verified_admission() {
-        let object = br#"{"alg":"EdDSA","typ":"JWT"}"#.to_vec();
-        assert!(json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
-            first_significant_index: 0,
-            last_significant_index: object.len() - 1,
-            bytes: object,
-        }));
-        assert!(json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
-            bytes: b" \n\t{}\r\n".to_vec(),
-            first_significant_index: 3,
-            last_significant_index: 4,
-        }));
-        assert!(!json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
-            bytes: b"[]".to_vec(),
-            first_significant_index: 0,
-            last_significant_index: 1,
-        }));
-        assert!(!json_object_bytes_are_valid(&VerifiedJsonObjectBytes {
-            bytes: b" {} ".to_vec(),
-            first_significant_index: 0,
-            last_significant_index: 2,
-        }));
-
-        let discovered = verified_json_object_bytes(b" \n\t{}\r\n").expect("object indexes");
-        assert_eq!(discovered.first_significant_index, 3);
-        assert_eq!(discovered.last_significant_index, 4);
-        assert_eq!(discovered.bytes, b" \n\t{}\r\n".to_vec());
-        assert!(verified_json_object_bytes(b" [] ").is_none());
-        assert!(verified_json_object_bytes(b" \n\t\r").is_none());
-    }
-
-    #[test]
     fn proof_reference_digest_uses_verified_admission() {
         let digest = VerifiedProofReferenceDigest { bytes: vec![42u8; 32] };
         assert!(proof_reference_digest_is_valid(digest.bytes.as_slice(), &digest));
@@ -2769,28 +2506,6 @@ mod tests {
 
         let mismatched_reference = vec![7u8; 32];
         assert!(!proof_reference_digest_is_valid(mismatched_reference.as_slice(), &digest));
-    }
-
-    #[test]
-    fn compact_token_envelope_uses_verified_framing() {
-        let envelope = VerifiedCompactTokenEnvelope {
-            compact: b"header.payload.signature".to_vec(),
-            parts: VerifiedCompactTokenParts {
-                header: b"header".to_vec(),
-                payload: b"payload".to_vec(),
-                signature: b"signature".to_vec(),
-            },
-            signing_input: b"header.payload".to_vec(),
-        };
-        assert!(compact_token_envelope_is_valid(&envelope));
-
-        let mut bad_signing = envelope.clone();
-        bad_signing.signing_input = b"header.payload.signature".to_vec();
-        assert!(!compact_token_envelope_is_valid(&bad_signing));
-
-        let mut bad_compact = envelope;
-        bad_compact.compact = b"header.payload".to_vec();
-        assert!(!compact_token_envelope_is_valid(&bad_compact));
     }
 
     #[test]

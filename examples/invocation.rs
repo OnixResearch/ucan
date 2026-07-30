@@ -17,6 +17,7 @@ use ucan::InvocationResult;
 use ucan::KeyResolutionContext;
 use ucan::ProofCollection;
 use ucan::ProofReference;
+use ucan::ProofReferences;
 use ucan::ReplayAdmission;
 use ucan::ReplayAdmissionError;
 use ucan::TokenSigner;
@@ -97,7 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &issuer,
         &audience,
         &capabilities,
-        &ProofCollection::empty(),
+        &ProofReferences::empty(),
         TokenTimeBounds::new(1_000, 2_000)?,
     )?;
     let context = VerificationContext::new(

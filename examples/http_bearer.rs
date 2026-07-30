@@ -9,11 +9,12 @@ use ucan::Ed25519SigningKey;
 use ucan::IssueRequest;
 use ucan::KeyResolutionContext;
 use ucan::ProofCollection;
+use ucan::ProofReferences;
 use ucan::TokenTimeBounds;
 use ucan::VerificationContext;
 use ucan::VerificationTime;
 use ucan::issue_token;
-use ucan::verify_compact_token;
+use ucan::verify_compact_token_str;
 
 const ISSUER_KEY_BYTE: u8 = 11;
 const AUDIENCE_KEY_BYTE: u8 = 12;
@@ -34,19 +35,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         .signing_key(issuer_key.clone())
         .audience(audience.clone())
         .capabilities(CapabilitySet::single(RESOURCE_DID, ABILITY)?)
-        .proofs(ProofCollection::empty())
+        .proofs(ProofReferences::empty())
         .time_bounds(time_bounds)
         .build()?;
     let token = issue_token(&request)?;
-    let authorization_header = format!("Bearer {token}");
-
-    let token_from_header = authorization_header.strip_prefix("Bearer ").ok_or("missing bearer prefix")?.parse()?;
+    let authorization_header = ("Bearer", token.as_str());
+    if authorization_header.0 != "Bearer" {
+        return Err("missing bearer scheme".into());
+    }
+    let token_from_header = authorization_header.1;
     let context = VerificationContext::builder()
         .time(VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS))
         .keys(KeyResolutionContext::new(vec![ucan::Ed25519VerificationKey::from_signing_key(&issuer_key)?]))
         .proofs(ProofCollection::empty())
         .build()?;
-    let verified = verify_compact_token(&token_from_header, &context)?;
+    let verified = verify_compact_token_str(token_from_header, &context)?;
     let decision = verified.authorize(RESOURCE_DID, ABILITY);
 
     println!("authorization header accepted: {}", decision.is_allowed());

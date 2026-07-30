@@ -19,7 +19,6 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `TokenEnvelopeInput` | `live-path` | `src/token.rs` reference |
 | `TokenTimeWindow` | `live-path` | `src/token.rs` reference |
 | `TokenValidationFailure` | `live-path` | `src/token.rs` reference |
-| `VerifiedBase64UrlSegment` | `live-path` | `src/token.rs` reference |
 | `VerifiedCapability` | `live-path` | `src/token.rs` reference |
 | `VerifiedCaveatEvaluationFact` | `live-path` | `src/token.rs` reference |
 | `VerifiedCaveatEvaluationTranscript` | `live-path` | `src/token.rs` reference |
@@ -27,7 +26,6 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `VerifiedChainEntry` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedDidKey` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedInvocationChainRequest` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
-| `VerifiedJsonObjectBytes` | `live-path` | `src/token.rs` routes through `verified_json_object_bytes`; advanced callers may still supply already-discovered indexes explicitly |
 | `VerifiedParsedCapabilityListShape` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedCapabilityShape` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedCaveatListShape` | `live-path` | `src/token.rs` reference |
@@ -37,7 +35,6 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `VerifiedParsedClaimsPresence` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedDidClaim` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedDidClaims` | `live-path` | `src/token.rs` reference |
-| `VerifiedParsedHeader` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedProofReferenceEntryShape` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedProofReferenceListShape` | `live-path` | `src/token.rs` reference |
 | `VerifiedParsedTemporalOrder` | `live-path` | `src/token.rs` reference |
@@ -51,7 +48,6 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `VerifiedProofTraversalTranscript` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedResult` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedRevocationCheckFact` | `live-path` | `src/token.rs` reference |
-| `VerifiedSigningInputByteProvenance` | `live-path` | `src/token.rs` reference |
 | `VerifiedWebOfTrustAttestation` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedWebOfTrustAuthorization` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `VerifiedWebOfTrustCaveat` | `live-path` | `src/token.rs` reference |
@@ -61,24 +57,21 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `attenuation_chain_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `backend_transcript_accepts` | `live-path` | `src/token.rs` reference |
 | `backend_transcript_first_failed_operation` | `live-path` | `src/token.rs` reference |
-| `base64url_segment_is_valid` | `live-path` | `src/token.rs` reference |
 | `capability_set_authorizes` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `caveat_evaluation_first_failed_index` | `live-path` | `src/token.rs` reference |
 | `caveat_evaluation_transcript_accepts` | `live-path` | `src/token.rs` reference |
 | `caveat_preservation_is_valid` | `live-path` | `src/token.rs` reference |
 | `compose_time_window_chain` | `live-path` | `src/token.rs` reference |
 | `decode_did_key` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
-| `derive_ed25519_public_key` | `live-path` | `src/token.rs` reference |
+| `derive_ed25519_public_key` | `live-path` | `src/token.rs` reference; uses fixed arrays after vendored length admission. |
 | `encode_ed25519_did_key` | `live-path` | `src/token.rs` reference |
 | `invocation_chain_is_authorized` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `invocation_request_is_authorized` | `live-path` | `src/token.rs` reference |
-| `json_object_bytes_are_valid` | `live-path` | explicit-index helper; live parsing now calls `verified_json_object_bytes` for vendored index discovery and object admission |
 | `parsed_capability_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_caveat_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_caveat_payloads_are_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_claims_presence_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_did_claims_are_valid` | `live-path` | `src/token.rs` reference |
-| `parsed_header_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_proof_reference_list_shape_is_valid` | `live-path` | `src/token.rs` reference |
 | `parsed_temporal_order_is_valid` | `live-path` | `src/token.rs` reference |
 | `proof_depth_within_budget` | `live-path` | `src/token.rs` reference; routes shell proof-hop depth conversion and overflow rejection through `verified_logic::ucan_delegation_depth::check_proof_hop_depth_budget`. |
@@ -90,9 +83,8 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `receipt_execution_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `revocation_check_is_valid` | `live-path` | `src/token.rs` reference |
 | `revocation_reference_is_listed` | `live-path` | `src/token.rs` reference |
-| `sign_ed25519` | `live-path` | `src/token.rs` reference |
+| `sign_ed25519` | `live-path` | `src/token.rs` reference; calls `ed25519-dalek` with fixed arrays after vendored length admission. |
 | `signer_algorithm_is_valid` | `live-path` | `src/token.rs` reference before signer identity/key checks; routes exact `EdDSA` byte admission through `verified_logic::ucan_header::supported_algorithm_is_valid`. |
-| `signing_input_byte_provenance_is_valid` | `live-path` | `src/token.rs` reference |
 | `structural_chain_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `structural_chain_not_revoked_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `token_needs_refresh` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
@@ -103,8 +95,7 @@ This inventory is the guard-readable source of truth for UCAN verified bridge co
 | `typed_caveat_rate_limit_payload_shape_is_valid` | `live-path` | `src/token.rs` reference before typed rate-limit payload UTF-8/u64 parsing |
 | `typed_caveat_set_is_satisfied` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `validate_token_envelope` | `live-path` | `src/token.rs` reference |
-| `verified_json_object_bytes` | `live-path` | `src/token.rs` reference; discovers first/last significant decoded JSON object indexes through vendored `ucan_json` before serde parsing |
-| `verify_ed25519_signature` | `live-path` | `src/token.rs` reference |
+| `verify_ed25519_signature` | `live-path` | `src/token.rs` reference; verifies borrowed message and signature slices without bearer-sized `Vec` copies. |
 | `web_of_trust_attestation_is_active_at` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `web_of_trust_attestation_payload_bytes` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
 | `web_of_trust_attestation_signature_is_valid` | `public-helper` | `src/lib.rs` public export only / advanced caller helper |
