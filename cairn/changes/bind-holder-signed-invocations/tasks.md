@@ -2,21 +2,21 @@
 
 - [x] [serial] Define the domain-separated canonical holder-request format and field limits in the no-std functional core. r[ucan.holder_invocation.canonical]
 - [x] [serial] Add positive and negative canonical-format tests, including exact length and substitution differences. r[ucan.holder_invocation.core_tests]
-- [ ] [serial] Add fixed typed profile, request-binding, nonce, signature, and limits inputs. r[ucan.holder_invocation.typed_binding]
+- [x] [serial] Add fixed typed profile, request-binding, nonce, signature, and limits inputs. r[ucan.holder_invocation.typed_binding]
 
 ## Phase 2: Injected shell
 
-- [ ] [serial] Add borrowed signing and verification requests without caller-controlled audience truth. r[ucan.holder_invocation.borrowed_verification]
-- [ ] [serial] Resolve the verified audience key and verify its holder signature. r[ucan.holder_invocation.holder_proof]
-- [ ] [serial] Add explicit operation-profile and nonce/replay admission traits. r[ucan.holder_invocation.injected_boundaries]
-- [ ] [serial] Return a private-construction, non-serde, non-clone live success value. r[ucan.holder_invocation.live_success]
-- [ ] [serial] Remove the false invoker claim from audience-only compatibility APIs. r[ucan.holder_invocation.compatibility]
+- [x] [serial] Add borrowed signing and verification requests without caller-controlled audience truth. r[ucan.holder_invocation.borrowed_verification]
+- [x] [serial] Resolve the verified audience key and verify its holder signature. r[ucan.holder_invocation.holder_proof]
+- [x] [serial] Add explicit operation-profile and nonce/replay admission traits. r[ucan.holder_invocation.injected_boundaries]
+- [x] [serial] Return a private-construction, non-serde, non-clone live success value. r[ucan.holder_invocation.live_success]
+- [x] [serial] Remove the false invoker claim from audience-only compatibility APIs. r[ucan.holder_invocation.compatibility]
 
 ## Phase 3: Adversarial tests and integration
 
-- [ ] [parallel] Add direct and delegated holder-signed invocation success tests. r[ucan.holder_invocation.integration_tests]
-- [ ] [parallel] Add wrong-holder, replay, nonce, substitution, malformed signature, and oversize tests. r[ucan.holder_invocation.security_tests]
-- [ ] [parallel] Add time, proof, revocation, caveat, and unknown-profile denial tests. r[ucan.holder_invocation.security_tests]
+- [x] [parallel] Add direct and delegated holder-signed invocation success tests. r[ucan.holder_invocation.integration_tests]
+- [x] [parallel] Add wrong-holder, replay, nonce, substitution, malformed signature, and oversize tests. r[ucan.holder_invocation.security_tests]
+- [x] [parallel] Add time, proof, revocation, caveat, and unknown-profile denial tests. r[ucan.holder_invocation.security_tests]
 - [ ] [serial] Update the invocation example, readiness evidence, public API docs, verified boundaries, and exact non-claims. r[ucan.holder_invocation.documentation]
 
 ## Phase 4: Validation and lifecycle

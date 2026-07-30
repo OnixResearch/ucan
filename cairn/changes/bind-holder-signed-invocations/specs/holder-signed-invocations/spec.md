@@ -34,13 +34,13 @@ r[ucan.holder_invocation.typed_binding] UCAN MUST expose fixed-width typed opera
 
 ### Requirement: Holder verification borrows and bounds input before canonicalization
 
-r[ucan.holder_invocation.borrowed_verification] Holder verification MUST borrow compact token, resource, ability, signature, and policy inputs; MUST verify the complete compact token first; and MUST bound every canonical field before allocation or canonicalization.
+r[ucan.holder_invocation.borrowed_verification] Holder verification MUST borrow compact token, resource, ability, signature, and policy inputs; MUST verify the complete compact token first; and MUST apply reviewed per-field and total canonical hard maxima before fallible exact allocation or canonicalization.
 
 #### Scenario: Oversized input is also malformed
 
 - GIVEN a compact token or request field exceeds its explicit limit and is also malformed
 - WHEN holder verification runs
-- THEN it MUST fail at the applicable bound before canonical allocation or field hashing.
+- THEN it MUST fail at the applicable bound before canonical allocation or field hashing and MUST return an error instead of requesting unbounded storage.
 
 ### Requirement: Success proves the verified audience key signed the exact request
 
@@ -54,17 +54,17 @@ r[ucan.holder_invocation.holder_proof] UCAN MUST resolve the key for the audienc
 
 ### Requirement: Profile and replay truth remain injected
 
-r[ucan.holder_invocation.injected_boundaries] UCAN MUST call an explicit operation-profile admission boundary and an explicit audience-scoped nonce/replay admission boundary, and replay admission MUST occur after holder signature verification and before success.
+r[ucan.holder_invocation.injected_boundaries] UCAN MUST treat operation-profile and caveat policy checks as non-consuming observations, MUST call them only after holder signature verification, and MUST call the explicit audience-scoped nonce/replay boundary exactly once as the only state-consuming and final commit point.
 
 #### Scenario: A nonce is submitted twice
 
 - GIVEN two valid holder requests use the same verified audience and nonce
-- WHEN the caller-owned replay boundary admits the first request and rejects the second
-- THEN UCAN MUST return success only for the first request.
+- WHEN profile and caveat observations allow both and the caller-owned replay boundary admits the first request and rejects the second
+- THEN UCAN MUST return success only for the first request and MUST perform no work after either replay decision.
 
 ### Requirement: Live success cannot be fabricated or serialized
 
-r[ucan.holder_invocation.live_success] The holder-invocation success value MUST have private fields and private construction and MUST NOT implement `Clone`, `Serialize`, or `Deserialize`.
+r[ucan.holder_invocation.live_success] The holder-invocation success value MUST have private fields and private construction and MUST NOT implement `Clone`, `Serialize`, or `Deserialize`; all owned fields MUST be prepared before replay admission and accepted replay MUST return that value without further work.
 
 #### Scenario: A caller needs durable evidence
 
@@ -94,7 +94,7 @@ r[ucan.holder_invocation.integration_tests] The integration suite MUST accept bo
 
 ### Requirement: Security substitutions and verification failures fail closed
 
-r[ucan.holder_invocation.security_tests] The suite MUST reject wrong-holder signatures, duplicate replay, malformed or substituted nonce, request-binding substitution, ability substitution, resource substitution, profile substitution, malformed signatures, oversized fields, invalid time, missing or invalid proof, revocation, caveat denial, and unknown profiles.
+r[ucan.holder_invocation.security_tests] The suite MUST reject wrong-holder signatures, duplicate replay, malformed or substituted nonce, request-binding substitution, ability substitution, resource substitution, profile substitution, malformed signatures, excessive configured limits, excessive total canonical size, allocation failure, invalid time, missing or invalid proof, revocation, caveat denial, and unknown profiles; call-order tests MUST prove that failed prior checks do not reach later injected boundaries.
 
 #### Scenario: Signed request data is substituted
 
@@ -104,7 +104,7 @@ r[ucan.holder_invocation.security_tests] The suite MUST reject wrong-holder sign
 
 ### Requirement: Documentation preserves exact non-claims
 
-r[ucan.holder_invocation.documentation] Public documentation MUST distinguish holder signature proof from audience-only authorization and MUST assign action semantics, request canonicalization, profile registry truth, nonce durability, resolver freshness, and execution safety to downstream consumers.
+r[ucan.holder_invocation.documentation] Public documentation MUST distinguish holder signature proof from audience-only authorization; MUST define profile and caveat policy checks as non-consuming; and MUST assign consumptive rate limits, action semantics, request canonicalization, profile registry truth, nonce durability, resolver freshness, and execution safety to downstream consumers.
 
 #### Scenario: A consumer reads the API guide
 

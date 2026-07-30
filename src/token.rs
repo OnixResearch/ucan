@@ -62,7 +62,6 @@ use crate::verified::caveat_preservation_is_valid;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
-use crate::verified::invocation_request_is_authorized;
 use crate::verified::parsed_capability_list_shape_is_valid;
 use crate::verified::parsed_caveat_list_shape_is_valid;
 use crate::verified::parsed_caveat_payloads_are_valid;
@@ -115,6 +114,9 @@ pub type SignerResult<T> = std::result::Result<T, SignerError>;
 pub type TokenResult<T> = std::result::Result<T, TokenError>;
 pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
 pub type TimeConversionResult<T> = std::result::Result<T, TimeConversionError>;
+
+mod holder_invocation;
+pub use holder_invocation::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuilderError {
@@ -957,10 +959,16 @@ impl CaveatDecision {
     }
 }
 
+/// A non-consuming caveat observation.
+///
+/// Implementations must not spend quota, reserve capacity, claim nonces, or
+/// mutate admission state. Consumptive effects belong in a downstream atomic
+/// boundary after UCAN returns authorization.
 pub trait CaveatPolicy {
     fn evaluate(&self, caveat: &CaveatDocument, request: &AuthorizationRequest) -> CaveatDecision;
 }
 
+/// A non-consuming lookup for caveat observations.
 pub trait CaveatPolicySet {
     fn policy_for(&self, caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy>;
 }
@@ -1162,10 +1170,13 @@ impl<'a> InvocationRequest<'a> {
     }
 }
 
+/// Audience-only compatibility authorization.
+///
+/// This value proves token and capability authorization for the audience. It
+/// does not prove that a live sender holds the audience private key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvocationAllowed {
     issuer: IssuerDid,
-    invoker: IssuerDid,
     audience: AudienceDid,
     matched_capability: CapabilityDocument,
     effective_time_bounds: TokenTimeBounds,
@@ -1175,10 +1186,6 @@ impl InvocationAllowed {
     #[must_use]
     pub const fn issuer(&self) -> &IssuerDid {
         &self.issuer
-    }
-    #[must_use]
-    pub const fn invoker(&self) -> &IssuerDid {
-        &self.invoker
     }
     #[must_use]
     pub const fn audience(&self) -> &AudienceDid {
@@ -1214,6 +1221,11 @@ impl InvocationResult {
     }
 }
 
+/// Verify audience-only token and capability authorization.
+///
+/// This compatibility helper does not verify sender or holder possession. Use
+/// [`verify_holder_signed_invocation`] when a live audience-key signature and
+/// explicit nonce admission are required.
 #[must_use]
 pub fn verify_invocation(request: &InvocationRequest<'_>) -> InvocationResult {
     let verified = match verify_compact_token(request.token, request.context) {
@@ -1227,53 +1239,14 @@ pub fn verify_invocation(request: &InvocationRequest<'_>) -> InvocationResult {
         }
     };
     match verified.authorize_with_policies(request.resource.as_str(), request.ability.as_str(), request.policies) {
-        AuthorizationDecision::Allowed { matched_capability } => {
-            let matched_verified = match VerifiedCapability::from_document(matched_capability.clone()) {
-                Ok(matched_verified) => matched_verified,
-                Err(error) => {
-                    return InvocationResult::Denied {
-                        reason: InvocationDenialReason::Verification {
-                            message: error.to_string(),
-                        },
-                    };
-                }
-            };
-            if matched_verified.is_concrete()
-                && !invocation_request_is_authorized(
-                    verified.audience().as_str(),
-                    verified.audience().as_str(),
-                    request.resource.as_str(),
-                    request.ability.as_str(),
-                    matched_capability.resource.as_str(),
-                    matched_capability.ability.as_str(),
-                )
-            {
-                return InvocationResult::Denied {
-                    reason: InvocationDenialReason::Verification {
-                        message: "concrete invocation admission failed verified invocation bridge".to_owned(),
-                    },
-                };
-            }
-            let invoker = match IssuerDid::new(verified.audience().as_str().to_owned()) {
-                Ok(invoker) => invoker,
-                Err(error) => {
-                    return InvocationResult::Denied {
-                        reason: InvocationDenialReason::Verification {
-                            message: error.to_string(),
-                        },
-                    };
-                }
-            };
-            InvocationResult::Allowed {
-                invocation: InvocationAllowed {
-                    issuer: verified.issuer().clone(),
-                    invoker,
-                    audience: verified.audience().clone(),
-                    matched_capability,
-                    effective_time_bounds: verified.effective_delegation().time_bounds(),
-                },
-            }
-        }
+        AuthorizationDecision::Allowed { matched_capability } => InvocationResult::Allowed {
+            invocation: InvocationAllowed {
+                issuer: verified.issuer().clone(),
+                audience: verified.audience().clone(),
+                matched_capability,
+                effective_time_bounds: verified.effective_delegation().time_bounds(),
+            },
+        },
         AuthorizationDecision::Denied { reason } => InvocationResult::Denied {
             reason: InvocationDenialReason::Authorization { reason },
         },
@@ -2514,6 +2487,27 @@ impl VerifiedToken {
         request: &AuthorizationRequest,
         policies: &dyn CaveatPolicySet,
     ) -> AuthorizationDecision {
+        let matched = self.match_authorization_request(request);
+        let AuthorizationDecision::Allowed { matched_capability } = matched else {
+            return matched;
+        };
+        if let Some(reason) = evaluate_capability_caveats(&matched_capability, request, policies) {
+            return AuthorizationDecision::Denied { reason };
+        }
+        AuthorizationDecision::Allowed { matched_capability }
+    }
+
+    fn match_authorization_request(&self, request: &AuthorizationRequest) -> AuthorizationDecision {
+        let requested = match VerifiedCapability::from_document(request.capability().clone()) {
+            Ok(requested) => requested,
+            Err(error) => {
+                return AuthorizationDecision::Denied {
+                    reason: AuthorizationDenialReason::MalformedRequest {
+                        message: error.to_string(),
+                    },
+                };
+            }
+        };
         for capability in self.effective_delegation().capabilities().as_slice() {
             let parent = match VerifiedCapability::from_document(capability.clone()) {
                 Ok(parent) => parent,
@@ -2525,20 +2519,7 @@ impl VerifiedToken {
                     };
                 }
             };
-            let requested = match VerifiedCapability::from_document(request.capability().clone()) {
-                Ok(requested) => requested,
-                Err(error) => {
-                    return AuthorizationDecision::Denied {
-                        reason: AuthorizationDenialReason::MalformedRequest {
-                            message: error.to_string(),
-                        },
-                    };
-                }
-            };
             if parent.contains(&requested) {
-                if let Some(reason) = evaluate_capability_caveats(capability, request, policies) {
-                    return AuthorizationDecision::Denied { reason };
-                }
                 return AuthorizationDecision::Allowed {
                     matched_capability: capability.clone(),
                 };
@@ -4935,7 +4916,6 @@ mod tests {
             panic!("invocation should be allowed");
         };
         assert_eq!(invocation.issuer().as_str(), issuer_key.issuer().expect("issuer").as_str());
-        assert_eq!(invocation.invoker().as_str(), audience.as_str());
         assert_eq!(invocation.audience().as_str(), audience.as_str());
         assert_eq!(invocation.matched_capability().resource, "did:key:z6Mkresource");
         assert_eq!(invocation.effective_time_bounds(), token_time_bounds());
@@ -4967,7 +4947,7 @@ mod tests {
         let InvocationResult::Allowed { invocation } = result else {
             panic!("concrete invocation should be allowed");
         };
-        assert_eq!(invocation.invoker().as_str(), audience.as_str());
+        assert_eq!(invocation.audience().as_str(), audience.as_str());
         assert_eq!(invocation.matched_capability().ability, "store/add");
     }
 

@@ -9,17 +9,20 @@ The new boundary must prove possession of the audience key for one exact, replay
 Completion requires all of the following evidence:
 
 - complete borrowed token verification runs before holder canonicalization;
-- every variable field is bounded before allocation;
+- every variable field is bounded by reviewed hard maxima before allocation;
+- the total canonical size is bounded and exact allocation failure returns an error;
 - one documented canonical format binds all required fields;
 - the verified audience key validates the signature;
 - an explicit profile admission boundary rejects unknown profiles;
-- an explicit nonce/replay boundary runs after signature verification and before success;
+- non-consuming profile and caveat observations finish before nonce admission;
+- the nonce/replay boundary runs exactly once as the final commit point;
+- all owned success fields exist before replay, with no work after replay accepts;
 - the success type has private construction and no serde or clone surface;
 - direct and delegated positive tests pass;
 - each requested negative class fails at the intended boundary;
 - full repository and Cairn rails pass.
 
-False completion includes audience equality alone, signing a partial token identity, caller-supplied audience substitution, replay admission before signature verification, unbounded canonicalization, a generic serialized success receipt, or a UCAN-owned action enum.
+False completion includes audience equality alone, signing a partial token identity, caller-supplied audience substitution, policy calls before signature verification, replay before pure checks, work after replay success, unbounded canonicalization, a generic serialized success receipt, or a UCAN-owned action enum.
 
 ## Portfolio Search Registry
 
@@ -48,7 +51,9 @@ The bounded search uses local source, dependency APIs, deterministic tests, and 
 
 The domain is not caller-configurable. Fixed fields have no redundant length. Variable fields use one fixed-width length prefix. The functional core calculates the exact output length and writes into a caller-provided exact slice.
 
-**Rationale:** Field order, widths, and domain separation make substitution and concatenation ambiguity testable. The complete token digest binds all token bytes after the existing complete-input bound.
+The shell enforces reviewed hard maxima of 1,024 audience bytes, 16,384 resource bytes, 1,024 ability bytes, and 16,384 total canonical bytes. It uses `try_reserve_exact` before initialization. It returns a limit error for excessive configuration, total length, or allocation failure.
+
+**Rationale:** Field order, widths, and domain separation make substitution and concatenation ambiguity testable. The complete token digest binds all token bytes after the existing complete-input bound. Hard shell maxima prevent public custom limits from requesting `u32::MAX`-scale allocation.
 
 ### Decision: Keep canonicalization in `ucan-core`
 
@@ -68,11 +73,13 @@ The domain is not caller-configurable. Fixed fields have no redundant length. Va
 
 **Rationale:** A holder needs a portable signing helper. The verifier must establish token truth independently before it trusts the audience identity.
 
-### Decision: Use audience-scoped nonce admission
+### Decision: Use replay as the final commit point
 
-**Choice:** `HolderInvocationReplayAdmission` receives the verified audience, fixed nonce, and canonical request digest. It runs only after token, authorization, profile, key, and signature checks.
+**Choice:** The required order is complete token verification, bounds and canonicalization, audience-key signature verification, operation-profile admission, capability and caveat authorization, complete live-success construction, and exactly one replay admission call. Replay receives the verified audience, fixed nonce, and canonical request digest. UCAN returns the prebuilt success directly when replay accepts.
 
-**Rationale:** The caller owns nonce uniqueness, freshness, durability, crash recovery, and backend policy. The request digest gives the backend exact signed context without transferring those claims to UCAN.
+`OperationProfileAdmission` and `CaveatPolicy` are non-consuming observations. They may record telemetry, but they must not claim nonces, spend quota, reserve capacity, or mutate admission state. A consumer that needs consumptive rate limits applies them in a separate downstream atomic effect boundary after UCAN success.
+
+**Rationale:** Unauthenticated requests cannot consume profile, caveat, or replay state. Unknown profiles and denied capabilities or caveats do not burn nonces. Replay is the only consuming step and no allocation, policy call, resolver call, canonicalization, or fallible work follows it.
 
 ### Decision: Narrow the compatibility claim
 
@@ -82,7 +89,9 @@ The domain is not caller-configurable. Fixed fields have no redundant length. Va
 
 ## Adversarial Audit
 
-The test matrix mutates one signed field at a time. It covers token bytes, audience key, resource target, ability action, profile identity, request digest, and nonce. Separate tests cover duplicate admission, nonce width, signature width or corruption, field limits, token time, proof resolution, revocation, caveat denial, and unknown profiles.
+The test matrix mutates one signed field at a time. It covers token bytes, audience key, resource target, ability action, profile identity, request digest, and nonce. Separate tests cover duplicate admission, nonce width, signature width or corruption, hard field and total limits, simulated allocation failure, token time, proof resolution, revocation, caveat denial, and unknown profiles.
+
+Call-order tests prove that a bad signature calls no profile, caveat, or replay trait; profile denial calls no caveat or replay trait; caveat denial calls no replay trait; and replay denial occurs exactly once after all observations.
 
 The API must not expose public constructors or fields for the success value. A source guard rejects `Clone`, serde, and public construction surfaces.
 
@@ -92,6 +101,7 @@ The API must not expose public constructors or fields for the success value. A s
 - Profile admission does not prove downstream action semantics or registry freshness.
 - Request-binding equality does not prove the downstream request canonicalizer is correct.
 - Nonce admission does not prove uniqueness, durability, crash consistency, freshness, or cross-process coordination.
+- Caveat evaluation and profile admission do not perform consumptive quota or rate-limit effects.
 - Token verification does not prove downstream execution, authorization completeness, or side-effect safety.
 - BLAKE3 identity binds bytes; it does not make bearer input public or prove issuer intent beyond verified claims.
 
