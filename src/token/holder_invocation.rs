@@ -153,7 +153,7 @@ impl HolderInvocationNonce {
     /// # Errors
     ///
     /// Returns [`HolderInvocationInputError`] when the nonce has the wrong width.
-    pub fn try_from_slice(bytes: &[u8]) -> HolderInvocationInputResult<Self> {
+    pub const fn try_from_slice(bytes: &[u8]) -> HolderInvocationInputResult<Self> {
         if bytes.len() != HOLDER_INVOCATION_NONCE_BYTES {
             return Err(HolderInvocationInputError::InvalidFixedWidth {
                 field: HolderInvocationFixedField::Nonce,
@@ -829,7 +829,7 @@ fn authorize_request(
     }
 }
 
-fn enforce_signing_token_bound(token: &str, limits: VerificationLimits) -> HolderInvocationResult<()> {
+const fn enforce_signing_token_bound(token: &str, limits: VerificationLimits) -> HolderInvocationResult<()> {
     if token.len() > limits.max_compact_token_bytes() {
         return Err(HolderInvocationError::Token {
             source: TokenError::LimitExceeded {
@@ -898,7 +898,7 @@ where F: FnOnce(&mut Vec<u8>, usize) -> bool {
     Ok(buffer)
 }
 
-fn admit_configured_limit(
+const fn admit_configured_limit(
     field: HolderInvocationField,
     configured: usize,
     hard_maximum: usize,
@@ -917,7 +917,7 @@ fn token_reference(token: &str) -> HolderInvocationTokenReference {
     HolderInvocationTokenReference(*blake3::hash(token.as_bytes()).as_bytes())
 }
 
-fn copy_fixed_digest(
+const fn copy_fixed_digest(
     field: HolderInvocationFixedField,
     bytes: &[u8],
 ) -> HolderInvocationInputResult<[u8; HOLDER_INVOCATION_DIGEST_BYTES]> {
@@ -1940,184 +1940,191 @@ mod tests {
     }
 
     #[test]
-    fn injected_call_order_reaches_replay_only_after_all_observations() {
+    fn bad_signature_calls_no_profile_caveat_or_replay_boundary() {
+        let fixture = DirectFixture::with_capability_and_expiration(caveated_capability(), TOKEN_EXPIRES_SECONDS);
+        let signature =
+            sign_request(&fixture.token, &fixture.audience, RESOURCE, ABILITY, operation(), nonce(), &fixture.holder);
+        let mut corrupted_bytes = [0_u8; super::super::ED25519_SIGNATURE_BYTES];
+        corrupted_bytes.copy_from_slice(signature.as_bytes());
+        corrupted_bytes[0] ^= SIGNATURE_CORRUPTION_BYTE;
+        let corrupted_signature = SignerSignature::from_bytes(corrupted_bytes);
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let events = RefCell::new(Vec::new());
+        let profile = OrderedProfile {
+            events: &events,
+            admit: true,
+        };
+        let caveats = OrderedCaveatSet {
+            policy: OrderedCaveatPolicy {
+                events: &events,
+                satisfy: true,
+            },
+        };
+        let replay = OrderedReplay {
+            events: &events,
+            admit: true,
+            calls: Cell::new(0),
+        };
+        let verifier = TestVerifier {
+            time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            keys: &fixture.keys,
+            proofs: &proofs,
+            revocations: &revocations,
+            profiles: &profile,
+            replay: &replay,
+            caveats: &caveats,
+            token_limits: VerificationLimits::default(),
+            holder_limits: HolderInvocationLimits::default(),
+        };
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            &corrupted_signature,
+        );
+
+        assert!(matches!(verifier.verify(&request), Err(HolderInvocationError::InvalidHolderSignature)));
+        assert!(events.borrow().is_empty());
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn profile_denial_calls_no_caveat_or_replay_boundary() {
         let fixture = DirectFixture::with_capability_and_expiration(caveated_capability(), TOKEN_EXPIRES_SECONDS);
         let signature =
             sign_request(&fixture.token, &fixture.audience, RESOURCE, ABILITY, operation(), nonce(), &fixture.holder);
         let proofs = ProofCollection::empty();
         let revocations = NoRevocations;
-
-        let bad_signature_events = RefCell::new(Vec::new());
-        let bad_signature_profile = OrderedProfile {
-            events: &bad_signature_events,
-            admit: true,
-        };
-        let bad_signature_caveats = OrderedCaveatSet {
-            policy: OrderedCaveatPolicy {
-                events: &bad_signature_events,
-                satisfy: true,
-            },
-        };
-        let bad_signature_replay = OrderedReplay {
-            events: &bad_signature_events,
-            admit: true,
-            calls: Cell::new(0),
-        };
-        let mut corrupted_bytes = [0_u8; super::super::ED25519_SIGNATURE_BYTES];
-        corrupted_bytes.copy_from_slice(signature.as_bytes());
-        corrupted_bytes[0] ^= SIGNATURE_CORRUPTION_BYTE;
-        let corrupted_signature = SignerSignature::from_bytes(corrupted_bytes);
-        let bad_signature_verifier = TestVerifier {
-            time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
-            keys: &fixture.keys,
-            proofs: &proofs,
-            revocations: &revocations,
-            profiles: &bad_signature_profile,
-            replay: &bad_signature_replay,
-            caveats: &bad_signature_caveats,
-            token_limits: VerificationLimits::default(),
-            holder_limits: HolderInvocationLimits::default(),
-        };
-        assert!(matches!(
-            bad_signature_verifier.verify(&HolderInvocationRequest::new(
-                fixture.token.as_str(),
-                RESOURCE,
-                ABILITY,
-                operation(),
-                nonce(),
-                &corrupted_signature,
-            )),
-            Err(HolderInvocationError::InvalidHolderSignature)
-        ));
-        assert!(bad_signature_events.borrow().is_empty());
-        assert_eq!(bad_signature_replay.calls.get(), 0);
-
-        let profile_denial_events = RefCell::new(Vec::new());
-        let profile_denial_profile = OrderedProfile {
-            events: &profile_denial_events,
+        let events = RefCell::new(Vec::new());
+        let profile = OrderedProfile {
+            events: &events,
             admit: false,
         };
-        let profile_denial_caveats = OrderedCaveatSet {
+        let caveats = OrderedCaveatSet {
             policy: OrderedCaveatPolicy {
-                events: &profile_denial_events,
+                events: &events,
                 satisfy: true,
             },
         };
-        let profile_denial_replay = OrderedReplay {
-            events: &profile_denial_events,
+        let replay = OrderedReplay {
+            events: &events,
             admit: true,
             calls: Cell::new(0),
         };
-        let profile_denial_verifier = TestVerifier {
+        let verifier = TestVerifier {
             time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
             keys: &fixture.keys,
             proofs: &proofs,
             revocations: &revocations,
-            profiles: &profile_denial_profile,
-            replay: &profile_denial_replay,
-            caveats: &profile_denial_caveats,
+            profiles: &profile,
+            replay: &replay,
+            caveats: &caveats,
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
+        let request =
+            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+
         assert!(matches!(
-            profile_denial_verifier.verify(&HolderInvocationRequest::new(
-                fixture.token.as_str(),
-                RESOURCE,
-                ABILITY,
-                operation(),
-                nonce(),
-                &signature,
-            )),
+            verifier.verify(&request),
             Err(HolderInvocationError::OperationProfile {
                 source: OperationProfileAdmissionError::UnknownProfile
             })
         ));
-        assert_eq!(*profile_denial_events.borrow(), ["profile"]);
-        assert_eq!(profile_denial_replay.calls.get(), 0);
+        assert_eq!(events.borrow().as_slice(), ["profile"]);
+        assert_eq!(replay.calls.get(), 0);
+    }
 
-        let caveat_denial_events = RefCell::new(Vec::new());
-        let caveat_denial_profile = OrderedProfile {
-            events: &caveat_denial_events,
+    #[test]
+    fn caveat_denial_calls_no_replay_boundary() {
+        let fixture = DirectFixture::with_capability_and_expiration(caveated_capability(), TOKEN_EXPIRES_SECONDS);
+        let signature =
+            sign_request(&fixture.token, &fixture.audience, RESOURCE, ABILITY, operation(), nonce(), &fixture.holder);
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let events = RefCell::new(Vec::new());
+        let profile = OrderedProfile {
+            events: &events,
             admit: true,
         };
-        let caveat_denial_caveats = OrderedCaveatSet {
+        let caveats = OrderedCaveatSet {
             policy: OrderedCaveatPolicy {
-                events: &caveat_denial_events,
+                events: &events,
                 satisfy: false,
             },
         };
-        let caveat_denial_replay = OrderedReplay {
-            events: &caveat_denial_events,
+        let replay = OrderedReplay {
+            events: &events,
             admit: true,
             calls: Cell::new(0),
         };
-        let caveat_denial_verifier = TestVerifier {
+        let verifier = TestVerifier {
             time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
             keys: &fixture.keys,
             proofs: &proofs,
             revocations: &revocations,
-            profiles: &caveat_denial_profile,
-            replay: &caveat_denial_replay,
-            caveats: &caveat_denial_caveats,
+            profiles: &profile,
+            replay: &replay,
+            caveats: &caveats,
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
-        assert!(matches!(
-            caveat_denial_verifier.verify(&HolderInvocationRequest::new(
-                fixture.token.as_str(),
-                RESOURCE,
-                ABILITY,
-                operation(),
-                nonce(),
-                &signature,
-            )),
-            Err(HolderInvocationError::Authorization { .. })
-        ));
-        assert_eq!(*caveat_denial_events.borrow(), ["profile", "caveat"]);
-        assert_eq!(caveat_denial_replay.calls.get(), 0);
+        let request =
+            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
 
-        let replay_denial_events = RefCell::new(Vec::new());
-        let replay_denial_profile = OrderedProfile {
-            events: &replay_denial_events,
+        assert!(matches!(verifier.verify(&request), Err(HolderInvocationError::Authorization { .. })));
+        assert_eq!(events.borrow().as_slice(), ["profile", "caveat"]);
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn replay_denial_occurs_once_after_all_observations() {
+        let fixture = DirectFixture::with_capability_and_expiration(caveated_capability(), TOKEN_EXPIRES_SECONDS);
+        let signature =
+            sign_request(&fixture.token, &fixture.audience, RESOURCE, ABILITY, operation(), nonce(), &fixture.holder);
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let events = RefCell::new(Vec::new());
+        let profile = OrderedProfile {
+            events: &events,
             admit: true,
         };
-        let replay_denial_caveats = OrderedCaveatSet {
+        let caveats = OrderedCaveatSet {
             policy: OrderedCaveatPolicy {
-                events: &replay_denial_events,
+                events: &events,
                 satisfy: true,
             },
         };
-        let replay_denial = OrderedReplay {
-            events: &replay_denial_events,
+        let replay = OrderedReplay {
+            events: &events,
             admit: false,
             calls: Cell::new(0),
         };
-        let replay_denial_verifier = TestVerifier {
+        let verifier = TestVerifier {
             time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
             keys: &fixture.keys,
             proofs: &proofs,
             revocations: &revocations,
-            profiles: &replay_denial_profile,
-            replay: &replay_denial,
-            caveats: &replay_denial_caveats,
+            profiles: &profile,
+            replay: &replay,
+            caveats: &caveats,
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
+        let request =
+            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+
         assert!(matches!(
-            replay_denial_verifier.verify(&HolderInvocationRequest::new(
-                fixture.token.as_str(),
-                RESOURCE,
-                ABILITY,
-                operation(),
-                nonce(),
-                &signature,
-            )),
+            verifier.verify(&request),
             Err(HolderInvocationError::Replay {
                 source: HolderInvocationReplayError::Denied
             })
         ));
-        assert_eq!(*replay_denial_events.borrow(), ["profile", "caveat", "replay"]);
-        assert_eq!(replay_denial.calls.get(), 1);
+        assert_eq!(events.borrow().as_slice(), ["profile", "caveat", "replay"]);
+        assert_eq!(replay.calls.get(), 1);
     }
 
     #[test]
@@ -2140,9 +2147,8 @@ mod tests {
         assert!(!production.contains(deserialize_impl.as_str()));
         assert!(!struct_block.lines().skip(1).any(|line| line.trim_start().starts_with("pub ")));
 
-        let verify_start = production
-            .find("pub fn verify_holder_signed_invocation")
-            .expect("holder verifier must exist");
+        let verify_start =
+            production.find("pub fn verify_holder_signed_invocation").expect("holder verifier must exist");
         let verify_end = production[verify_start..]
             .find("\n}\n\nfn authorize_request")
             .map(|offset| verify_start + offset)
@@ -2151,9 +2157,7 @@ mod tests {
         let success_build = verify_body
             .find("let authorized = HolderInvocationAuthorized")
             .expect("live success must be prepared");
-        let replay_commit = verify_body
-            .find(".admit_holder_invocation")
-            .expect("replay commit must exist");
+        let replay_commit = verify_body.find(".admit_holder_invocation").expect("replay commit must exist");
         assert!(success_build < replay_commit);
         let after_replay = &verify_body[replay_commit..];
         assert!(!after_replay.contains(".clone()"));

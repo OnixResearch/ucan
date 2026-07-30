@@ -69,6 +69,7 @@ impl fmt::Display for HolderInvocationCanonicalError {
 impl core::error::Error for HolderInvocationCanonicalError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct HolderInvocationFieldLimits {
     audience_bytes: usize,
     resource_bytes: usize,
@@ -178,6 +179,10 @@ pub fn holder_invocation_canonical_len(
 ///
 /// Returns [`HolderInvocationCanonicalError`] when a field is not admitted or
 /// the output slice does not have the exact calculated length.
+///
+/// # Panics
+///
+/// Panics only if an internal write violates the admitted exact-length invariant.
 pub fn write_holder_invocation_canonical(
     fields: &HolderInvocationCanonicalFields<'_>,
     limits: HolderInvocationFieldLimits,
@@ -221,7 +226,11 @@ fn admit_limit(field: HolderInvocationField, limit: usize) -> Result<(), HolderI
     Ok(())
 }
 
-fn admit_field(field: HolderInvocationField, value: &str, limit: usize) -> Result<(), HolderInvocationCanonicalError> {
+const fn admit_field(
+    field: HolderInvocationField,
+    value: &str,
+    limit: usize,
+) -> Result<(), HolderInvocationCanonicalError> {
     if value.is_empty() {
         return Err(HolderInvocationCanonicalError::EmptyField { field });
     }
