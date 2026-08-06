@@ -189,3 +189,4 @@ The snapshot records a committed Trellis source revision and preserves its licen
 ## References
 
 - [Nostr protocol and NIPs](https://github.com/nostr-protocol/nips) — signed-event and request-authentication interoperability reference. UCAN retains token algorithms, DIDs, and authority boundaries.
+- [AeneasVerif/aeneas](https://github.com/AeneasVerif/aeneas) — exact-source Aeneas/Lean proof-pilot reference for selected safe deterministic `ucan-core` functions; any receipt remains property- and source-scoped and does not transfer parser, cryptographic, authorization, interoperability, or whole-system claims.
