@@ -12,7 +12,7 @@ The section below is generated structurally from `production_readiness_report()`
 
 <!-- BEGIN GENERATED UCAN SUPPORT CATALOG -->
 
-Catalog BLAKE3: `02fb9fec563b5df9f40a58bbbddfd0bcf5abe74da373ae0b506712647e0ee6ad`
+Catalog BLAKE3: `9452f2e5a050a082212a8fd36b5d7a4b6dcd1ee2a1899913dce9c2d8a683d956`
 
 Catalog schema: `ucan.support-catalog.v1`
 
@@ -33,6 +33,7 @@ Catalog schema: `ucan.support-catalog.v1`
 | `opaque-caveat-policy-evaluation` | `controlled-integration-ready` | CaveatPolicySet requires every caveat to have an explicit policy; missing or rejected policies deny authorization | arbitrary caveat vocabulary semantics, clocks, counters, and external policy truth are application-owned |
 | `finite-typed-caveat-helpers` | `preview` | verified finite time-bound and rate-limit helper predicates are exposed for advanced callers | adopting those helpers as a production vocabulary requires integration-specific policy and provenance evidence |
 | `web-of-trust-helpers` | `preview` | finite WOT evidence, threshold, and UCAN authorization helpers are exposed below the compact-token shell | DID/CID decoding, evidence fetching, trust-store discovery, revocation freshness, and persistence are not supplied |
+| `nostr-identity-adapter` | `preview` | the optional ucan-nostr package verifies bounded NIP-01, NIP-42, NIP-98, and application challenge facts with exact digest roles | relay access, DNS, signing, clocks, replay storage, subject resolution, and authorization remain caller-owned |
 | `remote-did-resolution` | `unsupported` | no built-in remote resolver is provided | integrators must supply resolver trust, method admission, freshness, cache, and fail-closed behavior |
 | `proof-transport-backends` | `unsupported` | no built-in network, filesystem, database, IPFS, or content-addressed proof transport is provided | integrators must supply proof provenance, freshness, bounds, and reference matching |
 | `registry-backed-revocation` | `unsupported` | no built-in registry client or persistence layer is provided | integrators must supply registry truth, freshness, duplicate handling, and outage behavior |

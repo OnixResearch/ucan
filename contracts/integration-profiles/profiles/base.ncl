@@ -4,7 +4,7 @@ let MaximumInputBytes = 65536 in
 {
   schema = "ucan.integration-support-profile.v1",
   id = "ucan.controlled-ed25519-did-key",
-  catalog_blake3 = "02fb9fec563b5df9f40a58bbbddfd0bcf5abe74da373ae0b506712647e0ee6ad",
+  catalog_blake3 = "9452f2e5a050a082212a8fd36b5d7a4b6dcd1ee2a1899913dce9c2d8a683d956",
   required_surfaces = [
     "ed25519-did-key-compact-token",
     "caller-supplied-key-resolution",

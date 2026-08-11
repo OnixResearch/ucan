@@ -19,6 +19,15 @@ let Contracts = import "../contracts.ncl" in
     expected_code = "accepted",
   },
   {
+    id = "positive-nostr-preview",
+    path = "contracts/integration-profiles/profiles/preview-nostr-identity.ncl",
+    profile_path = "",
+    kind = "profile",
+    expected = "accept",
+    expected_stage = "admission",
+    expected_code = "accepted",
+  },
+  {
     id = "positive-public-manifest",
     path = "contracts/integration-profiles/fixtures/manifests/public-allow.ncl",
     profile_path = "contracts/integration-profiles/profiles/controlled.ncl",

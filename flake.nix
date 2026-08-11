@@ -107,7 +107,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoExtraArgs = "--locked --no-deps -p ucan -p ucan-core";
+              cargoExtraArgs = "--locked --no-deps -p ucan -p ucan-core -p ucan-nostr";
               cargoClippyExtraArgs = "--all-targets -- -D warnings -A clippy::cargo-common-metadata";
             }
           );

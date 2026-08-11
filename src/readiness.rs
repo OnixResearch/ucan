@@ -243,6 +243,13 @@ const SURFACES: &[ReadinessSurface] = &[
         evidence: "finite WOT evidence, threshold, and UCAN authorization helpers are exposed below the compact-token shell",
         boundary: "DID/CID decoding, evidence fetching, trust-store discovery, revocation freshness, and persistence are not supplied",
     },
+    // r[impl ucan.nostr_identity_adapter.support_profile]
+    ReadinessSurface {
+        id: "nostr-identity-adapter",
+        level: SupportLevel::Preview,
+        evidence: "the optional ucan-nostr package verifies bounded NIP-01, NIP-42, NIP-98, and application challenge facts with exact digest roles",
+        boundary: "relay access, DNS, signing, clocks, replay storage, subject resolution, and authorization remain caller-owned",
+    },
     ReadinessSurface {
         id: "remote-did-resolution",
         level: SupportLevel::Unsupported,
@@ -354,6 +361,21 @@ mod tests {
                 .iter()
                 .any(|option| { option.id == "non-Ed25519" && option.level == SupportLevel::Unsupported })
         );
+    }
+
+    // r[verify ucan.nostr_identity_adapter.support_profile]
+    #[test]
+    fn nostr_adapter_stays_preview_and_caller_owned() {
+        let report = production_readiness_report();
+        let surface = report
+            .surfaces
+            .iter()
+            .find(|surface| surface.id == "nostr-identity-adapter")
+            .expect("Nostr adapter surface must exist");
+
+        assert_eq!(surface.level, SupportLevel::Preview);
+        assert!(surface.boundary.contains("replay storage"));
+        assert!(surface.boundary.contains("authorization"));
     }
 
     #[test]

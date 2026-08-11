@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Define optional Nostr key-control verification without changing UCAN token algorithms, DID support, or authorization semantics.
+Defines the `nostr-identity-adapter` capability.
 
 ## Requirements
 
-### Requirement: Nostr integration remains an optional adapter [r[ucan.nostr_identity_adapter.package_boundary]]
+### Requirement: Nostr integration remains an optional adapter
 
-UCAN MUST provide Nostr identity verification through an optional in-tree adapter. Existing UCAN token paths MUST remain independent from this adapter.
+r[ucan.nostr_identity_adapter.package_boundary] UCAN MUST provide Nostr identity verification through an optional in-tree adapter. Existing UCAN token paths MUST remain independent from this adapter.
 
 #### Scenario: Existing UCAN consumers omit the adapter
 
@@ -24,9 +24,9 @@ UCAN MUST provide Nostr identity verification through an optional in-tree adapte
 - THEN verification MUST fail
 - AND the adapter MUST remain optional
 
-### Requirement: The adapter verifies exact Nostr protocol identity [r[ucan.nostr_identity_adapter.protocol_verification]]
+### Requirement: The adapter verifies exact Nostr protocol identity
 
-The adapter MUST verify canonical NIP-01 serialization, SHA-256 event identity, and BIP-340 signature validity over an x-only secp256k1 public key.
+r[ucan.nostr_identity_adapter.protocol_verification] The adapter MUST verify canonical NIP-01 serialization, SHA-256 event identity, and BIP-340 signature validity over an x-only secp256k1 public key.
 
 #### Scenario: Canonical signed event passes
 
@@ -42,9 +42,9 @@ The adapter MUST verify canonical NIP-01 serialization, SHA-256 event identity, 
 - THEN verification MUST fail with a deterministic issue code
 - AND no verified credential MUST be constructed
 
-### Requirement: Authentication is bound to an explicit context [r[ucan.nostr_identity_adapter.authentication_context]]
+### Requirement: Authentication is bound to an explicit context
 
-The adapter MUST use a closed authentication profile. It MUST bind every result to caller-supplied audience, purpose, challenge, request, freshness, and replay expectations.
+r[ucan.nostr_identity_adapter.authentication_context] The adapter MUST use a closed authentication profile. It MUST bind every result to caller-supplied audience, purpose, challenge, request, freshness, and replay expectations.
 
 #### Scenario: Exact request context passes
 
@@ -61,9 +61,9 @@ The adapter MUST use a closed authentication profile. It MUST bind every result 
 - THEN verification MUST deny
 - AND no subject or authority fact MUST be inferred
 
-### Requirement: Verified credentials do not grant authority [r[ucan.nostr_identity_adapter.credential_boundary]]
+### Requirement: Verified credentials do not grant authority
 
-Only successful verification MUST construct `VerifiedNostrCredential`. The type MUST represent bounded key control for one request only.
+r[ucan.nostr_identity_adapter.credential_boundary] Only successful verification MUST construct `VerifiedNostrCredential`. The type MUST represent bounded key control for one request only.
 
 #### Scenario: Downstream consumer receives a verified credential
 
@@ -78,9 +78,9 @@ Only successful verification MUST construct `VerifiedNostrCredential`. The type 
 - WHEN the adapter evaluates the input
 - THEN that metadata MUST NOT create a verified credential or UCAN grant
 
-### Requirement: Support claims stay catalog-bound [r[ucan.nostr_identity_adapter.support_profile]]
+### Requirement: Support claims stay catalog-bound
 
-UCAN MUST add a preview Nostr identity-adapter surface to the Rust-owned support catalog and all generated projections.
+r[ucan.nostr_identity_adapter.support_profile] UCAN MUST add a preview Nostr identity-adapter surface to the Rust-owned support catalog and all generated projections.
 
 #### Scenario: Projection overstates support
 
@@ -89,9 +89,9 @@ UCAN MUST add a preview Nostr identity-adapter surface to the Rust-owned support
 - THEN verification MUST fail
 - AND the caller-owned boundary MUST remain explicit
 
-### Requirement: Digest roles and failure coverage remain explicit [r[ucan.nostr_identity_adapter.final_validation]]
+### Requirement: Digest roles and failure coverage remain explicit
 
-The adapter MUST preserve Nostr protocol SHA-256 identities separately from adapter-owned BLAKE3 identities. Positive and negative fixtures MUST cover every declared boundary.
+r[ucan.nostr_identity_adapter.final_validation] The adapter MUST preserve Nostr protocol SHA-256 identities separately from adapter-owned BLAKE3 identities. Positive and negative fixtures MUST cover every declared boundary.
 
 #### Scenario: Digest substitution fails
 

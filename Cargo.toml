@@ -1,10 +1,10 @@
 [workspace]
-members = ["crates/ucan-core"]
+members = ["crates/ucan-core", "crates/ucan-nostr"]
 exclude = ["vendor/verified-logic"]
 resolver = "2"
 
 [workspace.metadata.tigerstyle]
-default_scope = ["-p", "ucan", "-p", "ucan-core"]
+default_scope = ["-p", "ucan", "-p", "ucan-core", "-p", "ucan-nostr"]
 cargo_check_args = ["--workspace", "--all-targets"]
 
 [workspace.lints.rust]

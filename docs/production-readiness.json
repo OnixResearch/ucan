@@ -1,6 +1,6 @@
 {
   "projection_schema": "ucan.support-catalog-projection.v1",
-  "catalog_blake3": "02fb9fec563b5df9f40a58bbbddfd0bcf5abe74da373ae0b506712647e0ee6ad",
+  "catalog_blake3": "9452f2e5a050a082212a8fd36b5d7a4b6dcd1ee2a1899913dce9c2d8a683d956",
   "catalog": {
     "schema": "ucan.support-catalog.v1",
     "report_schema_version": 1,
@@ -125,6 +125,24 @@
         "boundary": "DID/CID decoding, evidence fetching, trust-store discovery, revocation freshness, and persistence are not supplied",
         "baseline_level": "preview",
         "promotion_review": null
+      },
+      {
+        "id": "nostr-identity-adapter",
+        "level": "preview",
+        "evidence": "the optional ucan-nostr package verifies bounded NIP-01, NIP-42, NIP-98, and application challenge facts with exact digest roles",
+        "boundary": "relay access, DNS, signing, clocks, replay storage, subject resolution, and authorization remain caller-owned",
+        "baseline_level": null,
+        "promotion_review": {
+          "from": "unsupported",
+          "to": "preview",
+          "migration_id": "add-nostr-identity-adapter",
+          "evidence": [
+            "positive-tests",
+            "negative-fail-closed-tests",
+            "operator-evidence",
+            "migration-review"
+          ]
+        }
       },
       {
         "id": "remote-did-resolution",

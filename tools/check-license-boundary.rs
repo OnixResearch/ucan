@@ -16,6 +16,12 @@ const PACKAGE_SECTION: &str = "[package]";
 const WORKSPACE_PACKAGE_SECTION: &str = "[workspace.package]";
 const LICENSE_KEY: &str = "license";
 
+// r[verify ucan.packaging.license_boundary.package_split]
+// r[verify ucan.packaging.license_boundary.trellis_snapshot]
+// r[verify ucan.packaging.license_boundary.artifacts]
+// r[verify ucan.packaging.license_boundary.documentation]
+// r[verify ucan.packaging.license_boundary.validation]
+// r[verify ucan.packaging.license_boundary.final_validation]
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RuleKind {
     Package,
