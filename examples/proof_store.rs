@@ -7,7 +7,8 @@ use ucan::CompactToken;
 use ucan::ED25519_SECRET_KEY_BYTES;
 use ucan::Ed25519InMemorySigner;
 use ucan::KeyResolutionContext;
-use ucan::ProofCollection;
+use ucan::ProofReferences;
+use ucan::ProofToken;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
 use ucan::VerificationTime;
@@ -48,13 +49,12 @@ impl MapProofStore {
 }
 
 impl ProofStore for MapProofStore {
-    fn resolve_proof(&self, reference: &ProofReference) -> Result<CompactToken, ProofStoreError> {
-        self.tokens
-            .get(reference.to_base64url().as_str())
-            .cloned()
-            .ok_or_else(|| ProofStoreError::MissingProof {
+    fn resolve_proof<'a>(&'a self, reference: &ProofReference) -> Result<ProofToken<'a>, ProofStoreError> {
+        self.tokens.get(reference.to_base64url().as_str()).map(ProofToken::Borrowed).ok_or_else(|| {
+            ProofStoreError::MissingProof {
                 reference: reference.clone(),
-            })
+            }
+        })
     }
 }
 
@@ -67,14 +67,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         &root,
         &AudienceDid::from(child.issuer()?),
         &CapabilitySet::single(ROOT_RESOURCE_DID, ROOT_ABILITY)?,
-        &ProofCollection::empty(),
+        &ProofReferences::empty(),
         TokenTimeBounds::new(ROOT_NOT_BEFORE_SECONDS, ROOT_EXPIRES_AT_SECONDS)?,
     )?;
+    let parent_reference = proof_reference(&parent_token);
     let child_token = issue_token_with_signer(
         &child,
         &AudienceDid::from(audience_key.issuer()?),
         &CapabilitySet::single(CHILD_RESOURCE_DID, CHILD_ABILITY)?,
-        &ProofCollection::from_tokens(vec![parent_token.clone()]),
+        &ProofReferences::from_references(vec![parent_reference]),
         TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS)?,
     )?;
 

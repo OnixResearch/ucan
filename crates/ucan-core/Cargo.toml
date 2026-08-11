@@ -3,6 +3,11 @@ name = "ucan-core"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
+description = "No-std UCAN capability and request-admission core."
+repository = "https://github.com/OnixResearch/ucan"
+readme = "../../README.md"
+keywords = ["ucan", "capabilities", "no-std"]
+categories = ["authentication", "no-std"]
 
 [features]
 default = []

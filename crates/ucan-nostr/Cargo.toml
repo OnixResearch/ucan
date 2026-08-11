@@ -5,6 +5,9 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 description = "Optional bounded Nostr key-control verification adapter for UCAN consumers."
 repository = "https://github.com/OnixResearch/ucan"
+readme = "../../README.md"
+keywords = ["ucan", "nostr", "authentication"]
+categories = ["authentication"]
 
 [dependencies]
 blake3 = "=1.8.4"
