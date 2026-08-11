@@ -17,17 +17,24 @@ The primary public workflow is token-oriented:
 ```rust
 use ucan::{
     AudienceDid, CapabilitySet, ED25519_SECRET_KEY_BYTES, Ed25519InMemorySigner,
-    KeyResolutionContext, ProofCollection, TokenSigner, TokenTimeBounds,
-    VerificationContext, VerificationTime, issue_token_with_signer, verify_compact_token,
+    KeyResolutionContext, ProofCollection, ProofReferences, TokenSigner,
+    TokenTimeBounds, VerificationContext, VerificationTime,
+    issue_token_with_signer, verify_compact_token,
 };
 
 let issuer = Ed25519InMemorySigner::from_seed_bytes([7; ED25519_SECRET_KEY_BYTES]);
 let audience_key = Ed25519InMemorySigner::from_seed_bytes([9; ED25519_SECRET_KEY_BYTES]);
 let audience = AudienceDid::from(audience_key.issuer()?);
 let capabilities = CapabilitySet::single("did:key:z6Mkresource", "store/add")?;
-let proofs = ProofCollection::empty();
+let proof_references = ProofReferences::empty();
 let time_bounds = TokenTimeBounds::new(1_000, 2_000)?;
-let token = issue_token_with_signer(&issuer, &audience, &capabilities, &proofs, time_bounds)?;
+let token = issue_token_with_signer(
+    &issuer,
+    &audience,
+    &capabilities,
+    &proof_references,
+    time_bounds,
+)?;
 let context = VerificationContext::new(
     VerificationTime::from_unix_seconds(1_500),
     KeyResolutionContext::new(vec![issuer.verification_key()?]),
@@ -46,14 +53,14 @@ time conversion helpers over positional constructors:
 
 ```rust
 # use std::time::{Duration, UNIX_EPOCH};
-# use ucan::{CapabilitySet, ED25519_SECRET_KEY_BYTES, Ed25519SigningKey, IssueRequest, ProofCollection, TokenTimeBounds};
+# use ucan::{CapabilitySet, ED25519_SECRET_KEY_BYTES, Ed25519SigningKey, IssueRequest, ProofReferences, TokenTimeBounds};
 # let signing_key = Ed25519SigningKey::from_bytes([7; ED25519_SECRET_KEY_BYTES]);
 # let audience = ucan::AudienceDid::from(signing_key.issuer()?);
 let request = IssueRequest::builder()
     .signing_key(signing_key)
     .audience(audience)
     .capabilities(CapabilitySet::single("did:key:z6Mkresource", "store/add")?)
-    .proofs(ProofCollection::empty())
+    .proofs(ProofReferences::empty())
     .time_bounds(TokenTimeBounds::from_system_time_and_duration(
         UNIX_EPOCH + Duration::from_secs(1_000),
         Duration::from_secs(1_000),
@@ -87,11 +94,11 @@ For callers that explicitly adopt the vendored typed WOT caveat vocabulary,
 time-bound and rate/count-window predicates over caller-supplied context without
 installing default caveat policies or changing opaque shell caveat behavior.
 
-For invocation-shaped checks, `verify_invocation` first verifies the compact
-token, then authorizes the requested resource/ability with the supplied caveat
-policies and returns either `InvocationAllowed` context or a structured denial.
+`verify_invocation` is an audience-only compatibility helper. It verifies the compact token and authorizes resource and ability against the token audience. It does not prove sender or holder possession, and `InvocationAllowed` does not expose an invoker claim.
 
-Invocation verification composes token/proof verification, caveat-aware authorization, and effective constraints. For concrete matched capabilities, the admitted request is cross-checked through the `invocation_request_is_authorized` verified invocation bridge; wildcard matched capabilities continue to use `VerifiedCapability` containment so wildcard delegation and caveat-denial semantics are not weakened. Allowed invocation results expose the token audience as the invoker exercising the delegated capability. For caller-owned receipt records, `receipt_execution_is_valid` exposes the verified receipt executor/timestamp check without adding receipt storage, replay tracking, signing, networking, or ambient clock reads.
+Use `sign_holder_invocation` and `verify_holder_signed_invocation` when a live sender must prove possession of the verified audience key. The borrowed verifier binds the complete bounded token BLAKE3 reference, verified audience DID, resource, ability, fixed operation-profile identity, exact request-binding digest, and fixed nonce in the `ucan/holder-invocation/v1` canonical format. It confirms that the resolved public key encodes the verified audience DID. It then verifies the audience signature before non-consuming profile and caveat observations. It calls `HolderInvocationReplayAdmission` once as the final state-consuming commit point and returns a private-construction, non-serde, non-clone `HolderInvocationAuthorized` value.
+
+`OperationBinding` lets Basalt map its closed action enum to a stable `OperationProfileId` and exact `RequestBindingDigest`. UCAN does not interpret downstream action or request semantics. Profile and caveat checks must not spend quota or mutate admission state. Consumers must apply consumptive rate limits and execution effects in a separate downstream atomic boundary after UCAN success.
 
 ```bash
 cargo run --example invocation
@@ -99,9 +106,11 @@ cargo run --example invocation
 
 ## Proof-chain delegation
 
-Proof material is explicit. A child token carries BLAKE3 proof references in `prf`; callers may keep using `ProofCollection`, or inject their own synchronous `ProofStore` with `verify_compact_token_with_resolvers`. Verification checks each parent signature, proof-depth budget admission through `proof_depth_within_budget`, issuer/audience linkage through the `proof_link_is_valid` verified-chain bridge, temporal narrowing, capability attenuation, and self-delegation rejection before returning the effective delegation constraints. Advanced callers that already have resolved public chain fields can use `VerifiedChainEntry` plus `structural_chain_is_valid` to run the vendored structural chain composition checker over issuer/audience linkage, caller-provided signature-valid flags, exact attenuation narrowing, and temporal validity. If they also have aligned proof-reference bytes and finite revoked-reference bytes, `structural_chain_not_revoked_is_valid` runs the vendored composed non-revoked-chain checker over the same structural data plus reference-count alignment and finite revocation-set non-membership. For caller-owned finite capability sets, `capability_set_authorizes` runs the vendored capability-set authorizer with resource byte-prefix refinement and exact ability equality; it is not wildcard subsumption and does not replace shell token/effective-delegation authorization. For resolved concrete invocations, `VerifiedInvocationChainRequest` plus `invocation_chain_is_authorized` additionally checks explicit authorization-reference binding to the chain leaf, leaf capability index admission, invoker/audience equality, resource refinement, and ability equality through the vendored invocation-chain checker. For shell-produced finite traversal transcripts, `VerifiedProofTraversalTranscript` plus `proof_traversal_transcript_is_valid` checks resolved entries, visited-reference alignment, duplicate/cycle rejection, depth/proof-count/input-byte budgets, issuer/audience linkage, attenuation narrowing, ordered caveat-id preservation, target authorization, explicit time validity, and supplied revocation-denial facts. For finite Web-of-Trust authorization data, `web_of_trust_principal_digest` derives fixed-width public principal bytes and `web_of_trust_principal_digest_is_valid` admits raw digest bytes through vendored verified-logic for caller-supplied WOT inputs; `VerifiedWebOfTrustUcanAuthorizationRequest` plus `web_of_trust_ucan_authorization` composes the vendored token, caveat, DID/CID link, threshold trust-chain, and revocation-aware Web-of-Trust UCAN authorizer into an explicit allow/deny decision over caller-supplied public facts. These are focused bridges, not proof resolution, compact-token verification, DID/CID decoding, cryptography, revocation backend/freshness checks, caveat policy evaluation, wildcard containment replacement, networking, persistence, replay checks, or ambient clock behavior.
+Proof material is explicit. A child token carries BLAKE3 proof references in `prf`; issuance accepts `ProofReferences`. Verification accepts `ProofCollection` or a caller-owned synchronous `ProofStore`. Verification checks each parent signature, proof-depth budget admission through `proof_depth_within_budget`, issuer/audience linkage through the `proof_link_is_valid` verified-chain bridge, temporal narrowing, capability attenuation, and self-delegation rejection before returning the effective delegation constraints. Advanced callers that already have resolved public chain fields can use `VerifiedChainEntry` plus `structural_chain_is_valid` to run the vendored structural chain composition checker over issuer/audience linkage, caller-provided signature-valid flags, exact attenuation narrowing, and temporal validity. If they also have aligned proof-reference bytes and finite revoked-reference bytes, `structural_chain_not_revoked_is_valid` runs the vendored composed non-revoked-chain checker over the same structural data plus reference-count alignment and finite revocation-set non-membership. For caller-owned finite capability sets, `capability_set_authorizes` runs the vendored capability-set authorizer with resource byte-prefix refinement and exact ability equality; it is not wildcard subsumption and does not replace shell token/effective-delegation authorization. For resolved concrete invocations, `VerifiedInvocationChainRequest` plus `invocation_chain_is_authorized` additionally checks explicit authorization-reference binding to the chain leaf, leaf capability index admission, invoker/audience equality, resource refinement, and ability equality through the vendored invocation-chain checker. For shell-produced finite traversal transcripts, `VerifiedProofTraversalTranscript` plus `proof_traversal_transcript_is_valid` checks resolved entries, visited-reference alignment, duplicate/cycle rejection, depth/proof-count/input-byte budgets, issuer/audience linkage, attenuation narrowing, ordered caveat-id preservation, target authorization, explicit time validity, and supplied revocation-denial facts. For finite Web-of-Trust authorization data, `web_of_trust_principal_digest` derives fixed-width public principal bytes and `web_of_trust_principal_digest_is_valid` admits raw digest bytes through vendored verified-logic for caller-supplied WOT inputs; `VerifiedWebOfTrustUcanAuthorizationRequest` plus `web_of_trust_ucan_authorization` composes the vendored token, caveat, DID/CID link, threshold trust-chain, and revocation-aware Web-of-Trust UCAN authorizer into an explicit allow/deny decision over caller-supplied public facts. These are focused bridges, not proof resolution, compact-token verification, DID/CID decoding, cryptography, revocation backend/freshness checks, caveat policy evaluation, wildcard containment replacement, networking, persistence, replay checks, or ambient clock behavior.
 
-`KeyResolver`, `ProofStore`, `RevocationChecker`, and `ReplayAdmission` are std-shell injection points only: the crate does not provide built-in HTTP, IPFS, database, filesystem, registry, replay persistence, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, `ProofCollection` implements `ProofStore`, `RevocationList` implements `RevocationChecker`, and `AllowAllReplayAdmission` preserves compatibility when replay is enforced elsewhere; production consumers should wire their own replay/nonce backend. These hooks remain consumer-agnostic: Aspen, Clankers, or another caller owns resource/action mapping, identity trust, RPC/tool/session envelopes, backend freshness, retry, persistence, and outage policy. Use `verify_compact_token_with_resolvers_and_revocations` when the application has revocation state; use `verify_invocation_with_replay` when the application wants the crate to call its replay/nonce admission policy after token and caveat authorization. `VerificationLimits::default()` bounds recursion with visible defaults for maximum proof depth, maximum resolved proof count, and maximum serialized compact-token byte length; use `VerificationContext::with_limits` or `verify_compact_token_with_resolvers` to override them. To reject oversized caller input before constructing a `CompactToken`, call `verify_compact_token_str`. Live recursive proof traversal, compact-token codec/serde/signing-input construction, BLAKE3 proof-reference derivation, backend error freshness, and opaque caveat-preserving attenuation payload semantics remain shell-local tested boundaries; the verified traversal bridge only checks already-resolved finite transcript facts. See `docs/verified-boundaries.md` for the audit record.
+`CompactToken` owns bearer text in fixed zeroizing storage. It has borrowed `as_str` access, but no `Clone`, `Display`, `FromStr`, or serde implementation. Use `verify_compact_token_str` for borrowed input. The limit check runs before parsing or BLAKE3 identity.
+
+`KeyResolver`, `ProofStore`, `RevocationChecker`, `ReplayAdmission`, `OperationProfileAdmission`, and `HolderInvocationReplayAdmission` are std-shell injection points only. The crate does not provide built-in HTTP, IPFS, database, filesystem, profile registry, replay persistence, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, `ProofCollection` implements `ProofStore`, and `RevocationList` implements `RevocationChecker`. `AllowAllReplayAdmission` preserves audience-only compatibility, but it is not holder proof. Holder-signed verification requires an explicit profile observer and replay commit boundary. These hooks remain consumer-agnostic: Aspen, Basalt, or another caller owns resource/action mapping, request canonicalization, identity trust, envelopes, backend freshness, retry, persistence, and outage policy. `VerificationLimits` bounds token and proof verification. `HolderInvocationLimits` adds reviewed field maxima, a 16,384-byte total canonical limit, and fallible exact allocation. See `docs/verified-boundaries.md` for the audit record.
 
 ```bash
 cargo run --example proof_chain
@@ -131,7 +140,7 @@ Reviewed Nickel integration profiles under `contracts/integration-profiles/` are
 - Supported signing algorithms: Ed25519 compact-token signatures with `alg = "EdDSA"`.
 - Proof-loading model: caller-supplied proof tokens only; the library does not fetch proofs from storage or the network.
 - Revocation model: caller-supplied `RevocationChecker` values can deny the leaf token or any proof-chain token by `ProofReference`; revocation registries, credential formats, replay stores, persistence, and remote fetches remain application-owned.
-- Replay model: caller-supplied `ReplayAdmission` values can admit or deny a verified invocation after caveat/policy authorization; the finite replay outcome transcript is routed through vendored verified logic for allow/duplicate/stale/malformed/denied/backend fail-closed shape, while durable nonce stores, request identity provenance, crash recovery, duplicate semantics, and backend freshness remain application-owned.
+- Replay model: audience-only compatibility can use caller-supplied `ReplayAdmission`. Holder-signed verification uses `HolderInvocationReplayAdmission` exactly once after token, signature, profile, capability, and caveat checks. Durable nonce truth, request provenance, crash recovery, duplicate semantics, and backend freshness remain application-owned.
 - Out-of-scope UCAN features in this release: remote DID resolution, network proof fetching, storage layers, caveat-specific attenuation rules beyond caller policy evaluation, registry-backed revocation, replay stores, and non-Ed25519 key types.
 
 ## Development
@@ -178,7 +187,7 @@ pre-commit run verified-logic-josh-sync-config --all-files
 
 The hook runs the focused Nix check only; it validates the Josh filter, verifier unit tests, and revision metadata without requiring a sibling Trellis checkout.
 
-Verified replay-admission transcript aggregation now gates `verify_invocation_with_replay` replay outcomes before allowing or denying replay-aware invocations; nonce-store truth and durability remain caller-owned. The remaining verified follow-up surfaces now cover proof traversal orchestration, compact-token codec structure, core structural validators, ability helper predicates, and backend transcript aggregation without expanding the claim to parser, crypto, backend, storage, or consumer-policy truth.
+Verified replay-admission transcript aggregation gates the audience-only `verify_invocation_with_replay` compatibility path. Holder-signed admission separately verifies the audience key over a bounded canonical request and uses caller-owned profile and replay boundaries. Neither path proves nonce-store truth, durability, downstream request semantics, transport identity, or execution safety.
 
 ## License
 

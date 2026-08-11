@@ -6,11 +6,13 @@ use ucan::ED25519_SECRET_KEY_BYTES;
 use ucan::Ed25519InMemorySigner;
 use ucan::KeyResolutionContext;
 use ucan::ProofCollection;
+use ucan::ProofReferences;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
 use ucan::VerificationContext;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
+use ucan::proof_reference;
 use ucan::verify_compact_token;
 
 const ROOT_KEY_BYTE: u8 = 7;
@@ -35,14 +37,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         &root,
         &AudienceDid::from(child.issuer()?),
         &CapabilitySet::single(ROOT_RESOURCE_DID, ROOT_ABILITY)?,
-        &ProofCollection::empty(),
+        &ProofReferences::empty(),
         TokenTimeBounds::new(ROOT_NOT_BEFORE_SECONDS, ROOT_EXPIRES_AT_SECONDS)?,
     )?;
+    let parent_reference = proof_reference(&parent_token);
     let child_token = issue_token_with_signer(
         &child,
         &AudienceDid::from(audience_key.issuer()?),
         &CapabilitySet::single(CHILD_RESOURCE_DID, CHILD_ABILITY)?,
-        &ProofCollection::from_tokens(vec![parent_token.clone()]),
+        &ProofReferences::from_references(vec![parent_reference]),
         TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS)?,
     )?;
 

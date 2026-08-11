@@ -1,6 +1,6 @@
 {
   "projection_schema": "ucan.support-catalog-projection.v1",
-  "catalog_blake3": "02fb9fec563b5df9f40a58bbbddfd0bcf5abe74da373ae0b506712647e0ee6ad",
+  "catalog_blake3": "3d50d555a0c2e9e67b942ce36607db55a4b745f2ad17813031d028430395b52a",
   "catalog": {
     "schema": "ucan.support-catalog.v1",
     "report_schema_version": 1,
@@ -41,8 +41,8 @@
       {
         "id": "generic-consumer-integration-hooks",
         "level": "controlled-integration-ready",
-        "evidence": "generic KeyResolver, ProofStore, RevocationChecker, and ReplayAdmission hooks are public and tested without consumer-specific adapters",
-        "boundary": "consumer-specific resource, ability, identity, envelope, backend, freshness, retry, and persistence semantics are application-owned",
+        "evidence": "generic key, proof, revocation, profile, caveat, and replay hooks are public and tested without consumer-specific adapters",
+        "boundary": "consumer-specific resource, ability, request, identity, envelope, backend, freshness, retry, persistence, and execution semantics are application-owned",
         "baseline_level": "controlled-integration-ready",
         "promotion_review": null
       },
@@ -51,6 +51,14 @@
         "level": "controlled-integration-ready",
         "evidence": "ReplayAdmission and verify_invocation_with_replay allow caller-owned duplicate, stale, malformed, denial, and backend policies to fail closed",
         "boundary": "durable replay detection, crash recovery, backend corruption handling, and cross-process freshness are application-owned",
+        "baseline_level": "controlled-integration-ready",
+        "promotion_review": null
+      },
+      {
+        "id": "holder-signed-invocation-admission",
+        "level": "controlled-integration-ready",
+        "evidence": "borrowed direct and delegated tests bind the complete token reference, verified audience, resource, ability, operation profile, request digest, and fixed nonce to an audience-key signature before one final replay commit",
+        "boundary": "profile registry truth, request canonicalizer provenance, nonce durability, transport identity, action semantics, consumptive rate limits, and execution effects remain application-owned",
         "baseline_level": "controlled-integration-ready",
         "promotion_review": null
       },
@@ -105,8 +113,8 @@
       {
         "id": "opaque-caveat-policy-evaluation",
         "level": "controlled-integration-ready",
-        "evidence": "CaveatPolicySet requires every caveat to have an explicit policy; missing or rejected policies deny authorization",
-        "boundary": "arbitrary caveat vocabulary semantics, clocks, counters, and external policy truth are application-owned",
+        "evidence": "CaveatPolicySet requires every caveat to have an explicit non-consuming policy observation; missing or rejected policies deny authorization",
+        "boundary": "arbitrary caveat semantics, clocks, counters, consumptive quota or rate-limit effects, and external policy truth are application-owned",
         "baseline_level": "controlled-integration-ready",
         "promotion_review": null
       },
