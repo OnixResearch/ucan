@@ -3,6 +3,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "peer-auth")]
+pub mod peer_auth;
 pub mod token;
 
 use core::fmt;

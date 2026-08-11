@@ -174,6 +174,10 @@ Refresh the vendored `verified-logic` snapshot from the sibling Trellis source r
 
 That script imports the committed `HEAD` revision from Trellis, ignores uncommitted sibling changes, and records the imported revision in `vendor/verified-logic-revision.txt`. The Josh path-selection pilot is documented in `docs/verified-logic-josh-sync.md`; `josh/verified-logic.josh` is the canonical filter for the vendored subtree.
 
+## Optional peer-auth framing
+
+Enable `ucan-core` feature `peer-auth` to sign and verify deterministic message frames. The feature has no clock, transport, key-store, or replay-store effects. See [the peer-auth evidence and boundary](docs/peer-auth-protocol.md).
+
 ## Verification
 
 ```bash
@@ -202,3 +206,4 @@ The snapshot records a committed Trellis source revision and preserves its licen
 - [Nostr NIPs at `656cecc7c0a815b6a2b218d3b5d6f078b3f4dbab`](https://github.com/nostr-protocol/nips/tree/656cecc7c0a815b6a2b218d3b5d6f078b3f4dbab) — NIP-01, NIP-42, and NIP-98 interoperability reference. UCAN retains token algorithms, DIDs, and authority boundaries.
 - [BIP-340 and vectors at `c38071c8c45a1fc50cecaac0d82d99e3bbd56911`](https://github.com/bitcoin/bips/tree/c38071c8c45a1fc50cecaac0d82d99e3bbd56911/bip-0340) — x-only secp256k1 signature and test-vector reference.
 - [AeneasVerif/aeneas](https://github.com/AeneasVerif/aeneas) — exact-source Aeneas/Lean proof-pilot reference for selected safe deterministic `ucan-core` functions; any receipt remains property- and source-scoped and does not transfer parser, cryptographic, authorization, interoperability, or whole-system claims.
+- [Celld peer authentication at `c978a2590e875b003ecd860a86cb7551287eba67`](https://github.com/devinautotomic226/celld/blob/c978a2590e875b003ecd860a86cb7551287eba67/crates/celld/peer_auth.rs) — bounded `Apache-2.0` version, body-digest, HMAC, clock, and replay comparison source. UCAN does not claim parity, equivalence, or transport support.
