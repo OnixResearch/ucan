@@ -35,7 +35,15 @@ returns.
 
 ## Measured baseline
 
+Audited revision (pre-merge), leak scales with attacker-controlled payload:
+
 - 260-byte payload: ~461 bytes per verification.
 - 4,096-byte payload: ~4,352 bytes per verification.
+
+Merged mainline (post-upstream bounded-token refactor), 2,048-byte payload,
+50,000 iterations: ~84 bytes per verification (4.2 MiB growth). The
+payload-proportional component is gone; a fixed residual remains. The residual
+comes from `capability_inputs` calling `caveats.leak()` on the
+`CapabilitySet::new` validation path (shell-only, unchanged upstream).
 
 The regression bound uses one of these scales and tolerates allocator noise.
