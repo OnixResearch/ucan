@@ -1,0 +1,158 @@
+# Aeneas TimeBounds pilot final validation
+
+Outcome: BLOCKED before theorem work
+
+Requirements:
+- r[ucan.aeneas_time_bounds.provider_dependencies]
+- r[ucan.aeneas_time_bounds.exact_source]
+- r[ucan.aeneas_time_bounds.translation_manifest]
+- r[ucan.aeneas_time_bounds.feasibility]
+- r[ucan.aeneas_time_bounds.properties]
+- r[ucan.aeneas_time_bounds.theorem_adequacy]
+- r[ucan.aeneas_time_bounds.generated_boundary]
+- r[ucan.aeneas_time_bounds.evidence_chain]
+- r[ucan.aeneas_time_bounds.negative_evidence]
+- r[ucan.aeneas_time_bounds.resource_budget]
+- r[ucan.aeneas_time_bounds.runtime_boundary]
+- r[ucan.aeneas_time_bounds.claim_boundary]
+- r[ucan.aeneas_time_bounds.final_validation]
+
+## Exact provider and source observation
+
+The reviewed provider is bound in
+`proofs/aeneas-time-bounds/provider-identity.ncl` to Octet revision
+`ef18352bf579bb7c6eb39070d917e3d005385a61`, Aeneas revision
+`bc2eb6f941369fa3c695e30598b5758b11e4f0de`, Charon revision
+`cb50ff16b9f1066b8a97dc06da704de2da2fa41c`, profile BLAKE3
+`cd11b49d1acede2c6a91fa26f0b7a6b4b28db4007b4601a65b3269706a0ce625`,
+and Valence revision `8eccac35fcd8aae8ef64b3d1021e7f1a53656180` / profile
+`aeneas-lean/v1`.
+
+The production source is
+`crates/ucan-core/src/token.rs` at BLAKE3
+`001764bbd4036024de07cb4565fe5044d17531d5e1dac51523efedadbecc0022`.
+The selected item inventory names only `TimeBounds::new`,
+`not_before_seconds`, and `expires_at_seconds`, with exact source spans and
+markers. A copied drift fixture has a distinct identity and is rejection-only.
+
+Inside bubblewrap with `--unshare-net`, Charon compiled the unmodified
+`ucan-core` crate with `--preset aeneas`, borrow checking preserved, no
+`has_errors`, and the reviewed x86_64 little-endian target. Exact
+`--start-from` roots for the three inherent methods failed with the stable
+provider diagnostic:
+
+`--start-from does not support inherent impls`
+
+The result is classified at `charon-item-selection` as
+`charon-start-from-inherent-impl-unsupported`. It is a reviewed-provider
+selection boundary, not evidence that `const fn`, `Result`, the UCAN error enum,
+struct construction, or getters are unsupported. An adversarial audit also
+rejected earlier matcher spellings that emitted an empty declaration inventory;
+no empty LLBC or generated model was admitted.
+
+A network-denied `--start-from-pub` probe compiled a broad LLBC containing the
+three exact item names at BLAKE3
+`22887882f43b64f140880fd1cc7b32b5a99b855982d2230f0c06af5b8bbdde6c`.
+That broader LLBC is not an exact three-item selection and was not retained.
+Pinned Aeneas raised `Aeneas.Errors.CFailure` while translating the broader
+public method surface. This supplementary outcome is classified as tool
+failure and not as a `TimeBounds` language-support result.
+
+Durable bounded diagnostics:
+- `proofs/aeneas-time-bounds/evidence/exact-item-selection.log`
+- `proofs/aeneas-time-bounds/evidence/broad-public-probe.log`
+
+The deterministic receipt is
+`proofs/aeneas-time-bounds/generated/blocked-receipt.json`. The next
+smallest discriminating check is a reviewed Charon provider that supports
+inherent impl `--start-from` roots, or separately approved production-source
+start attributes, followed by a required non-errorful three-item LLBC and
+measured `translation.json` before any theorem work.
+
+## Theorem and evidence-chain gates
+
+No selected LLBC, `translation.json`, generated Lean model, maintained theorem,
+false theorem, vacuous theorem, theorem map, Octet property receipt, or Valence
+property chain was admitted. The blocked manifest requires an empty
+translation row set, `def_id` as run-local only, and all property flags false.
+Accordingly Octet artifact verification and Valence chain validation are
+recorded as not applicable rather than passed. The 26-case negative inventory
+retains false/vacuous, theorem/trust, stale-stage, receipt, and overclaim gates
+for a future supported run.
+
+## Baseline and focused checks
+
+Before implementation:
+
+- `nix develop -c cargo test --workspace`: passed.
+- `nix develop -c cargo test -p ucan-core time_bounds -- --nocapture`: 1 passed.
+- Cairn proposal/design/tasks gates and validation passed with 14 tasks open.
+
+After implementation:
+
+- `cargo test --bin check-aeneas-time-bounds-proof`: 11 passed, including one
+  positive blocked-evidence fixture and negative source/shadow, provider,
+  extraction, target, translation, cross-run `def_id`, budget, overclaim,
+  receipt-freshness, and coverage cases.
+- `check-aeneas-time-bounds-proof check --root . --nickel nickel`: PASS,
+  `selected_items=3 negative_cases=26 generated_artifacts=3`.
+- `cargo test -p ucan-core time_bounds -- --nocapture`: 1 passed.
+- `cargo test --workspace`: passed.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings -A
+  clippy::cargo-common-metadata`: passed, matching the repository Nix Clippy
+  policy. The same command without the repository's documented allowance
+  reports pre-existing package metadata warnings; no product warning is hidden
+  by the project rail.
+- `nix build .#checks.x86_64-linux.aeneas-time-bounds-proof --no-link -L`:
+  passed.
+- `nix build .#checks.x86_64-linux.clippy --no-link -L`: passed.
+- `nix flake check --option builders '' --option secret-key-files '' -L`:
+  passed; the Nextest check ran 182 tests, all passing.
+- `git diff --check`: passed.
+
+The first full flake run found that Crane's cleaned Cargo source omitted the
+checker's proof fixtures during all-target test compilation. Commit
+`de1af64166fa30427630f9d31c0fd135e10abfee` adds the confined `proofs/` source
+filter; focused Clippy, focused proof evidence, and full flake checks passed
+afterward. Implementation checkpoint
+`e2a733f7d6001064ad9a5941e029dbd17c07dca3` preserves the blocked result.
+
+A bounded VibeThinker review attempt returned `fetch failed`; it is not counted
+as evidence. Deterministic source, artifact, negative, build, Nix, and Cairn
+checks remain the completion basis.
+
+A final semantic audit repaired the lifecycle specification so false/vacuous
+Lean theorem execution is explicitly conditional on a supported exact-source
+generated model, while applicable feasibility and overclaim negatives remain
+mandatory for the blocked outcome. This matches the proposal's blocked route,
+theorem-phase heading, task wording, and final-validation requirement; it does
+not weaken any future supported theorem gate.
+
+## Lifecycle validation
+
+Using the canonical Cairn policy explicitly because this repository has no
+repo-local generated policy:
+
+- proposal gate: PASS;
+- design gate: PASS;
+- tasks gate: PASS with all 14 tasks complete;
+- `cairn validate --root .`: `valid: true`; and
+- archive dry-run: PASS with no reasons or cross-repository evidence issues.
+
+Sync, post-sync validation, deterministic archive, and post-archive validation
+are recorded by the lifecycle archive commit.
+
+## Runtime and claim boundary
+
+`ucan-core` remains `#![no_std]`; its Cargo manifest has no Aeneas, Charon,
+Lean, Nickel, process, filesystem, clock, network, or receipt dependency. Proof
+tooling is an explicit checker/CI lane and is not discovered by runtime APIs.
+The pre-existing README edit was preserved outside implementation commits.
+
+No Aeneas property proof is claimed. The blocked result does not establish
+token validity, clock correctness, parser/codec correctness, cryptographic
+correctness, proof-chain soundness, caveat/revocation/replay freshness,
+authorization completeness, interoperability, whole-program correctness, or
+whole-system security. BLAKE3 binds bytes only and does not establish provider,
+translation, model, or verifier soundness.
