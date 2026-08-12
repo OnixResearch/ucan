@@ -94,6 +94,8 @@ const REQUIRED_INPUTS: &[&str] = &[
     "VerificationLimits",
     "CaveatPolicySet",
     "ReplayAdmission or caller-owned replay admission policy",
+    "OperationProfileAdmission and HolderInvocationReplayAdmission",
+    "HolderInvocationLimits and downstream request-binding digest",
     "TokenSigner and caller-owned key custody",
 ];
 
@@ -102,6 +104,7 @@ const FAIL_CLOSED_INPUTS: &[&str] = &[
     "proof-store missing, stale, oversized, cyclic, or backend errors",
     "revocation denial or backend errors",
     "replay admission duplicate, stale, malformed, denied, or backend errors",
+    "holder signature, operation profile, nonce, and canonical limit failures",
     "missing or rejected caveat policy",
     "unsupported DID method, signing algorithm, or key type",
     "verification limit overflow",
@@ -180,14 +183,20 @@ const SURFACES: &[ReadinessSurface] = &[
     ReadinessSurface {
         id: "generic-consumer-integration-hooks",
         level: SupportLevel::ControlledIntegrationReady,
-        evidence: "generic KeyResolver, ProofStore, RevocationChecker, and ReplayAdmission hooks are public and tested without consumer-specific adapters",
-        boundary: "consumer-specific resource, ability, identity, envelope, backend, freshness, retry, and persistence semantics are application-owned",
+        evidence: "generic key, proof, revocation, profile, caveat, and replay hooks are public and tested without consumer-specific adapters",
+        boundary: "consumer-specific resource, ability, request, identity, envelope, backend, freshness, retry, persistence, and execution semantics are application-owned",
     },
     ReadinessSurface {
         id: "caller-supplied-replay-admission",
         level: SupportLevel::ControlledIntegrationReady,
         evidence: "ReplayAdmission and verify_invocation_with_replay allow caller-owned duplicate, stale, malformed, denial, and backend policies to fail closed",
         boundary: "durable replay detection, crash recovery, backend corruption handling, and cross-process freshness are application-owned",
+    },
+    ReadinessSurface {
+        id: "holder-signed-invocation-admission",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "borrowed direct and delegated tests bind the complete token reference, verified audience, resource, ability, operation profile, request digest, and fixed nonce to an audience-key signature before one final replay commit",
+        boundary: "profile registry truth, request canonicalizer provenance, nonce durability, transport identity, action semantics, consumptive rate limits, and execution effects remain application-owned",
     },
     ReadinessSurface {
         id: "verified-replay-admission-transcript",
@@ -228,8 +237,8 @@ const SURFACES: &[ReadinessSurface] = &[
     ReadinessSurface {
         id: "opaque-caveat-policy-evaluation",
         level: SupportLevel::ControlledIntegrationReady,
-        evidence: "CaveatPolicySet requires every caveat to have an explicit policy; missing or rejected policies deny authorization",
-        boundary: "arbitrary caveat vocabulary semantics, clocks, counters, and external policy truth are application-owned",
+        evidence: "CaveatPolicySet requires every caveat to have an explicit non-consuming policy observation; missing or rejected policies deny authorization",
+        boundary: "arbitrary caveat semantics, clocks, counters, consumptive quota or rate-limit effects, and external policy truth are application-owned",
     },
     ReadinessSurface {
         id: "finite-typed-caveat-helpers",
@@ -242,6 +251,13 @@ const SURFACES: &[ReadinessSurface] = &[
         level: SupportLevel::Preview,
         evidence: "finite WOT evidence, threshold, and UCAN authorization helpers are exposed below the compact-token shell",
         boundary: "DID/CID decoding, evidence fetching, trust-store discovery, revocation freshness, and persistence are not supplied",
+    },
+    // r[impl ucan.nostr_identity_adapter.support_profile]
+    ReadinessSurface {
+        id: "nostr-identity-adapter",
+        level: SupportLevel::Preview,
+        evidence: "the optional ucan-nostr package verifies bounded NIP-01, NIP-42, NIP-98, and application challenge facts with exact digest roles",
+        boundary: "relay access, DNS, signing, clocks, replay storage, subject resolution, and authorization remain caller-owned",
     },
     ReadinessSurface {
         id: "remote-did-resolution",
@@ -354,6 +370,21 @@ mod tests {
                 .iter()
                 .any(|option| { option.id == "non-Ed25519" && option.level == SupportLevel::Unsupported })
         );
+    }
+
+    // r[verify ucan.nostr_identity_adapter.support_profile]
+    #[test]
+    fn nostr_adapter_stays_preview_and_caller_owned() {
+        let report = production_readiness_report();
+        let surface = report
+            .surfaces
+            .iter()
+            .find(|surface| surface.id == "nostr-identity-adapter")
+            .expect("Nostr adapter surface must exist");
+
+        assert_eq!(surface.level, SupportLevel::Preview);
+        assert!(surface.boundary.contains("replay storage"));
+        assert!(surface.boundary.contains("authorization"));
     }
 
     #[test]

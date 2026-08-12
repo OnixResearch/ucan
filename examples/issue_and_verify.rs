@@ -8,6 +8,7 @@ use ucan::ED25519_SECRET_KEY_BYTES;
 use ucan::Ed25519InMemorySigner;
 use ucan::KeyResolutionContext;
 use ucan::ProofCollection;
+use ucan::ProofReferences;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
 use ucan::VerificationContext;
@@ -29,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let audience_key = Ed25519InMemorySigner::from_seed_bytes([AUDIENCE_KEY_BYTE; ED25519_SECRET_KEY_BYTES]);
     let audience = AudienceDid::from(audience_key.issuer()?);
     let capabilities = CapabilitySet::single(RESOURCE_DID, ABILITY)?;
-    let proofs = ProofCollection::empty();
+    let proofs = ProofReferences::empty();
     let time_bounds = TokenTimeBounds::new(NOT_BEFORE_SECONDS, EXPIRES_AT_SECONDS)?;
 
     let token = issue_token_with_signer(&issuer, &audience, &capabilities, &proofs, time_bounds)?;
@@ -41,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let verified = verify_compact_token(&token, &context)?;
 
-    println!("issued token: {token}");
+    println!("issued token bytes: {}", token.as_str().len());
     println!("issuer: {}", verified.issuer());
     println!("audience: {}", verified.audience());
     println!("capability count: {}", verified.capabilities().as_slice().len());

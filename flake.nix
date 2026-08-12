@@ -98,7 +98,7 @@
               inherit cargoArtifacts;
               partitions = 1;
               partitionType = "count";
-              cargoExtraArgs = "--locked -p ucan -p ucan-core --lib --examples";
+              cargoExtraArgs = "--locked -p ucan -p ucan-core -p ucan-nostr --lib --examples --features ucan-core/peer-auth";
             }
           );
 
@@ -107,7 +107,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoExtraArgs = "--locked --no-deps -p ucan -p ucan-core";
+              cargoExtraArgs = "--locked --no-deps -p ucan -p ucan-core -p ucan-nostr --features ucan-core/peer-auth";
               cargoClippyExtraArgs = "--all-targets -- -D warnings -A clippy::cargo-common-metadata";
             }
           );
@@ -116,7 +116,7 @@
           fmt = craneLib.cargoFmt (
             commonArgs
             // {
-              cargoExtraArgs = "--manifest-path Cargo.toml -p ucan -p ucan-core";
+              cargoExtraArgs = "--manifest-path Cargo.toml -p ucan -p ucan-core -p ucan-nostr";
             }
           );
 

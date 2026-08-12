@@ -8,6 +8,7 @@ use ucan::KeyResolutionContext;
 use ucan::NoRevocations;
 use ucan::ProofCollection;
 use ucan::ProofReference;
+use ucan::ProofReferences;
 use ucan::RevocationChecker;
 use ucan::RevocationError;
 use ucan::RevocationList;
@@ -53,21 +54,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         &root,
         &AudienceDid::from(child.issuer()?),
         &CapabilitySet::single(ROOT_RESOURCE_DID, ROOT_ABILITY)?,
-        &ProofCollection::empty(),
+        &ProofReferences::empty(),
         TokenTimeBounds::new(ROOT_NOT_BEFORE_SECONDS, ROOT_EXPIRES_AT_SECONDS)?,
     )?;
+    let parent_reference = proof_reference(&parent_token);
     let child_token = issue_token_with_signer(
         &child,
         &AudienceDid::from(audience_key.issuer()?),
         &CapabilitySet::single(CHILD_RESOURCE_DID, CHILD_ABILITY)?,
-        &ProofCollection::from_tokens(vec![parent_token.clone()]),
+        &ProofReferences::from_references(vec![parent_reference.clone()]),
         TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS)?,
     )?;
 
     let keys = KeyResolutionContext::new(vec![root.verification_key()?, child.verification_key()?]);
-    let proofs = ProofCollection::from_tokens(vec![parent_token.clone()]);
+    let proofs = ProofCollection::from_tokens(vec![parent_token]);
     let verification_time = VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS);
-    let parent_reference = proof_reference(&parent_token);
 
     let verified = verify_compact_token_with_resolvers_and_revocations(
         &child_token,

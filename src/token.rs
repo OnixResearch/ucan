@@ -2,6 +2,8 @@
 
 use core::fmt;
 use core::str::FromStr;
+use std::io;
+use std::io::Write;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -10,7 +12,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
+use zeroize::Zeroizing;
 
 use crate::shell::CapabilityDocument;
 use crate::shell::CaveatDocument;
@@ -20,13 +22,10 @@ use crate::verified::TokenValidationFailure;
 use crate::verified::VerifiedBackendOperation;
 use crate::verified::VerifiedBackendOperationFact;
 use crate::verified::VerifiedBackendTranscript;
-use crate::verified::VerifiedBase64UrlSegment;
 use crate::verified::VerifiedCapability;
 use crate::verified::VerifiedCaveatEvaluationFact;
 use crate::verified::VerifiedCaveatEvaluationTranscript;
 use crate::verified::VerifiedCaveatPreservation;
-use crate::verified::VerifiedCompactTokenEnvelope;
-use crate::verified::VerifiedCompactTokenParts;
 use crate::verified::VerifiedParsedCapabilityListShape;
 use crate::verified::VerifiedParsedCapabilityShape;
 use crate::verified::VerifiedParsedCaveatListShape;
@@ -36,7 +35,6 @@ use crate::verified::VerifiedParsedCaveatShape;
 use crate::verified::VerifiedParsedClaimsPresence;
 use crate::verified::VerifiedParsedDidClaim;
 use crate::verified::VerifiedParsedDidClaims;
-use crate::verified::VerifiedParsedHeader;
 use crate::verified::VerifiedParsedProofReferenceEntryShape;
 use crate::verified::VerifiedParsedProofReferenceListShape;
 use crate::verified::VerifiedParsedTemporalOrder;
@@ -52,29 +50,23 @@ use crate::verified::VerifiedReplayAdmissionFact;
 use crate::verified::VerifiedReplayAdmissionOutcome;
 use crate::verified::VerifiedReplayAdmissionTranscript;
 use crate::verified::VerifiedRevocationCheckFact;
-use crate::verified::VerifiedSigningInputByteProvenance;
 use crate::verified::VerifiedVerificationStage;
 use crate::verified::VerifiedVerificationStageTranscript;
 use crate::verified::VerifiedWebOfTrustCaveat;
 use crate::verified::VerifiedWebOfTrustCaveatContext;
 use crate::verified::backend_transcript_accepts;
 use crate::verified::backend_transcript_first_failed_operation;
-use crate::verified::base64url_segment_is_valid;
 use crate::verified::caveat_evaluation_first_failed_index;
 use crate::verified::caveat_evaluation_transcript_accepts;
 use crate::verified::caveat_preservation_is_valid;
-use crate::verified::compact_token_envelope_is_valid;
-use crate::verified::compact_token_split_is_valid;
 use crate::verified::compose_time_window_chain;
 use crate::verified::derive_ed25519_public_key;
 use crate::verified::encode_ed25519_did_key;
-use crate::verified::invocation_request_is_authorized;
 use crate::verified::parsed_capability_list_shape_is_valid;
 use crate::verified::parsed_caveat_list_shape_is_valid;
 use crate::verified::parsed_caveat_payloads_are_valid;
 use crate::verified::parsed_claims_presence_is_valid;
 use crate::verified::parsed_did_claims_are_valid;
-use crate::verified::parsed_header_is_valid;
 use crate::verified::parsed_proof_reference_list_shape_is_valid;
 use crate::verified::parsed_temporal_order_is_valid;
 use crate::verified::proof_depth_within_budget;
@@ -88,20 +80,23 @@ use crate::verified::revocation_check_is_valid;
 use crate::verified::revocation_reference_is_listed;
 use crate::verified::sign_ed25519;
 use crate::verified::signer_algorithm_is_valid;
-use crate::verified::signing_input_byte_provenance_is_valid;
 use crate::verified::typed_caveat_ascii_decimal_payload_is_valid;
 use crate::verified::typed_caveat_is_satisfied;
 use crate::verified::typed_caveat_rate_limit_payload_shape_is_valid;
 use crate::verified::validate_token_envelope;
 use crate::verified::verification_stage_transcript_outcome;
-use crate::verified::verified_json_object_bytes;
 use crate::verified::verify_ed25519_signature;
 
 const COMPACT_TOKEN_PART_COUNT: usize = 3;
-const COMPACT_HEADER_INDEX: usize = 0;
-const COMPACT_PAYLOAD_INDEX: usize = 1;
-const COMPACT_SIGNATURE_INDEX: usize = 2;
 const COMPACT_SEPARATOR: char = '.';
+const COMPACT_SEPARATOR_BYTE: u8 = b'.';
+const BASE64_INPUT_BLOCK_BYTES: usize = 4;
+const BASE64_OUTPUT_BLOCK_BYTES: usize = 3;
+const BASE64_REMAINDER_TWO: usize = 2;
+const BASE64_REMAINDER_THREE: usize = 3;
+const BASE64_REMAINDER_TWO_OUTPUT_BYTES: usize = 1;
+const BASE64_REMAINDER_THREE_OUTPUT_BYTES: usize = 2;
+const JSON_ESCAPE_BYTE: u8 = b'\\';
 const TOKEN_TYPE_JWT: &str = "JWT";
 const TOKEN_ALGORITHM_EDDSA: &str = "EdDSA";
 const REDACTED_SECRET_MATERIAL_DEBUG: &str = "<redacted>";
@@ -119,6 +114,9 @@ pub type SignerResult<T> = std::result::Result<T, SignerError>;
 pub type TokenResult<T> = std::result::Result<T, TokenError>;
 pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
 pub type TimeConversionResult<T> = std::result::Result<T, TimeConversionError>;
+
+mod holder_invocation;
+pub use holder_invocation::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuilderError {
@@ -211,7 +209,7 @@ pub enum TokenError {
     Base64Decode { part: CompactPart, message: String },
     JsonDecode { part: CompactPart, message: String },
     JsonEncode { message: String },
-    UnsupportedHeader { algorithm: String, token_type: String },
+    UnsupportedHeader,
     Capability { message: String },
     MissingCapabilityField { index: usize, field: &'static str },
     CoreClaims { source: ucan_core::token::Error },
@@ -231,6 +229,8 @@ pub enum TokenError {
     BackendTranscript { message: String },
     Attenuation { resource: String, ability: String },
     Signer { source: SignerError },
+    SecretCapacity { expected: usize, actual: usize },
+    JsonEscapesNotSupported { part: CompactPart },
     VerifiedPrimitive { source: VerifiedPrimitiveError },
 }
 
@@ -254,9 +254,7 @@ impl fmt::Display for TokenError {
                 write!(formatter, "{} part is not valid JSON: {message}", part.as_str())
             }
             Self::JsonEncode { message } => write!(formatter, "token JSON encoding failed: {message}"),
-            Self::UnsupportedHeader { algorithm, token_type } => {
-                write!(formatter, "unsupported token header alg={algorithm:?}, typ={token_type:?}")
-            }
+            Self::UnsupportedHeader => formatter.write_str("compact token header is unsupported"),
             Self::Capability { message } => write!(formatter, "capability validation failed: {message}"),
             Self::MissingCapabilityField { index, field } => {
                 write!(formatter, "capability at index {index} is missing field {field:?}")
@@ -286,6 +284,12 @@ impl fmt::Display for TokenError {
                 write!(formatter, "capability {resource} {ability} is not delegated by proofs")
             }
             Self::Signer { source } => write!(formatter, "signer failed: {source}"),
+            Self::SecretCapacity { expected, actual } => {
+                write!(formatter, "secret buffer length {actual} does not match exact length {expected}")
+            }
+            Self::JsonEscapesNotSupported { part } => {
+                write!(formatter, "{} JSON contains unsupported escape syntax", part.as_str())
+            }
             Self::VerifiedPrimitive { source } => write!(formatter, "verified primitive failed: {source}"),
         }
     }
@@ -308,7 +312,7 @@ impl std::error::Error for TokenError {
             | Self::Base64Decode { .. }
             | Self::JsonDecode { .. }
             | Self::JsonEncode { .. }
-            | Self::UnsupportedHeader { .. }
+            | Self::UnsupportedHeader
             | Self::Capability { .. }
             | Self::MissingCapabilityField { .. }
             | Self::InvalidSecretKeyLength { .. }
@@ -321,7 +325,9 @@ impl std::error::Error for TokenError {
             | Self::SelfDelegation { .. }
             | Self::ProofChain { .. }
             | Self::BackendTranscript { .. }
-            | Self::Attenuation { .. } => None,
+            | Self::Attenuation { .. }
+            | Self::SecretCapacity { .. }
+            | Self::JsonEscapesNotSupported { .. } => None,
         }
     }
 }
@@ -485,43 +491,156 @@ impl fmt::Display for VerificationLimitError {
 
 impl std::error::Error for VerificationLimitError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompactToken(String);
+#[cfg(test)]
+static SECRET_BYTES_DROP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct SecretBytes {
+    bytes: Zeroizing<Box<[u8]>>,
+    initialized_len: usize,
+}
+
+impl Drop for SecretBytes {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        SECRET_BYTES_DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl SecretBytes {
+    fn from_slice(bytes: &[u8]) -> Self {
+        let mut owned = Zeroizing::new(vec![0_u8; bytes.len()].into_boxed_slice());
+        owned.as_mut().copy_from_slice(bytes);
+        Self {
+            bytes: owned,
+            initialized_len: bytes.len(),
+        }
+    }
+
+    fn zeroed_exact_len(len: usize) -> Self {
+        Self {
+            bytes: Zeroizing::new(vec![0_u8; len].into_boxed_slice()),
+            initialized_len: len,
+        }
+    }
+
+    fn empty_exact_capacity(capacity: usize) -> Self {
+        Self {
+            bytes: Zeroizing::new(vec![0_u8; capacity].into_boxed_slice()),
+            initialized_len: 0,
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.initialized_len]
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.bytes.as_mut()
+    }
+
+    const fn len(&self) -> usize {
+        self.initialized_len
+    }
+
+    fn allocation_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.initialized_len == 0
+    }
+
+    fn finish_exact(self, expected_len: usize) -> TokenResult<Self> {
+        if self.len() != expected_len || self.allocation_len() != expected_len {
+            return Err(TokenError::SecretCapacity {
+                expected: expected_len,
+                actual: self.len(),
+            });
+        }
+        Ok(self)
+    }
+}
+
+impl Write for SecretBytes {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        let next_len = self
+            .len()
+            .checked_add(input.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::WriteZero, "secret buffer length overflow"))?;
+        if next_len > self.allocation_len() {
+            return Err(io::Error::new(io::ErrorKind::WriteZero, "secret buffer exceeded fixed allocation"));
+        }
+        self.bytes[self.initialized_len..next_len].copy_from_slice(input);
+        self.initialized_len = next_len;
+        Ok(input.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub struct CompactToken {
+    bytes: SecretBytes,
+}
+
+impl PartialEq for CompactToken {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes.as_slice() == other.bytes.as_slice()
+    }
+}
+
+impl Eq for CompactToken {}
+
+impl fmt::Debug for CompactToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CompactToken")
+            .field("byte_len", &self.bytes.len())
+            .field("bearer", &RedactedSecretMaterial)
+            .finish()
+    }
+}
 
 impl CompactToken {
-    /// Build a compact-token wrapper from a string.
+    /// Copy bounded compact-token text into a zeroizing owner.
     ///
     /// # Errors
     ///
-    /// Returns [`TokenError`] when the token is empty or untrimmed.
-    pub fn new(token: impl Into<String>) -> TokenResult<Self> {
-        let token = token.into();
-        validate_compact_token_string(token.as_str())?;
-        Ok(Self(token))
+    /// Returns [`TokenError`] when the token is empty, untrimmed, or larger than
+    /// the default compact-token limit.
+    pub fn new(token: &str) -> TokenResult<Self> {
+        enforce_compact_token_size(token, VerificationLimits::default())?;
+        validate_compact_token_string(token)?;
+        Ok(Self::from_validated_bytes(token.as_bytes()))
     }
 
+    fn from_validated_bytes(bytes: &[u8]) -> Self {
+        Self {
+            bytes: SecretBytes::from_slice(bytes),
+        }
+    }
+
+    fn from_secret_bytes(bytes: SecretBytes) -> TokenResult<Self> {
+        let token = std::str::from_utf8(bytes.as_slice()).map_err(|_| TokenError::CompactTokenFramingMismatch)?;
+        enforce_compact_token_size(token, VerificationLimits::default())?;
+        validate_compact_token_string(token)?;
+        Ok(Self { bytes })
+    }
+
+    /// Borrow the compact token without creating an owned copy.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the private validated-byte invariant is broken.
     #[must_use]
-    pub const fn as_str(&self) -> &str {
-        self.0.as_str()
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(self.bytes.as_slice()).expect("validated compact token bytes remain UTF-8")
     }
 
-    #[must_use]
-    pub fn into_string(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for CompactToken {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for CompactToken {
-    type Err = TokenError;
-
-    fn from_str(input: &str) -> TokenResult<Self> {
-        Self::new(input.to_owned())
+    #[cfg(test)]
+    fn allocation_len(&self) -> usize {
+        self.bytes.allocation_len()
     }
 }
 
@@ -529,30 +648,7 @@ impl TryFrom<&str> for CompactToken {
     type Error = TokenError;
 
     fn try_from(value: &str) -> TokenResult<Self> {
-        Self::new(value.to_owned())
-    }
-}
-
-impl TryFrom<String> for CompactToken {
-    type Error = TokenError;
-
-    fn try_from(value: String) -> TokenResult<Self> {
         Self::new(value)
-    }
-}
-
-impl Serialize for CompactToken {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where S: serde::Serializer {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for CompactToken {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        let value = String::deserialize(deserializer)?;
-        Self::new(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -863,10 +959,16 @@ impl CaveatDecision {
     }
 }
 
+/// A non-consuming caveat observation.
+///
+/// Implementations must not spend quota, reserve capacity, claim nonces, or
+/// mutate admission state. Consumptive effects belong in a downstream atomic
+/// boundary after UCAN returns authorization.
 pub trait CaveatPolicy {
     fn evaluate(&self, caveat: &CaveatDocument, request: &AuthorizationRequest) -> CaveatDecision;
 }
 
+/// A non-consuming lookup for caveat observations.
 pub trait CaveatPolicySet {
     fn policy_for(&self, caveat: &CaveatIdentifier) -> Option<&dyn CaveatPolicy>;
 }
@@ -1068,10 +1170,13 @@ impl<'a> InvocationRequest<'a> {
     }
 }
 
+/// Audience-only compatibility authorization.
+///
+/// This value proves token and capability authorization for the audience. It
+/// does not prove that a live sender holds the audience private key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvocationAllowed {
     issuer: IssuerDid,
-    invoker: IssuerDid,
     audience: AudienceDid,
     matched_capability: CapabilityDocument,
     effective_time_bounds: TokenTimeBounds,
@@ -1081,10 +1186,6 @@ impl InvocationAllowed {
     #[must_use]
     pub const fn issuer(&self) -> &IssuerDid {
         &self.issuer
-    }
-    #[must_use]
-    pub const fn invoker(&self) -> &IssuerDid {
-        &self.invoker
     }
     #[must_use]
     pub const fn audience(&self) -> &AudienceDid {
@@ -1120,6 +1221,11 @@ impl InvocationResult {
     }
 }
 
+/// Verify audience-only token and capability authorization.
+///
+/// This compatibility helper does not verify sender or holder possession. Use
+/// [`verify_holder_signed_invocation`] when a live audience-key signature and
+/// explicit nonce admission are required.
 #[must_use]
 pub fn verify_invocation(request: &InvocationRequest<'_>) -> InvocationResult {
     let verified = match verify_compact_token(request.token, request.context) {
@@ -1133,53 +1239,14 @@ pub fn verify_invocation(request: &InvocationRequest<'_>) -> InvocationResult {
         }
     };
     match verified.authorize_with_policies(request.resource.as_str(), request.ability.as_str(), request.policies) {
-        AuthorizationDecision::Allowed { matched_capability } => {
-            let matched_verified = match VerifiedCapability::from_document(matched_capability.clone()) {
-                Ok(matched_verified) => matched_verified,
-                Err(error) => {
-                    return InvocationResult::Denied {
-                        reason: InvocationDenialReason::Verification {
-                            message: error.to_string(),
-                        },
-                    };
-                }
-            };
-            if matched_verified.is_concrete()
-                && !invocation_request_is_authorized(
-                    verified.audience().as_str(),
-                    verified.audience().as_str(),
-                    request.resource.as_str(),
-                    request.ability.as_str(),
-                    matched_capability.resource.as_str(),
-                    matched_capability.ability.as_str(),
-                )
-            {
-                return InvocationResult::Denied {
-                    reason: InvocationDenialReason::Verification {
-                        message: "concrete invocation admission failed verified invocation bridge".to_owned(),
-                    },
-                };
-            }
-            let invoker = match IssuerDid::new(verified.audience().as_str().to_owned()) {
-                Ok(invoker) => invoker,
-                Err(error) => {
-                    return InvocationResult::Denied {
-                        reason: InvocationDenialReason::Verification {
-                            message: error.to_string(),
-                        },
-                    };
-                }
-            };
-            InvocationResult::Allowed {
-                invocation: InvocationAllowed {
-                    issuer: verified.issuer().clone(),
-                    invoker,
-                    audience: verified.audience().clone(),
-                    matched_capability,
-                    effective_time_bounds: verified.effective_delegation().time_bounds(),
-                },
-            }
-        }
+        AuthorizationDecision::Allowed { matched_capability } => InvocationResult::Allowed {
+            invocation: InvocationAllowed {
+                issuer: verified.issuer().clone(),
+                audience: verified.audience().clone(),
+                matched_capability,
+                effective_time_bounds: verified.effective_delegation().time_bounds(),
+            },
+        },
         AuthorizationDecision::Denied { reason } => InvocationResult::Denied {
             reason: InvocationDenialReason::Authorization { reason },
         },
@@ -1193,7 +1260,7 @@ where A: ReplayAdmission + ?Sized {
     if !result.is_allowed() {
         return result;
     }
-    let token_reference = proof_reference_for_token(request.token());
+    let token_reference = proof_reference_for_bounded_token(request.token().as_str());
     match replay.admit_invocation(&token_reference, request.resource(), request.ability()) {
         Ok(()) => verified_replay_invocation_result(result),
         Err(error) => verified_replay_denial(&error),
@@ -1320,6 +1387,23 @@ pub trait KeyResolver {
     fn resolve_key(&self, issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError>;
 }
 
+/// A proof token returned by a caller-owned proof store.
+///
+/// Borrowed values avoid token copies. Owned values retain zeroizing ownership.
+pub enum ProofToken<'a> {
+    Borrowed(&'a CompactToken),
+    Owned(CompactToken),
+}
+
+impl ProofToken<'_> {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Borrowed(token) => token.as_str(),
+            Self::Owned(token) => token.as_str(),
+        }
+    }
+}
+
 /// Synchronous shell-owned proof store used by verification.
 pub trait ProofStore {
     /// Resolve a compact proof token by its proof reference.
@@ -1327,13 +1411,27 @@ pub trait ProofStore {
     /// # Errors
     ///
     /// Returns [`ProofStoreError`] when the proof is missing, stale, malformed,
-    /// or the store backend fails. Implementations should return serialized compact tokens
-    /// so verification can enforce size limits before parsing.
-    fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError>;
+    /// or the store backend fails. The returned value must borrow secure storage
+    /// or own a zeroizing compact token.
+    fn resolve_proof<'a>(&'a self, reference: &ProofReference) -> std::result::Result<ProofToken<'a>, ProofStoreError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Default)]
 pub struct ProofCollection(Vec<CompactToken>);
+
+impl PartialEq for ProofCollection {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ProofCollection {}
+
+impl fmt::Debug for ProofCollection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("ProofCollection").field("token_count", &self.0.len()).finish()
+    }
+}
 
 impl ProofCollection {
     #[must_use]
@@ -1358,14 +1456,41 @@ impl ProofCollection {
 }
 
 impl ProofStore for ProofCollection {
-    fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+    fn resolve_proof<'a>(&'a self, reference: &ProofReference) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
         self.as_slice()
             .iter()
-            .find(|candidate| proof_reference_for_token(candidate).as_bytes() == reference.as_bytes())
-            .cloned()
+            .find(|candidate| proof_reference_for_bounded_token(candidate.as_str()).as_bytes() == reference.as_bytes())
+            .map(ProofToken::Borrowed)
             .ok_or_else(|| ProofStoreError::MissingProof {
                 reference: reference.clone(),
             })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProofReferences(Vec<ProofReference>);
+
+impl ProofReferences {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    #[must_use]
+    pub const fn from_references(references: Vec<ProofReference>) -> Self {
+        Self(references)
+    }
+
+    #[must_use]
+    pub const fn as_slice(&self) -> &[ProofReference] {
+        self.0.as_slice()
+    }
+}
+
+impl From<ProofCollection> for ProofReferences {
+    fn from(proofs: ProofCollection) -> Self {
+        let references = proofs.into_vec().iter().map(proof_reference).collect();
+        Self::from_references(references)
     }
 }
 
@@ -1593,9 +1718,17 @@ fn unix_seconds_from_system_time(time: SystemTime) -> TimeConversionResult<u64> 
     Ok(duration.as_secs())
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct Ed25519SigningKey {
-    bytes: [u8; ED25519_SECRET_KEY_BYTES],
+    bytes: Zeroizing<[u8; ED25519_SECRET_KEY_BYTES]>,
+}
+
+impl Clone for Ed25519SigningKey {
+    fn clone(&self) -> Self {
+        Self {
+            bytes: self.bytes.clone(),
+        }
+    }
 }
 
 impl fmt::Debug for Ed25519SigningKey {
@@ -1616,8 +1749,10 @@ impl fmt::Debug for RedactedSecretMaterial {
 
 impl Ed25519SigningKey {
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; ED25519_SECRET_KEY_BYTES]) -> Self {
-        Self { bytes }
+    pub fn from_bytes(bytes: [u8; ED25519_SECRET_KEY_BYTES]) -> Self {
+        Self {
+            bytes: Zeroizing::new(bytes),
+        }
     }
 
     /// Build a signing key from a byte slice.
@@ -1628,7 +1763,9 @@ impl Ed25519SigningKey {
     /// not the Ed25519 seed length.
     pub fn try_from_slice(bytes: &[u8]) -> TokenResult<Self> {
         let bytes = copy_secret_key(bytes)?;
-        Ok(Self { bytes })
+        Ok(Self {
+            bytes: Zeroizing::new(bytes),
+        })
     }
 
     /// Derive the issuer DID for this signing key.
@@ -1651,32 +1788,56 @@ impl Ed25519SigningKey {
         Ed25519PublicKey::try_from_slice(bytes.as_slice())
     }
 
-    const fn as_bytes(&self) -> &[u8] {
+    fn as_bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
 pub struct SignerSignature {
-    bytes: Vec<u8>,
+    bytes: Zeroizing<[u8; ED25519_SIGNATURE_BYTES]>,
 }
+
+impl PartialEq for SignerSignature {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes.as_slice() == other.bytes.as_slice()
+    }
+}
+
+impl Eq for SignerSignature {}
 
 impl fmt::Debug for SignerSignature {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut debug = formatter.debug_struct("SignerSignature");
-        debug.field("byte_len", &self.bytes.len());
-        debug.finish()
+        formatter.debug_struct("SignerSignature").field("byte_len", &self.bytes.len()).finish()
     }
 }
 
 impl SignerSignature {
     #[must_use]
-    pub const fn new(bytes: Vec<u8>) -> Self {
-        Self { bytes }
+    pub fn from_bytes(bytes: [u8; ED25519_SIGNATURE_BYTES]) -> Self {
+        Self {
+            bytes: Zeroizing::new(bytes),
+        }
+    }
+
+    /// Copy an exact-width signature into fixed zeroizing storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SignerError::InvalidSignatureLength`] for non-Ed25519 widths.
+    pub fn try_from_slice(bytes: &[u8]) -> SignerResult<Self> {
+        if bytes.len() != ED25519_SIGNATURE_BYTES {
+            return Err(SignerError::InvalidSignatureLength {
+                actual: bytes.len(),
+                expected: ED25519_SIGNATURE_BYTES,
+            });
+        }
+        let mut fixed = [0_u8; ED25519_SIGNATURE_BYTES];
+        fixed.copy_from_slice(bytes);
+        Ok(Self::from_bytes(fixed))
     }
 
     #[must_use]
-    pub const fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
 }
@@ -1712,7 +1873,7 @@ pub trait TokenSigner {
     fn sign(&self, signing_input: &[u8]) -> SignerResult<SignerSignature>;
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct Ed25519InMemorySigner {
     signing_key: Ed25519SigningKey,
 }
@@ -1732,7 +1893,7 @@ impl Ed25519InMemorySigner {
     }
 
     #[must_use]
-    pub const fn from_seed_bytes(bytes: [u8; ED25519_SECRET_KEY_BYTES]) -> Self {
+    pub fn from_seed_bytes(bytes: [u8; ED25519_SECRET_KEY_BYTES]) -> Self {
         Self::from_signing_key(Ed25519SigningKey::from_bytes(bytes))
     }
 
@@ -1763,6 +1924,25 @@ impl From<Ed25519SigningKey> for Ed25519InMemorySigner {
     }
 }
 
+impl TokenSigner for Ed25519SigningKey {
+    fn algorithm(&self) -> &str {
+        TOKEN_ALGORITHM_EDDSA
+    }
+
+    fn issuer(&self) -> TokenResult<IssuerDid> {
+        self.issuer()
+    }
+
+    fn public_key(&self) -> TokenResult<Ed25519PublicKey> {
+        self.public_key()
+    }
+
+    fn sign(&self, signing_input: &[u8]) -> SignerResult<SignerSignature> {
+        let signature = sign_ed25519(self.as_bytes(), signing_input).map_err(|_| SignerError::Refused)?;
+        Ok(SignerSignature::from_bytes(signature))
+    }
+}
+
 impl TokenSigner for Ed25519InMemorySigner {
     fn algorithm(&self) -> &str {
         TOKEN_ALGORITHM_EDDSA
@@ -1778,7 +1958,7 @@ impl TokenSigner for Ed25519InMemorySigner {
 
     fn sign(&self, signing_input: &[u8]) -> SignerResult<SignerSignature> {
         let signature = sign_ed25519(self.signing_key.as_bytes(), signing_input).map_err(|_| SignerError::Refused)?;
-        Ok(SignerSignature::new(signature))
+        Ok(SignerSignature::from_bytes(signature))
     }
 }
 
@@ -1889,13 +2069,26 @@ impl KeyResolver for KeyResolutionContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct IssueRequest {
     signing_key: Ed25519SigningKey,
     audience: AudienceDid,
     capabilities: CapabilitySet,
-    proofs: ProofCollection,
+    proofs: ProofReferences,
     time_bounds: TokenTimeBounds,
+}
+
+impl fmt::Debug for IssueRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IssueRequest")
+            .field("signing_key", &self.signing_key)
+            .field("audience", &self.audience)
+            .field("capabilities", &self.capabilities)
+            .field("proof_count", &self.proofs.as_slice().len())
+            .field("time_bounds", &self.time_bounds)
+            .finish()
+    }
 }
 
 impl IssueRequest {
@@ -1904,7 +2097,7 @@ impl IssueRequest {
         signing_key: Ed25519SigningKey,
         audience: AudienceDid,
         capabilities: CapabilitySet,
-        proofs: ProofCollection,
+        proofs: ProofReferences,
         time_bounds: TokenTimeBounds,
     ) -> Self {
         Self {
@@ -1922,12 +2115,12 @@ impl IssueRequest {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Default)]
 pub struct IssueRequestBuilder {
     signing_key: Option<Ed25519SigningKey>,
     audience: Option<AudienceDid>,
     capabilities: Option<CapabilitySet>,
-    proofs: Option<ProofCollection>,
+    proofs: Option<ProofReferences>,
     time_bounds: Option<TokenTimeBounds>,
 }
 
@@ -1944,7 +2137,7 @@ impl IssueRequestBuilder {
     }
 
     #[must_use]
-    pub const fn signing_key(mut self, signing_key: Ed25519SigningKey) -> Self {
+    pub fn signing_key(mut self, signing_key: Ed25519SigningKey) -> Self {
         self.signing_key = Some(signing_key);
         self
     }
@@ -1962,7 +2155,7 @@ impl IssueRequestBuilder {
     }
 
     #[must_use]
-    pub fn proofs(mut self, proofs: ProofCollection) -> Self {
+    pub fn proofs(mut self, proofs: ProofReferences) -> Self {
         self.proofs = Some(proofs);
         self
     }
@@ -1989,12 +2182,24 @@ impl IssueRequestBuilder {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct VerificationContext {
     time: VerificationTime,
     keys: KeyResolutionContext,
     proofs: ProofCollection,
     limits: VerificationLimits,
+}
+
+impl fmt::Debug for VerificationContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerificationContext")
+            .field("time", &self.time)
+            .field("keys", &self.keys)
+            .field("proof_count", &self.proofs.as_slice().len())
+            .field("limits", &self.limits)
+            .finish()
+    }
 }
 
 impl VerificationContext {
@@ -2044,7 +2249,7 @@ impl VerificationContext {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Default)]
 pub struct VerificationContextBuilder {
     time: Option<VerificationTime>,
     keys: Option<KeyResolutionContext>,
@@ -2102,48 +2307,68 @@ impl VerificationContextBuilder {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodedToken {
-    compact: CompactToken,
-    header: DecodedHeader,
-    claims: DecodedClaims,
-    signature: Vec<u8>,
-    signing_input: Vec<u8>,
+pub struct DecodedToken<'a> {
+    reference: ProofReference,
+    compact_byte_len: usize,
+    header_json: SecretBytes,
+    claims_json: SecretBytes,
+    signature: SecretBytes,
+    signing_input: &'a [u8],
 }
 
-impl DecodedToken {
-    #[must_use]
-    pub const fn compact(&self) -> &CompactToken {
-        &self.compact
+impl fmt::Debug for DecodedToken<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DecodedToken")
+            .field("reference", &self.reference)
+            .field("compact_byte_len", &self.compact_byte_len)
+            .field("bearer", &RedactedSecretMaterial)
+            .finish()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructurallyValidToken {
-    compact: CompactToken,
+pub struct StructurallyValidToken<'a> {
+    reference: ProofReference,
+    compact_byte_len: usize,
     claims: ucan_core::token::Claims,
-    signature: Vec<u8>,
-    signing_input: Vec<u8>,
+    signature: SecretBytes,
+    signing_input: &'a [u8],
 }
 
-impl StructurallyValidToken {
+impl fmt::Debug for StructurallyValidToken<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StructurallyValidToken")
+            .field("reference", &self.reference)
+            .field("compact_byte_len", &self.compact_byte_len)
+            .field("bearer", &RedactedSecretMaterial)
+            .finish()
+    }
+}
+
+impl StructurallyValidToken<'_> {
     #[must_use]
     pub const fn claims(&self) -> &ucan_core::token::Claims {
         &self.claims
     }
 
     #[must_use]
-    pub const fn compact(&self) -> &CompactToken {
-        &self.compact
+    pub const fn reference(&self) -> &ProofReference {
+        &self.reference
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignatureVerifiedToken {
-    token: StructurallyValidToken,
+pub struct SignatureVerifiedToken<'a> {
+    token: StructurallyValidToken<'a>,
 }
 
-impl SignatureVerifiedToken {
+impl fmt::Debug for SignatureVerifiedToken<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("SignatureVerifiedToken").field("token", &self.token).finish()
+    }
+}
+
+impl SignatureVerifiedToken<'_> {
     #[must_use]
     pub const fn claims(&self) -> &ucan_core::token::Claims {
         self.token.claims()
@@ -2187,7 +2412,7 @@ pub struct VerifiedToken {
     issuer: IssuerDid,
     audience: AudienceDid,
     capabilities: CapabilitySet,
-    proofs: ProofCollection,
+    proofs: ProofReferences,
     effective: EffectiveDelegation,
     proof_transcript: Option<LiveProofTraversalTranscript>,
 }
@@ -2209,7 +2434,7 @@ impl VerifiedToken {
     }
 
     #[must_use]
-    pub const fn proofs(&self) -> &ProofCollection {
+    pub const fn proofs(&self) -> &ProofReferences {
         &self.proofs
     }
 
@@ -2262,6 +2487,27 @@ impl VerifiedToken {
         request: &AuthorizationRequest,
         policies: &dyn CaveatPolicySet,
     ) -> AuthorizationDecision {
+        let matched = self.match_authorization_request(request);
+        let AuthorizationDecision::Allowed { matched_capability } = matched else {
+            return matched;
+        };
+        if let Some(reason) = evaluate_capability_caveats(&matched_capability, request, policies) {
+            return AuthorizationDecision::Denied { reason };
+        }
+        AuthorizationDecision::Allowed { matched_capability }
+    }
+
+    fn match_authorization_request(&self, request: &AuthorizationRequest) -> AuthorizationDecision {
+        let requested = match VerifiedCapability::from_document(request.capability().clone()) {
+            Ok(requested) => requested,
+            Err(error) => {
+                return AuthorizationDecision::Denied {
+                    reason: AuthorizationDenialReason::MalformedRequest {
+                        message: error.to_string(),
+                    },
+                };
+            }
+        };
         for capability in self.effective_delegation().capabilities().as_slice() {
             let parent = match VerifiedCapability::from_document(capability.clone()) {
                 Ok(parent) => parent,
@@ -2273,20 +2519,7 @@ impl VerifiedToken {
                     };
                 }
             };
-            let requested = match VerifiedCapability::from_document(request.capability().clone()) {
-                Ok(requested) => requested,
-                Err(error) => {
-                    return AuthorizationDecision::Denied {
-                        reason: AuthorizationDenialReason::MalformedRequest {
-                            message: error.to_string(),
-                        },
-                    };
-                }
-            };
             if parent.contains(&requested) {
-                if let Some(reason) = evaluate_capability_caveats(capability, request, policies) {
-                    return AuthorizationDecision::Denied { reason };
-                }
                 return AuthorizationDecision::Allowed {
                     matched_capability: capability.clone(),
                 };
@@ -2343,21 +2576,21 @@ fn evaluate_capability_caveats(
     None
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize)]
 struct EncodedHeader<'a> {
     alg: &'a str,
     typ: &'a str,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct DecodedHeader {
-    #[serde(default)]
-    alg: String,
-    #[serde(default)]
-    typ: String,
+#[derive(Deserialize)]
+struct DecodedHeader<'a> {
+    #[serde(default, borrow)]
+    alg: Option<&'a str>,
+    #[serde(default, borrow)]
+    typ: Option<&'a str>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize)]
 struct EncodedCapability<'a> {
     #[serde(rename = "with")]
     resource: &'a str,
@@ -2367,57 +2600,69 @@ struct EncodedCapability<'a> {
     caveats: Vec<EncodedCaveat<'a>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize)]
 struct EncodedCaveat<'a> {
     domain: &'a str,
     #[serde(rename = "type")]
     caveat_type: &'a str,
     key: &'a str,
-    payload: String,
+    payload: EncodedBase64Url<'a>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct DecodedCapability {
-    #[serde(default, rename = "with")]
-    resource: Option<String>,
-    #[serde(default, rename = "can")]
-    ability: Option<String>,
-    #[serde(default, rename = "cav")]
-    caveats: Vec<DecodedCaveat>,
+struct EncodedBase64Url<'a>(&'a [u8]);
+
+impl Serialize for EncodedBase64Url<'_> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let encoded = encode_base64_secret(self.0).map_err(|_| serde::ser::Error::custom("base64 encoding failed"))?;
+        let text = std::str::from_utf8(encoded.as_slice())
+            .map_err(|_| serde::ser::Error::custom("base64 output was not UTF-8"))?;
+        serializer.serialize_str(text)
+    }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct DecodedCaveat {
-    #[serde(default)]
-    domain: Option<String>,
-    #[serde(default, rename = "type")]
-    caveat_type: Option<String>,
-    #[serde(default)]
-    key: Option<String>,
-    #[serde(default)]
-    payload: Option<String>,
+#[derive(Deserialize)]
+struct DecodedCapability<'a> {
+    #[serde(default, borrow, rename = "with")]
+    resource: Option<&'a str>,
+    #[serde(default, borrow, rename = "can")]
+    ability: Option<&'a str>,
+    #[serde(default, borrow, rename = "cav")]
+    caveats: Vec<DecodedCaveat<'a>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Deserialize)]
+struct DecodedCaveat<'a> {
+    #[serde(default, borrow)]
+    domain: Option<&'a str>,
+    #[serde(default, borrow, rename = "type")]
+    caveat_type: Option<&'a str>,
+    #[serde(default, borrow)]
+    key: Option<&'a str>,
+    #[serde(default, borrow)]
+    payload: Option<&'a str>,
+}
+
+#[derive(Serialize)]
 struct EncodedClaims<'a> {
     iss: &'a str,
     aud: &'a str,
     att: Vec<EncodedCapability<'a>>,
-    prf: Vec<String>,
+    prf: Vec<EncodedBase64Url<'a>>,
     exp: u64,
     nbf: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct DecodedClaims {
-    #[serde(default)]
-    iss: Option<String>,
-    #[serde(default)]
-    aud: Option<String>,
-    #[serde(default)]
-    att: Option<Vec<DecodedCapability>>,
-    #[serde(default)]
-    prf: Option<Vec<String>>,
+#[derive(Deserialize)]
+struct DecodedClaims<'a> {
+    #[serde(default, borrow)]
+    iss: Option<&'a str>,
+    #[serde(default, borrow)]
+    aud: Option<&'a str>,
+    #[serde(default, borrow)]
+    att: Option<Vec<DecodedCapability<'a>>>,
+    #[serde(default, borrow)]
+    prf: Option<Vec<&'a str>>,
     #[serde(default)]
     exp: Option<u64>,
     #[serde(default)]
@@ -2431,8 +2676,13 @@ struct DecodedClaims {
 /// Returns [`TokenError`] when signing, DID derivation, JSON encoding, or
 /// structural validation fails.
 pub fn issue_token(request: &IssueRequest) -> TokenResult<CompactToken> {
-    let signer = Ed25519InMemorySigner::from_signing_key(request.signing_key.clone());
-    issue_token_with_signer(&signer, &request.audience, &request.capabilities, &request.proofs, request.time_bounds)
+    issue_token_with_signer(
+        &request.signing_key,
+        &request.audience,
+        &request.capabilities,
+        &request.proofs,
+        request.time_bounds,
+    )
 }
 
 /// Issue and sign a compact UCAN token through a signer abstraction.
@@ -2446,7 +2696,7 @@ pub fn issue_token_with_signer<S>(
     signer: &S,
     audience: &AudienceDid,
     capabilities: &CapabilitySet,
-    proofs: &ProofCollection,
+    proofs: &ProofReferences,
     time_bounds: TokenTimeBounds,
 ) -> TokenResult<CompactToken>
 where
@@ -2463,45 +2713,35 @@ where
     issue_compact_token_with_signer(signer, &input)
 }
 
-/// Parse a compact token into decoded-but-unvalidated parts.
+/// Parse a compact token into decoded-but-unvalidated secret buffers.
 ///
 /// # Errors
 ///
-/// Returns [`TokenError`] when compact structure, verified compact framing,
-/// base64url decoding, or JSON decoding fails.
-pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
-    let parts = compact_parts(token.as_str())?;
-    let verified_parts = VerifiedCompactTokenParts {
-        header: parts[COMPACT_HEADER_INDEX].as_bytes().to_vec(),
-        payload: parts[COMPACT_PAYLOAD_INDEX].as_bytes().to_vec(),
-        signature: parts[COMPACT_SIGNATURE_INDEX].as_bytes().to_vec(),
-    };
-    if !compact_token_split_is_valid(token.as_str().as_bytes(), &verified_parts) {
-        return Err(TokenError::CompactTokenFramingMismatch);
-    }
-    let signing_input = signing_input(parts[COMPACT_HEADER_INDEX], parts[COMPACT_PAYLOAD_INDEX]).into_bytes();
-    validate_signing_input_byte_provenance(
-        parts[COMPACT_HEADER_INDEX],
-        parts[COMPACT_PAYLOAD_INDEX],
-        signing_input.as_slice(),
-    )?;
-    let envelope = VerifiedCompactTokenEnvelope {
-        compact: token.as_str().as_bytes().to_vec(),
-        parts: verified_parts,
-        signing_input: signing_input.clone(),
-    };
-    if !compact_token_envelope_is_valid(&envelope) {
-        return Err(TokenError::CompactTokenFramingMismatch);
-    }
-    let header = decode_json_part::<DecodedHeader>(parts[COMPACT_HEADER_INDEX], CompactPart::Header)?;
-    let claims = decode_json_part::<DecodedClaims>(parts[COMPACT_PAYLOAD_INDEX], CompactPart::Payload)?;
-    let signature = decode_part(parts[COMPACT_SIGNATURE_INDEX], CompactPart::Signature)?;
+/// Returns [`TokenError`] when size, compact structure, base64url decoding, or
+/// decoded JSON object admission fails.
+pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken<'_>> {
+    parse_compact_token_str_bounded(token.as_str(), VerificationLimits::default())
+}
+
+fn parse_compact_token_str_bounded(token: &str, limits: VerificationLimits) -> TokenResult<DecodedToken<'_>> {
+    enforce_compact_token_size(token, limits)?;
+    validate_compact_token_string(token)?;
+    let parts = compact_parts(token)?;
+    let reference = proof_reference_for_bounded_token(token);
+    let header_json = decode_part(parts.header, CompactPart::Header)?;
+    validate_decoded_json_object_bytes(header_json.as_slice(), CompactPart::Header)?;
+    reject_json_escapes(header_json.as_slice(), CompactPart::Header)?;
+    let claims_json = decode_part(parts.payload, CompactPart::Payload)?;
+    validate_decoded_json_object_bytes(claims_json.as_slice(), CompactPart::Payload)?;
+    reject_json_escapes(claims_json.as_slice(), CompactPart::Payload)?;
+    let signature = decode_part(parts.signature, CompactPart::Signature)?;
     Ok(DecodedToken {
-        compact: token.clone(),
-        header,
-        claims,
+        reference,
+        compact_byte_len: token.len(),
+        header_json,
+        claims_json,
         signature,
-        signing_input,
+        signing_input: parts.signing_input.as_bytes(),
     })
 }
 
@@ -2510,26 +2750,18 @@ pub fn parse_compact_token(token: &CompactToken) -> TokenResult<DecodedToken> {
 /// # Errors
 ///
 /// Returns [`TokenError`] when the token header or decoded claim shape is invalid.
-pub fn validate_decoded_token(decoded: DecodedToken) -> TokenResult<StructurallyValidToken> {
-    validate_header(&decoded.header)?;
-    validate_parsed_claims_presence(&decoded.claims)?;
-    validate_parsed_did_claims(&decoded.claims)?;
-    validate_parsed_temporal_order(&decoded.claims)?;
-    validate_parsed_capability_list_shape(&decoded.claims)?;
-    let capability_inputs = decoded_capability_inputs(&decoded.claims)?;
-    let proof_bytes = decoded_proof_references(&decoded.claims)?;
-    let proof_inputs = proof_bytes.as_ref().map(|references| proof_reference_inputs(references.as_slice()));
-    let claims_input = ucan_core::token::ClaimsInput {
-        issuer_did: decoded.claims.iss.as_deref(),
-        audience_did: decoded.claims.aud.as_deref(),
-        capabilities: capability_inputs.as_deref(),
-        proofs: proof_inputs.as_deref(),
-        not_before_seconds: decoded.claims.nbf,
-        expires_at_seconds: decoded.claims.exp,
-    };
-    let claims = ucan_core::token::Claims::from_input(claims_input)?;
+pub fn validate_decoded_token(decoded: DecodedToken<'_>) -> TokenResult<StructurallyValidToken<'_>> {
+    let header = decode_json_bytes::<DecodedHeader<'_>>(decoded.header_json.as_slice(), CompactPart::Header)?;
+    validate_header(&header)?;
+    let claims = decode_json_bytes::<DecodedClaims<'_>>(decoded.claims_json.as_slice(), CompactPart::Payload)?;
+    validate_parsed_claims_presence(&claims)?;
+    validate_parsed_did_claims(&claims)?;
+    validate_parsed_temporal_order(&claims)?;
+    validate_parsed_capability_list_shape(&claims)?;
+    let claims = build_core_claims(&claims)?;
     Ok(StructurallyValidToken {
-        compact: decoded.compact,
+        reference: decoded.reference,
+        compact_byte_len: decoded.compact_byte_len,
         claims,
         signature: decoded.signature,
         signing_input: decoded.signing_input,
@@ -2541,10 +2773,10 @@ pub fn validate_decoded_token(decoded: DecodedToken) -> TokenResult<Structurally
 /// # Errors
 ///
 /// Returns [`TokenError`] when key resolution fails or the signature is invalid.
-pub fn verify_token_signature(
-    token: StructurallyValidToken,
+pub fn verify_token_signature<'a>(
+    token: StructurallyValidToken<'a>,
     keys: &KeyResolutionContext,
-) -> TokenResult<SignatureVerifiedToken> {
+) -> TokenResult<SignatureVerifiedToken<'a>> {
     verify_token_signature_with_resolver(token, keys)
 }
 
@@ -2553,10 +2785,10 @@ pub fn verify_token_signature(
 /// # Errors
 ///
 /// Returns [`TokenError`] when key resolution fails or the signature is invalid.
-pub fn verify_token_signature_with_resolver<R>(
-    token: StructurallyValidToken,
+pub fn verify_token_signature_with_resolver<'a, R>(
+    token: StructurallyValidToken<'a>,
     resolver: &R,
-) -> TokenResult<SignatureVerifiedToken>
+) -> TokenResult<SignatureVerifiedToken<'a>>
 where
     R: KeyResolver + ?Sized,
 {
@@ -2565,8 +2797,7 @@ where
         KeyResolverError::MissingKey { issuer } => TokenError::MissingVerificationKey { issuer },
         source => TokenError::KeyResolver { source },
     })?;
-    let valid =
-        verify_ed25519_signature(public_key.as_bytes(), token.signing_input.as_slice(), token.signature.as_slice())?;
+    let valid = verify_ed25519_signature(public_key.as_bytes(), token.signing_input, token.signature.as_slice())?;
     if !valid {
         return Err(TokenError::Signature {
             issuer: issuer.as_str().to_owned(),
@@ -2575,11 +2806,11 @@ where
     Ok(SignatureVerifiedToken { token })
 }
 
-fn verify_token_signature_with_traversal<R>(
-    token: StructurallyValidToken,
+fn verify_token_signature_with_traversal<'a, R>(
+    token: StructurallyValidToken<'a>,
     resolver: &R,
     traversal: &mut VerificationTraversal,
-) -> TokenResult<SignatureVerifiedToken>
+) -> TokenResult<SignatureVerifiedToken<'a>>
 where
     R: KeyResolver + ?Sized,
 {
@@ -2597,8 +2828,7 @@ where
             });
         }
     };
-    let valid =
-        verify_ed25519_signature(public_key.as_bytes(), token.signing_input.as_slice(), token.signature.as_slice())?;
+    let valid = verify_ed25519_signature(public_key.as_bytes(), token.signing_input, token.signature.as_slice())?;
     if !valid {
         return Err(TokenError::Signature {
             issuer: issuer.as_str().to_owned(),
@@ -2614,28 +2844,31 @@ where
 /// Returns [`TokenError`] when parsing, structural validation, signature
 /// validation, temporal validation, or proof-chain validation fails.
 pub fn verify_compact_token(token: &CompactToken, context: &VerificationContext) -> TokenResult<VerifiedToken> {
-    verify_compact_token_with_resolvers(token, context.time, &context.keys, &context.proofs, context.limits)
+    verify_compact_token_str(token.as_str(), context)
 }
 
-/// Verify a serialized compact token string with size limits applied before parsing.
+/// Verify borrowed compact-token text without creating an owned bearer copy.
 ///
 /// # Errors
 ///
 /// Returns [`TokenError`] when size limits, parsing, structural validation,
 /// signature validation, temporal validation, or proof-chain validation fails.
 pub fn verify_compact_token_str(token: &str, context: &VerificationContext) -> TokenResult<VerifiedToken> {
-    enforce_compact_token_size(token, context.limits)?;
-    let token = CompactToken::new(token.to_owned())?;
-    verify_compact_token(&token, context)
+    verify_compact_token_str_with_resolvers_and_revocations(
+        token,
+        context.time,
+        &context.keys,
+        &context.proofs,
+        &NoRevocations,
+        context.limits,
+    )
 }
 
-/// Verify a compact token through explicit shell-owned resolver and proof-store abstractions.
+/// Verify a compact-token owner through explicit resolver and proof-store inputs.
 ///
 /// # Errors
 ///
-/// Returns [`TokenError`] when size limits, parsing, structural validation,
-/// signature validation, temporal validation, proof-store lookup, or proof-chain
-/// validation fails.
+/// Returns [`TokenError`] when any verification stage fails.
 pub fn verify_compact_token_with_resolvers<R, S>(
     token: &CompactToken,
     time: VerificationTime,
@@ -2647,17 +2880,70 @@ where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
 {
-    verify_compact_token_with_resolvers_and_revocations(token, time, key_resolver, proof_store, &NoRevocations, limits)
+    verify_compact_token_str_with_resolvers(token.as_str(), time, key_resolver, proof_store, limits)
 }
 
-/// Verify a compact token with explicit resolver, proof-store, and revocation checker abstractions.
+/// Verify borrowed compact-token text through explicit resolver and proof-store inputs.
 ///
 /// # Errors
 ///
-/// Returns [`TokenError`] when revocation, size limits, parsing, structural validation,
-/// signature validation, proof-store lookup, or proof-chain validation fails.
+/// Returns [`TokenError`] when any verification stage fails.
+pub fn verify_compact_token_str_with_resolvers<R, S>(
+    token: &str,
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    limits: VerificationLimits,
+) -> TokenResult<VerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+{
+    verify_compact_token_str_with_resolvers_and_revocations(
+        token,
+        time,
+        key_resolver,
+        proof_store,
+        &NoRevocations,
+        limits,
+    )
+}
+
+/// Verify a compact-token owner with explicit resolver, proof-store, and revocation inputs.
+///
+/// # Errors
+///
+/// Returns [`TokenError`] when any verification stage fails.
 pub fn verify_compact_token_with_resolvers_and_revocations<R, S, V>(
     token: &CompactToken,
+    time: VerificationTime,
+    key_resolver: &R,
+    proof_store: &S,
+    revocations: &V,
+    limits: VerificationLimits,
+) -> TokenResult<VerifiedToken>
+where
+    R: KeyResolver + ?Sized,
+    S: ProofStore + ?Sized,
+    V: RevocationChecker + ?Sized,
+{
+    verify_compact_token_str_with_resolvers_and_revocations(
+        token.as_str(),
+        time,
+        key_resolver,
+        proof_store,
+        revocations,
+        limits,
+    )
+}
+
+/// Verify borrowed compact-token text with every external truth supplied explicitly.
+///
+/// # Errors
+///
+/// Returns [`TokenError`] when any verification stage fails.
+pub fn verify_compact_token_str_with_resolvers_and_revocations<R, S, V>(
+    token: &str,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
@@ -2709,7 +2995,7 @@ fn verify_successful_verification_stage_flow() -> TokenResult<()> {
 }
 
 fn verify_compact_token_with_traversal<R, S, V>(
-    token: &CompactToken,
+    token: &str,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
@@ -2724,11 +3010,12 @@ where
     V: RevocationChecker + ?Sized,
 {
     enforce_proof_depth(depth, limits)?;
-    enforce_compact_token_size(token.as_str(), limits)?;
+    enforce_compact_token_size(token, limits)?;
+    validate_compact_token_string(token)?;
     reject_revoked_token(token, revocations, traversal)?;
     reject_cycle(token, traversal.trail.as_slice())?;
-    traversal.trail.push(proof_reference_for_token(token));
-    let decoded = parse_compact_token(token)?;
+    traversal.trail.push(proof_reference_for_bounded_token(token));
+    let decoded = parse_compact_token_str_bounded(token, limits)?;
     let valid = validate_decoded_token(decoded)?;
     let signed = verify_token_signature_with_traversal(valid, key_resolver, traversal)?;
     let verified =
@@ -2738,7 +3025,7 @@ where
 }
 
 fn authorize_signed_token<R, S, V>(
-    signed: SignatureVerifiedToken,
+    signed: SignatureVerifiedToken<'_>,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
@@ -2758,8 +3045,8 @@ where
     let audience = AudienceDid::new(token.claims.audience_did().to_owned())?;
     let capabilities = claims_capability_set(&token.claims)?;
     let time_bounds = claims_time_bounds(&token.claims)?;
-    let token_reference = proof_reference_for_token(token.compact());
-    let proofs = direct_proofs(&token, proof_store, limits, traversal)?;
+    let token_reference = token.reference.clone();
+    let proofs = direct_proof_references(&token, limits)?;
     let evaluation = effective_delegation(
         &issuer,
         &capabilities,
@@ -2775,7 +3062,7 @@ where
     )?;
     let proof_transcript = proof_transcript_for_verified_token(
         &token_reference,
-        token.compact().as_str().len(),
+        token.compact_byte_len,
         !proofs.as_slice().is_empty(),
         &issuer,
         &audience,
@@ -2800,7 +3087,7 @@ fn effective_delegation<R, S, V>(
     child_issuer: &IssuerDid,
     capabilities: &CapabilitySet,
     time_bounds: TokenTimeBounds,
-    proofs: &ProofCollection,
+    proofs: &ProofReferences,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
@@ -2838,7 +3125,7 @@ where
 }
 
 fn verify_parent_tokens<R, S, V>(
-    proofs: &ProofCollection,
+    proofs: &ProofReferences,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
@@ -2853,9 +3140,34 @@ where
     V: RevocationChecker + ?Sized,
 {
     let mut parents = Vec::with_capacity(proofs.as_slice().len());
-    for proof in proofs.as_slice() {
+    for reference in proofs.as_slice() {
+        traversal.resolve_one_proof(limits)?;
+        let proof = match proof_store.resolve_proof(reference) {
+            Ok(proof) => {
+                let result = VerifiedProofStoreResultFact {
+                    reference_non_empty: !reference.as_bytes().is_empty(),
+                    backend_succeeded: true,
+                    compact_token_present: !proof.as_str().is_empty(),
+                };
+                if !proof_store_result_is_valid(result) {
+                    return Err(TokenError::VerifiedPrimitive {
+                        source: VerifiedPrimitiveError::TokenValidation {
+                            failure: TokenValidationFailure::InvalidProofStoreResultTranscript,
+                        },
+                    });
+                }
+                traversal.record_backend_operation(VerifiedBackendOperation::ProofLoad, true);
+                proof
+            }
+            Err(source) => {
+                traversal.record_backend_operation(VerifiedBackendOperation::ProofLoad, false);
+                return Err(TokenError::ProofStore { source });
+            }
+        };
+        let proof_text = proof.as_str();
+        enforce_compact_token_size(proof_text, limits)?;
         let parent = verify_compact_token_with_traversal(
-            proof,
+            proof_text,
             time,
             key_resolver,
             proof_store,
@@ -3129,49 +3441,21 @@ fn validate_proof_reference_collection(
     })
 }
 
-fn direct_proofs<S>(
-    token: &StructurallyValidToken,
-    proof_store: &S,
+fn direct_proof_references(
+    token: &StructurallyValidToken<'_>,
     limits: VerificationLimits,
-    traversal: &mut VerificationTraversal,
-) -> TokenResult<ProofCollection>
-where
-    S: ProofStore + ?Sized,
-{
+) -> TokenResult<ProofReferences> {
     validate_proof_reference_collection(token.claims.proofs(), limits)?;
-    let mut proofs = Vec::with_capacity(token.claims.proofs().len());
-    for reference in token.claims.proofs() {
-        traversal.resolve_one_proof(limits)?;
-        let reference = ProofReference::new(reference.as_bytes().to_vec());
-        let proof = match proof_store.resolve_proof(&reference) {
-            Ok(proof) => {
-                let result = VerifiedProofStoreResultFact {
-                    reference_non_empty: !reference.as_bytes().is_empty(),
-                    backend_succeeded: true,
-                    compact_token_present: !proof.as_str().is_empty(),
-                };
-                if !proof_store_result_is_valid(result) {
-                    return Err(TokenError::VerifiedPrimitive {
-                        source: VerifiedPrimitiveError::TokenValidation {
-                            failure: TokenValidationFailure::InvalidProofStoreResultTranscript,
-                        },
-                    });
-                }
-                traversal.record_backend_operation(VerifiedBackendOperation::ProofLoad, true);
-                proof
-            }
-            Err(source) => {
-                traversal.record_backend_operation(VerifiedBackendOperation::ProofLoad, false);
-                return Err(TokenError::ProofStore { source });
-            }
-        };
-        enforce_compact_token_size(proof.as_str(), limits)?;
-        proofs.push(proof);
-    }
-    Ok(ProofCollection::from_tokens(proofs))
+    let references = token
+        .claims
+        .proofs()
+        .iter()
+        .map(|reference| ProofReference::new(reference.as_bytes().to_vec()))
+        .collect();
+    Ok(ProofReferences::from_references(references))
 }
 
-fn validate_envelope_for_token(token: &StructurallyValidToken, time: VerificationTime) -> TokenResult<()> {
+fn validate_envelope_for_token(token: &StructurallyValidToken<'_>, time: VerificationTime) -> TokenResult<()> {
     let envelope = token_envelope(token)?;
     validate_token_envelope(&envelope, true, time.as_unix_seconds())
         .map_err(|error| map_envelope_error(error, token.claims.issuer_did()))
@@ -3214,7 +3498,7 @@ fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenE
     }
 }
 
-fn token_envelope(token: &StructurallyValidToken) -> TokenResult<TokenEnvelopeInput> {
+fn token_envelope(token: &StructurallyValidToken<'_>) -> TokenResult<TokenEnvelopeInput> {
     Ok(TokenEnvelopeInput {
         issuer_did: token.claims.issuer_did().to_owned(),
         audience_did: token.claims.audience_did().to_owned(),
@@ -3328,15 +3612,9 @@ const fn enforce_compact_token_size(token: &str, limits: VerificationLimits) -> 
     Ok(())
 }
 
-fn reject_revoked_token<V>(
-    token: &CompactToken,
-    revocations: &V,
-    traversal: &mut VerificationTraversal,
-) -> TokenResult<()>
-where
-    V: RevocationChecker + ?Sized,
-{
-    let reference = proof_reference_for_token(token);
+fn reject_revoked_token<V>(token: &str, revocations: &V, traversal: &mut VerificationTraversal) -> TokenResult<()>
+where V: RevocationChecker + ?Sized {
+    let reference = proof_reference_for_bounded_token(token);
     let revoked = match revocations.is_revoked(&reference) {
         Ok(revoked) => {
             traversal.record_backend_operation(VerifiedBackendOperation::Revocation, true);
@@ -3365,8 +3643,8 @@ where
     Ok(())
 }
 
-fn reject_cycle(token: &CompactToken, trail: &[ProofReference]) -> TokenResult<()> {
-    let current = proof_reference_for_token(token);
+fn reject_cycle(token: &str, trail: &[ProofReference]) -> TokenResult<()> {
+    let current = proof_reference_for_bounded_token(token);
     if trail.iter().any(|reference| reference == &current) {
         return Err(TokenError::ProofChain {
             message: "proof chain contains a cycle".to_owned(),
@@ -3375,11 +3653,19 @@ fn reject_cycle(token: &CompactToken, trail: &[ProofReference]) -> TokenResult<(
     Ok(())
 }
 
-fn assert_issued_token_is_structurally_valid(token: &CompactToken, proof_references: &[Vec<u8>]) -> TokenResult<()> {
+fn assert_issued_token_is_structurally_valid(
+    token: &CompactToken,
+    proof_references: &[ProofReference],
+) -> TokenResult<()> {
     let decoded = parse_compact_token(token)?;
     let valid = validate_decoded_token(decoded)?;
-    let actual: Vec<Vec<u8>> = valid.claims().proofs().iter().map(|proof| proof.as_bytes().to_vec()).collect();
-    if actual != proof_references {
+    let actual = valid.claims().proofs();
+    let references_match = actual.len() == proof_references.len()
+        && actual
+            .iter()
+            .zip(proof_references)
+            .all(|(actual, expected)| actual.as_bytes() == expected.as_bytes());
+    if !references_match {
         return Err(TokenError::ProofChain {
             message: "issued proof references did not round-trip through core validation".to_owned(),
         });
@@ -3391,27 +3677,34 @@ struct IssueClaimsInput<'a> {
     issuer: &'a IssuerDid,
     audience: &'a AudienceDid,
     capabilities: &'a CapabilitySet,
-    proofs: &'a ProofCollection,
+    proofs: &'a ProofReferences,
     time_bounds: TokenTimeBounds,
 }
 
 fn issue_compact_token_with_signer<S>(signer: &S, input: &IssueClaimsInput<'_>) -> TokenResult<CompactToken>
 where S: TokenSigner + ?Sized {
-    let proof_references = encode_proof_references(input.proofs.as_slice());
     let header = EncodedHeader {
         alg: TOKEN_ALGORITHM_EDDSA,
         typ: TOKEN_TYPE_JWT,
     };
     let claims = encoded_claims(input);
-    let encoded_header = encode_json_part(&header)?;
-    let encoded_payload = encode_json_part(&claims)?;
-    let signing_input = signing_input(&encoded_header, &encoded_payload);
-    let signature = signer.sign(signing_input.as_bytes())?;
+    let header_json = encode_json_exact(&header)?;
+    reject_json_escapes(header_json.as_slice(), CompactPart::Header)?;
+    let payload_json = encode_json_exact(&claims)?;
+    reject_json_escapes(payload_json.as_slice(), CompactPart::Payload)?;
+    let encoded_header = encode_base64_secret(header_json.as_slice())?;
+    let encoded_payload = encode_base64_secret(payload_json.as_slice())?;
+    let signing_input = join_secret_parts(&[encoded_header.as_slice(), encoded_payload.as_slice()])?;
+    let signature = signer.sign(signing_input.as_slice())?;
     validate_signer_signature(&signature)?;
-    let encoded_signature = URL_SAFE_NO_PAD.encode(signature.as_bytes());
-    let token = join_compact_parts(&encoded_header, &encoded_payload, &encoded_signature);
-    let token = CompactToken::new(token)?;
-    assert_issued_token_is_structurally_valid(&token, proof_references.as_slice())?;
+    let encoded_signature = encode_base64_secret(signature.as_bytes())?;
+    let token_bytes = join_secret_parts(&[
+        encoded_header.as_slice(),
+        encoded_payload.as_slice(),
+        encoded_signature.as_slice(),
+    ])?;
+    let token = CompactToken::from_secret_bytes(token_bytes)?;
+    assert_issued_token_is_structurally_valid(&token, input.proofs.as_slice())?;
     Ok(token)
 }
 
@@ -3439,7 +3732,7 @@ fn validate_signer_algorithm(algorithm: &str) -> SignerResult<()> {
     })
 }
 
-const fn validate_signer_signature(signature: &SignerSignature) -> SignerResult<()> {
+fn validate_signer_signature(signature: &SignerSignature) -> SignerResult<()> {
     let actual = signature.as_bytes().len();
     if actual == ED25519_SIGNATURE_BYTES {
         return Ok(());
@@ -3468,31 +3761,24 @@ fn encoded_claims<'a>(input: &'a IssueClaimsInput<'a>) -> EncodedClaims<'a> {
                         domain: caveat.domain.as_str(),
                         caveat_type: caveat.caveat_type.as_str(),
                         key: caveat.key.as_str(),
-                        payload: URL_SAFE_NO_PAD.encode(caveat.payload.as_slice()),
+                        payload: EncodedBase64Url(caveat.payload.as_slice()),
                     })
                     .collect(),
             })
             .collect(),
-        prf: encode_proof_references(input.proofs.as_slice())
-            .into_iter()
-            .map(|reference| URL_SAFE_NO_PAD.encode(reference))
-            .collect(),
+        prf: input.proofs.as_slice().iter().map(|reference| EncodedBase64Url(reference.as_bytes())).collect(),
         exp: input.time_bounds.expires_at_seconds(),
         nbf: input.time_bounds.not_before_seconds(),
     }
 }
 
-fn encode_proof_references(proofs: &[CompactToken]) -> Vec<Vec<u8>> {
-    proofs.iter().map(|proof| proof_reference_for_token(proof).as_bytes().to_vec()).collect()
-}
-
 #[must_use]
 pub fn proof_reference(token: &CompactToken) -> ProofReference {
-    proof_reference_for_token(token)
+    proof_reference_for_bounded_token(token.as_str())
 }
 
-fn proof_reference_for_token(token: &CompactToken) -> ProofReference {
-    let digest = blake3::hash(token.as_str().as_bytes());
+fn proof_reference_for_bounded_token(token: &str) -> ProofReference {
+    let digest = blake3::hash(token.as_bytes());
     let bytes = digest.as_bytes();
     debug_assert_eq!(bytes.len(), PROOF_REFERENCE_DIGEST_LEN);
     let reference = ProofReference::new(bytes.to_vec());
@@ -3502,14 +3788,36 @@ fn proof_reference_for_token(token: &CompactToken) -> ProofReference {
     reference
 }
 
-fn compact_parts(token: &str) -> TokenResult<Vec<&str>> {
-    let parts: Vec<&str> = token.split(COMPACT_SEPARATOR).collect();
-    if parts.len() != COMPACT_TOKEN_PART_COUNT {
-        return Err(TokenError::InvalidCompactTokenStructure {
-            actual_parts: parts.len(),
-        });
+struct CompactParts<'a> {
+    header: &'a str,
+    payload: &'a str,
+    signature: &'a str,
+    signing_input: &'a str,
+}
+
+fn compact_parts(token: &str) -> TokenResult<CompactParts<'_>> {
+    let actual_parts = token.bytes().filter(|byte| *byte == COMPACT_SEPARATOR_BYTE).count().saturating_add(1);
+    if actual_parts != COMPACT_TOKEN_PART_COUNT {
+        return Err(TokenError::InvalidCompactTokenStructure { actual_parts });
     }
-    Ok(parts)
+    let Some((header, remaining)) = token.split_once(COMPACT_SEPARATOR) else {
+        return Err(TokenError::InvalidCompactTokenStructure { actual_parts });
+    };
+    let Some((payload, signature)) = remaining.split_once(COMPACT_SEPARATOR) else {
+        return Err(TokenError::InvalidCompactTokenStructure { actual_parts });
+    };
+    let signing_input_len = header
+        .len()
+        .checked_add(1)
+        .and_then(|len| len.checked_add(payload.len()))
+        .ok_or(TokenError::CompactTokenFramingMismatch)?;
+    let signing_input = token.get(..signing_input_len).ok_or(TokenError::CompactTokenFramingMismatch)?;
+    Ok(CompactParts {
+        header,
+        payload,
+        signature,
+        signing_input,
+    })
 }
 
 fn validate_compact_token_string(token: &str) -> TokenResult<()> {
@@ -3522,87 +3830,165 @@ fn validate_compact_token_string(token: &str) -> TokenResult<()> {
     Ok(())
 }
 
-fn validate_header(header: &DecodedHeader) -> TokenResult<()> {
-    let verified_header = VerifiedParsedHeader {
-        algorithm: header.alg.as_bytes().to_vec(),
-        token_type: header.typ.as_bytes().to_vec(),
-    };
-    if parsed_header_is_valid(&verified_header) {
+fn validate_header(header: &DecodedHeader<'_>) -> TokenResult<()> {
+    let algorithm = header.alg.unwrap_or_default();
+    let token_type = header.typ.unwrap_or_default();
+    if algorithm == TOKEN_ALGORITHM_EDDSA && token_type == TOKEN_TYPE_JWT {
         return Ok(());
     }
-    Err(TokenError::UnsupportedHeader {
-        algorithm: header.alg.clone(),
-        token_type: header.typ.clone(),
-    })
+    Err(TokenError::UnsupportedHeader)
 }
 
-fn encode_json_part<T: Serialize>(value: &T) -> TokenResult<String> {
-    let bytes = serde_json::to_vec(value).map_err(|error| TokenError::JsonEncode {
-        message: error.to_string(),
+#[derive(Default)]
+struct CountingWriter {
+    len: usize,
+}
+
+impl Write for CountingWriter {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        self.len = self
+            .len
+            .checked_add(input.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::WriteZero, "JSON length overflow"))?;
+        Ok(input.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn encode_json_exact<T: Serialize>(value: &T) -> TokenResult<SecretBytes> {
+    let mut counter = CountingWriter::default();
+    serde_json::to_writer(&mut counter, value).map_err(|_| TokenError::JsonEncode {
+        message: "JSON sizing failed".to_owned(),
     })?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
+    let mut output = SecretBytes::empty_exact_capacity(counter.len);
+    serde_json::to_writer(&mut output, value).map_err(|_| TokenError::JsonEncode {
+        message: "JSON encoding failed".to_owned(),
+    })?;
+    output.finish_exact(counter.len)
 }
 
-fn decode_json_part<T: DeserializeOwned>(part: &str, compact_part: CompactPart) -> TokenResult<T> {
-    let bytes = decode_part(part, compact_part)?;
-    validate_decoded_json_object_bytes(bytes.as_slice(), compact_part)?;
-    serde_json::from_slice(bytes.as_slice()).map_err(|error| TokenError::JsonDecode {
+fn decode_json_bytes<'de, T>(bytes: &'de [u8], compact_part: CompactPart) -> TokenResult<T>
+where T: Deserialize<'de> {
+    serde_json::from_slice(bytes).map_err(|error| TokenError::JsonDecode {
         part: compact_part,
-        message: error.to_string(),
+        message: sanitized_json_error(&error),
     })
+}
+
+fn sanitized_json_error(error: &serde_json::Error) -> String {
+    let class = match error.classify() {
+        serde_json::error::Category::Io => "I/O",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "end-of-input",
+    };
+    format!("{class} error at line {} column {}", error.line(), error.column())
 }
 
 fn validate_decoded_json_object_bytes(bytes: &[u8], compact_part: CompactPart) -> TokenResult<()> {
-    if verified_json_object_bytes(bytes).is_some() {
+    let first = bytes.iter().position(|byte| !byte.is_ascii_whitespace());
+    let last = bytes.iter().rposition(|byte| !byte.is_ascii_whitespace());
+    if first.is_some_and(|index| bytes[index] == b'{') && last.is_some_and(|index| bytes[index] == b'}') {
         return Ok(());
     }
     Err(TokenError::JsonDecode {
         part: compact_part,
-        message: "failed verified decoded JSON object structural admission".to_owned(),
+        message: "decoded JSON must be an object".to_owned(),
     })
 }
 
-fn decode_part(part: &str, compact_part: CompactPart) -> TokenResult<Vec<u8>> {
-    let segment = VerifiedBase64UrlSegment {
-        bytes: part.as_bytes().to_vec(),
+fn reject_json_escapes(bytes: &[u8], compact_part: CompactPart) -> TokenResult<()> {
+    if bytes.contains(&JSON_ESCAPE_BYTE) {
+        return Err(TokenError::JsonEscapesNotSupported { part: compact_part });
+    }
+    Ok(())
+}
+
+fn decoded_base64_len(encoded_len: usize, compact_part: CompactPart) -> TokenResult<usize> {
+    let complete_blocks = encoded_len / BASE64_INPUT_BLOCK_BYTES;
+    let remainder = encoded_len % BASE64_INPUT_BLOCK_BYTES;
+    let complete_bytes = complete_blocks
+        .checked_mul(BASE64_OUTPUT_BLOCK_BYTES)
+        .ok_or_else(|| base64_shape_error(compact_part))?;
+    let remainder_bytes = match remainder {
+        0 => 0,
+        BASE64_REMAINDER_TWO => BASE64_REMAINDER_TWO_OUTPUT_BYTES,
+        BASE64_REMAINDER_THREE => BASE64_REMAINDER_THREE_OUTPUT_BYTES,
+        _ => return Err(base64_shape_error(compact_part)),
     };
-    if !base64url_segment_is_valid(&segment) {
-        return Err(TokenError::Base64Decode {
-            part: compact_part,
-            message: "failed verified base64url-no-pad structural admission".to_owned(),
+    complete_bytes.checked_add(remainder_bytes).ok_or_else(|| base64_shape_error(compact_part))
+}
+
+fn base64_shape_error(part: CompactPart) -> TokenError {
+    TokenError::Base64Decode {
+        part,
+        message: "invalid base64url-no-pad shape".to_owned(),
+    }
+}
+
+fn decode_part(part: &str, compact_part: CompactPart) -> TokenResult<SecretBytes> {
+    let decoded_len = decoded_base64_len(part.len(), compact_part)?;
+    let mut output = SecretBytes::zeroed_exact_len(decoded_len);
+    let written = URL_SAFE_NO_PAD
+        .decode_slice(part.as_bytes(), output.as_mut_slice())
+        .map_err(|_| base64_shape_error(compact_part))?;
+    if written != decoded_len || output.allocation_len() != decoded_len {
+        return Err(TokenError::SecretCapacity {
+            expected: decoded_len,
+            actual: written,
         });
     }
-    URL_SAFE_NO_PAD.decode(part).map_err(|error| TokenError::Base64Decode {
-        part: compact_part,
-        message: error.to_string(),
-    })
+    Ok(output)
 }
 
-fn signing_input(header: &str, payload: &str) -> String {
-    format!("{header}{COMPACT_SEPARATOR}{payload}")
-}
-
-fn validate_signing_input_byte_provenance(header: &str, payload: &str, signing_input: &[u8]) -> TokenResult<()> {
-    let provenance = VerifiedSigningInputByteProvenance {
-        header: header.as_bytes().to_vec(),
-        payload: payload.as_bytes().to_vec(),
-        signing_input: signing_input.to_vec(),
-    };
-    if signing_input_byte_provenance_is_valid(&provenance) {
-        return Ok(());
+fn encode_base64_secret(input: &[u8]) -> TokenResult<SecretBytes> {
+    let encoded_len = base64::encoded_len(input.len(), false).ok_or(TokenError::SecretCapacity {
+        expected: usize::MAX,
+        actual: input.len(),
+    })?;
+    let mut output = SecretBytes::zeroed_exact_len(encoded_len);
+    let written =
+        URL_SAFE_NO_PAD.encode_slice(input, output.as_mut_slice()).map_err(|_| TokenError::SecretCapacity {
+            expected: encoded_len,
+            actual: 0,
+        })?;
+    if written != encoded_len || output.allocation_len() != encoded_len {
+        return Err(TokenError::SecretCapacity {
+            expected: encoded_len,
+            actual: written,
+        });
     }
-    Err(TokenError::VerifiedPrimitive {
-        source: VerifiedPrimitiveError::TokenValidation {
-            failure: TokenValidationFailure::InvalidSigningInputProvenance,
+    Ok(output)
+}
+
+fn join_secret_parts(parts: &[&[u8]]) -> TokenResult<SecretBytes> {
+    let separators = parts.len().saturating_sub(1);
+    let exact_len = parts.iter().try_fold(separators, |total, part| total.checked_add(part.len())).ok_or(
+        TokenError::SecretCapacity {
+            expected: usize::MAX,
+            actual: 0,
         },
-    })
+    )?;
+    let mut output = SecretBytes::empty_exact_capacity(exact_len);
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            output.write_all(&[COMPACT_SEPARATOR_BYTE]).map_err(|_| TokenError::SecretCapacity {
+                expected: exact_len,
+                actual: output.len(),
+            })?;
+        }
+        output.write_all(part).map_err(|_| TokenError::SecretCapacity {
+            expected: exact_len,
+            actual: output.len(),
+        })?;
+    }
+    output.finish_exact(exact_len)
 }
 
-fn join_compact_parts(header: &str, payload: &str, signature: &str) -> String {
-    format!("{header}{COMPACT_SEPARATOR}{payload}{COMPACT_SEPARATOR}{signature}")
-}
-
-fn validate_parsed_claims_presence(claims: &DecodedClaims) -> TokenResult<()> {
+fn validate_parsed_claims_presence(claims: &DecodedClaims<'_>) -> TokenResult<()> {
     let presence = VerifiedParsedClaimsPresence {
         issuer_present: claims.iss.is_some(),
         audience_present: claims.aud.is_some(),
@@ -3641,10 +4027,10 @@ fn did_claim_fact(value: Option<&str>) -> VerifiedParsedDidClaim {
     }
 }
 
-fn validate_parsed_did_claims(claims: &DecodedClaims) -> TokenResult<()> {
+fn validate_parsed_did_claims(claims: &DecodedClaims<'_>) -> TokenResult<()> {
     let facts = VerifiedParsedDidClaims {
-        issuer: did_claim_fact(claims.iss.as_deref()),
-        audience: did_claim_fact(claims.aud.as_deref()),
+        issuer: did_claim_fact(claims.iss),
+        audience: did_claim_fact(claims.aud),
     };
     if parsed_did_claims_are_valid(facts) {
         return Ok(());
@@ -3656,7 +4042,7 @@ fn validate_parsed_did_claims(claims: &DecodedClaims) -> TokenResult<()> {
     })
 }
 
-fn validate_parsed_temporal_order(claims: &DecodedClaims) -> TokenResult<()> {
+fn validate_parsed_temporal_order(claims: &DecodedClaims<'_>) -> TokenResult<()> {
     let order = VerifiedParsedTemporalOrder {
         not_before_seconds: claims.nbf.ok_or(TokenError::VerifiedPrimitive {
             source: VerifiedPrimitiveError::TokenValidation {
@@ -3679,7 +4065,7 @@ fn validate_parsed_temporal_order(claims: &DecodedClaims) -> TokenResult<()> {
     })
 }
 
-fn validate_parsed_capability_list_shape(claims: &DecodedClaims) -> TokenResult<()> {
+fn validate_parsed_capability_list_shape(claims: &DecodedClaims<'_>) -> TokenResult<()> {
     let capabilities = claims.att.as_ref().map_or_else(Vec::new, |capabilities| {
         capabilities
             .iter()
@@ -3700,49 +4086,80 @@ fn validate_parsed_capability_list_shape(claims: &DecodedClaims) -> TokenResult<
     })
 }
 
-fn decoded_capability_inputs(
-    claims: &DecodedClaims,
-) -> TokenResult<Option<Vec<ucan_core::token::CapabilityInput<'_>>>> {
-    let Some(capabilities) = claims.att.as_ref() else {
-        return Ok(None);
+fn build_core_claims(claims: &DecodedClaims<'_>) -> TokenResult<ucan_core::token::Claims> {
+    let decoded_payloads = claims
+        .att
+        .as_ref()
+        .map(|capabilities| capabilities.iter().map(decoded_caveat_payloads).collect::<TokenResult<Vec<_>>>())
+        .transpose()?;
+    let caveat_inputs = claims
+        .att
+        .as_ref()
+        .zip(decoded_payloads.as_ref())
+        .map(|(capabilities, payloads)| {
+            capabilities
+                .iter()
+                .zip(payloads)
+                .map(|(capability, payloads)| decoded_caveat_inputs(capability, payloads))
+                .collect::<TokenResult<Vec<_>>>()
+        })
+        .transpose()?;
+    let capability_inputs = claims
+        .att
+        .as_ref()
+        .zip(caveat_inputs.as_ref())
+        .map(|(capabilities, caveat_inputs)| {
+            capabilities
+                .iter()
+                .zip(caveat_inputs)
+                .enumerate()
+                .map(|(index, (capability, caveats))| {
+                    let resource = capability.resource.ok_or(TokenError::MissingCapabilityField {
+                        index,
+                        field: CAPABILITY_RESOURCE_FIELD,
+                    })?;
+                    let ability = capability.ability.ok_or(TokenError::MissingCapabilityField {
+                        index,
+                        field: CAPABILITY_ABILITY_FIELD,
+                    })?;
+                    Ok(ucan_core::token::CapabilityInput::with_caveats(resource, ability, caveats.as_slice()))
+                })
+                .collect::<TokenResult<Vec<_>>>()
+        })
+        .transpose()?;
+    let proof_bytes = decoded_proof_references(claims)?;
+    let proof_inputs = proof_bytes.as_ref().map(|references| proof_reference_inputs(references.as_slice()));
+    let input = ucan_core::token::ClaimsInput {
+        issuer_did: claims.iss,
+        audience_did: claims.aud,
+        capabilities: capability_inputs.as_deref(),
+        proofs: proof_inputs.as_deref(),
+        not_before_seconds: claims.nbf,
+        expires_at_seconds: claims.exp,
     };
-    let mut inputs = Vec::with_capacity(capabilities.len());
-    for (index, capability) in capabilities.iter().enumerate() {
-        let resource = capability.resource.as_deref().ok_or(TokenError::MissingCapabilityField {
-            index,
-            field: CAPABILITY_RESOURCE_FIELD,
-        })?;
-        let ability = capability.ability.as_deref().ok_or(TokenError::MissingCapabilityField {
-            index,
-            field: CAPABILITY_ABILITY_FIELD,
-        })?;
-        let caveats = decoded_caveat_inputs(capability)?;
-        inputs.push(ucan_core::token::CapabilityInput::with_caveats(resource, ability, Box::leak(caveats)));
-    }
-    Ok(Some(inputs))
+    ucan_core::token::Claims::from_input(input).map_err(TokenError::from)
 }
 
-fn decoded_proof_references(claims: &DecodedClaims) -> TokenResult<Option<Vec<Vec<u8>>>> {
+fn decoded_proof_references(claims: &DecodedClaims<'_>) -> TokenResult<Option<Vec<Vec<u8>>>> {
     let Some(proofs) = claims.prf.as_ref() else {
         return Ok(None);
     };
     let mut decoded = Vec::with_capacity(proofs.len());
     let mut entries = Vec::with_capacity(proofs.len());
     for proof in proofs {
-        let encoded_base64url_no_pad =
-            crate::verified::base64url_segment_is_valid(&crate::verified::VerifiedBase64UrlSegment {
-                bytes: proof.as_bytes().to_vec(),
-            });
         let reference = decode_part(proof, CompactPart::Payload)?;
+        let exact_digest_width = reference.len() == PROOF_REFERENCE_DIGEST_LEN;
         entries.push(VerifiedParsedProofReferenceEntryShape {
             encoded_non_empty: !proof.is_empty(),
-            encoded_base64url_no_pad,
-            decoded_non_empty: !reference.is_empty(),
+            encoded_base64url_no_pad: true,
+            decoded_non_empty: !reference.is_empty() && exact_digest_width,
         });
-        decoded.push(reference);
+        decoded.push(reference.as_slice().to_vec());
     }
     let shape = VerifiedParsedProofReferenceListShape { entries };
-    if !parsed_proof_reference_list_shape_is_valid(&shape) {
+    if !parsed_proof_reference_list_shape_is_valid(&shape)
+        || decoded.iter().any(|reference| reference.len() != PROOF_REFERENCE_DIGEST_LEN)
+    {
         return Err(TokenError::VerifiedPrimitive {
             source: VerifiedPrimitiveError::TokenValidation {
                 failure: TokenValidationFailure::InvalidProofReferenceListShape,
@@ -3752,7 +4169,7 @@ fn decoded_proof_references(claims: &DecodedClaims) -> TokenResult<Option<Vec<Ve
     Ok(Some(decoded))
 }
 
-fn validate_parsed_caveat_list_shape(capability: &DecodedCapability) -> TokenResult<()> {
+fn validate_parsed_caveat_list_shape(capability: &DecodedCapability<'_>) -> TokenResult<()> {
     let shape = VerifiedParsedCaveatListShape {
         caveats: capability
             .caveats
@@ -3775,22 +4192,19 @@ fn validate_parsed_caveat_list_shape(capability: &DecodedCapability) -> TokenRes
     })
 }
 
-fn decoded_caveat_inputs(capability: &DecodedCapability) -> TokenResult<Box<[ucan_core::token::CaveatInput<'_>]>> {
+fn decoded_caveat_payloads(capability: &DecodedCapability<'_>) -> TokenResult<Vec<SecretBytes>> {
     validate_parsed_caveat_list_shape(capability)?;
     let mut decoded_payloads = Vec::with_capacity(capability.caveats.len());
     let mut payload_facts = Vec::with_capacity(capability.caveats.len());
     for caveat in &capability.caveats {
-        let payload = caveat.payload.as_deref().ok_or_else(|| TokenError::Capability {
+        let payload = caveat.payload.ok_or_else(|| TokenError::Capability {
             message: "caveat is missing payload".to_owned(),
         })?;
-        let encoded_base64url_no_pad = base64url_segment_is_valid(&VerifiedBase64UrlSegment {
-            bytes: payload.as_bytes().to_vec(),
-        });
         let decoded_payload = decode_part(payload, CompactPart::Payload)?;
         payload_facts.push(VerifiedParsedCaveatPayloadFact {
             payload_present: true,
             encoded_non_empty: !payload.is_empty(),
-            encoded_base64url_no_pad,
+            encoded_base64url_no_pad: true,
             decoded_non_empty: !decoded_payload.is_empty(),
         });
         decoded_payloads.push(decoded_payload);
@@ -3805,21 +4219,30 @@ fn decoded_caveat_inputs(capability: &DecodedCapability) -> TokenResult<Box<[uca
             },
         });
     }
+    Ok(decoded_payloads)
+}
 
-    let mut inputs = Vec::with_capacity(capability.caveats.len());
-    for (caveat, payload) in capability.caveats.iter().zip(decoded_payloads) {
-        let domain = caveat.domain.as_deref().ok_or_else(|| TokenError::Capability {
-            message: "caveat is missing domain".to_owned(),
-        })?;
-        let caveat_type = caveat.caveat_type.as_deref().ok_or_else(|| TokenError::Capability {
-            message: "caveat is missing type".to_owned(),
-        })?;
-        let key = caveat.key.as_deref().ok_or_else(|| TokenError::Capability {
-            message: "caveat is missing key".to_owned(),
-        })?;
-        inputs.push(ucan_core::token::CaveatInput::new(domain, caveat_type, key, payload.leak()));
-    }
-    Ok(inputs.into_boxed_slice())
+fn decoded_caveat_inputs<'a>(
+    capability: &'a DecodedCapability<'a>,
+    payloads: &'a [SecretBytes],
+) -> TokenResult<Vec<ucan_core::token::CaveatInput<'a>>> {
+    capability
+        .caveats
+        .iter()
+        .zip(payloads)
+        .map(|(caveat, payload)| {
+            let domain = caveat.domain.ok_or_else(|| TokenError::Capability {
+                message: "caveat is missing domain".to_owned(),
+            })?;
+            let caveat_type = caveat.caveat_type.ok_or_else(|| TokenError::Capability {
+                message: "caveat is missing type".to_owned(),
+            })?;
+            let key = caveat.key.ok_or_else(|| TokenError::Capability {
+                message: "caveat is missing key".to_owned(),
+            })?;
+            Ok(ucan_core::token::CaveatInput::new(domain, caveat_type, key, payload.as_slice()))
+        })
+        .collect()
 }
 
 fn proof_reference_inputs(references: &[Vec<u8>]) -> Vec<ucan_core::token::ProofReferenceInput<'_>> {
@@ -3866,6 +4289,7 @@ fn copy_public_key(bytes: &[u8]) -> TokenResult<[u8; ED25519_PUBLIC_KEY_BYTES]> 
 mod tests {
     use std::cell::RefCell;
     use std::collections::HashSet;
+    use std::io::Write as _;
 
     use base64::Engine;
     use serde_json::Value;
@@ -3898,8 +4322,10 @@ mod tests {
     use super::NoRevocations;
     use super::ProofCollection;
     use super::ProofReference;
+    use super::ProofReferences;
     use super::ProofStore;
     use super::ProofStoreError;
+    use super::ProofToken;
     use super::ReplayAdmission;
     use super::ReplayAdmissionError;
     use super::RevocationChecker;
@@ -3951,6 +4377,16 @@ mod tests {
     const REDACTION_TEST_DIRECT_ARRAY_PREFIX: &str = "[170, 170";
     const UNSUPPORTED_TEST_ALGORITHM: &str = "ES256";
 
+    trait SecureTestTokenCopy {
+        fn clone(&self) -> CompactToken;
+    }
+
+    impl SecureTestTokenCopy for CompactToken {
+        fn clone(&self) -> CompactToken {
+            Self::new(self.as_str()).expect("test token copy must remain zeroizing")
+        }
+    }
+
     #[test]
     fn issues_and_verifies_token_round_trip() {
         let issuer_key = signing_key(ISSUER_SECRET_BYTE);
@@ -3969,118 +4405,214 @@ mod tests {
 
     #[test]
     fn validate_decoded_token_routes_required_claim_presence_through_verified_bridge() {
-        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
-        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
-        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
-            .expect("token should issue");
-        let decoded = parse_compact_token(&token).expect("token should parse");
-
-        let mut missing_issuer = decoded.clone();
-        missing_issuer.claims.iss = None;
-        assert_claim_presence_failure(missing_issuer, crate::verified::TokenValidationFailure::MissingIssuer);
-
-        let mut missing_audience = decoded.clone();
-        missing_audience.claims.aud = None;
-        assert_claim_presence_failure(missing_audience, crate::verified::TokenValidationFailure::MissingAudience);
-
-        let mut missing_attenuations = decoded.clone();
-        missing_attenuations.claims.att = None;
-        assert_claim_presence_failure(
-            missing_attenuations,
+        assert_payload_failure(
+            r#"{"aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#,
+            crate::verified::TokenValidationFailure::MissingIssuer,
+        );
+        assert_payload_failure(
+            r#"{"iss":"did:key:zIssuer","att":[],"prf":[],"exp":2,"nbf":1}"#,
+            crate::verified::TokenValidationFailure::MissingAudience,
+        );
+        assert_payload_failure(
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","prf":[],"exp":2,"nbf":1}"#,
             crate::verified::TokenValidationFailure::MissingAttenuations,
         );
-
-        let mut missing_proofs = decoded.clone();
-        missing_proofs.claims.prf = None;
-        assert_claim_presence_failure(missing_proofs, crate::verified::TokenValidationFailure::MissingProofs);
-
-        let mut missing_expiration = decoded.clone();
-        missing_expiration.claims.exp = None;
-        assert_claim_presence_failure(missing_expiration, crate::verified::TokenValidationFailure::MissingExpiration);
-
-        let mut missing_not_before = decoded;
-        missing_not_before.claims.nbf = None;
-        assert_claim_presence_failure(missing_not_before, crate::verified::TokenValidationFailure::MissingNotBefore);
+        assert_payload_failure(
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"exp":2,"nbf":1}"#,
+            crate::verified::TokenValidationFailure::MissingProofs,
+        );
+        assert_payload_failure(
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"nbf":1}"#,
+            crate::verified::TokenValidationFailure::MissingExpiration,
+        );
+        assert_payload_failure(
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"exp":2}"#,
+            crate::verified::TokenValidationFailure::MissingNotBefore,
+        );
     }
 
     #[test]
     fn validate_decoded_token_routes_parsed_did_claims_through_verified_bridge() {
-        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
-        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
-        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
-            .expect("token should issue");
-        let decoded = parse_compact_token(&token).expect("token should parse");
-
-        let mut empty_issuer = decoded.clone();
-        empty_issuer.claims.iss = Some(String::new());
-        assert_claim_presence_failure(empty_issuer, crate::verified::TokenValidationFailure::InvalidDidClaims);
-
-        let mut untrimmed_issuer = decoded.clone();
-        untrimmed_issuer.claims.iss = untrimmed_issuer.claims.iss.map(|issuer| format!(" {issuer}"));
-        assert_claim_presence_failure(untrimmed_issuer, crate::verified::TokenValidationFailure::InvalidDidClaims);
-
-        let mut empty_audience = decoded.clone();
-        empty_audience.claims.aud = Some(String::new());
-        assert_claim_presence_failure(empty_audience, crate::verified::TokenValidationFailure::InvalidDidClaims);
-
-        let mut untrimmed_audience = decoded;
-        untrimmed_audience.claims.aud = untrimmed_audience.claims.aud.map(|audience| format!("{audience} "));
-        assert_claim_presence_failure(untrimmed_audience, crate::verified::TokenValidationFailure::InvalidDidClaims);
+        for payload in [
+            r#"{"iss":"","aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#,
+            r#"{"iss":" did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#,
+            r#"{"iss":"did:key:zIssuer","aud":"","att":[],"prf":[],"exp":2,"nbf":1}"#,
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience ","att":[],"prf":[],"exp":2,"nbf":1}"#,
+        ] {
+            assert_payload_failure(payload, crate::verified::TokenValidationFailure::InvalidDidClaims);
+        }
     }
 
     #[test]
     fn validate_decoded_token_routes_parsed_temporal_order_through_verified_bridge() {
-        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
-        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
-        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
-            .expect("token should issue");
-        let decoded = parse_compact_token(&token).expect("token should parse");
-
-        let mut equal_bounds = decoded.clone();
-        equal_bounds.claims.nbf = equal_bounds.claims.exp;
-        assert_claim_presence_failure(equal_bounds, crate::verified::TokenValidationFailure::InvalidTemporalOrder);
-
-        let mut reversed_bounds = decoded;
-        reversed_bounds.claims.nbf = reversed_bounds.claims.exp.map(|expires_at| expires_at + 1);
-        assert_claim_presence_failure(reversed_bounds, crate::verified::TokenValidationFailure::InvalidTemporalOrder);
+        assert_payload_failure(
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":2}"#,
+            crate::verified::TokenValidationFailure::InvalidTemporalOrder,
+        );
+        assert_payload_failure(
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":3}"#,
+            crate::verified::TokenValidationFailure::InvalidTemporalOrder,
+        );
     }
 
     #[test]
-    fn public_string_wrappers_parse_display_and_serde_round_trip() {
+    fn public_identity_wrappers_keep_serde_while_compact_tokens_use_borrowed_access() {
         let issuer = signing_key(ISSUER_SECRET_BYTE).issuer().expect("issuer should derive");
         let audience = AudienceDid::from(issuer.clone());
         let token = CompactToken::new("header.payload.signature").expect("compact wrapper accepts trimmed strings");
 
         assert_eq!(issuer.to_string().parse::<IssuerDid>().expect("issuer FromStr"), issuer);
         assert_eq!(IssuerDid::try_from(issuer.as_str()).expect("issuer TryFrom<&str>"), issuer);
-        assert_eq!(IssuerDid::try_from(issuer.as_str().to_owned()).expect("issuer TryFrom<String>"), issuer);
         assert_eq!(audience.to_string().parse::<AudienceDid>().expect("audience FromStr"), audience);
         assert_eq!(AudienceDid::try_from(audience.as_str()).expect("audience TryFrom<&str>"), audience);
-        assert_eq!(AudienceDid::try_from(audience.as_str().to_owned()).expect("audience TryFrom<String>"), audience);
-        assert_eq!(token.to_string().parse::<CompactToken>().expect("compact FromStr"), token);
-        assert_eq!(CompactToken::try_from(token.as_str()).expect("compact TryFrom<&str>"), token);
-        assert_eq!(CompactToken::try_from(token.as_str().to_owned()).expect("compact TryFrom<String>"), token);
+        assert_eq!(token.as_str(), "header.payload.signature");
+        assert_eq!(CompactToken::try_from(token.as_str()).expect("secure compact copy"), token);
 
         let serialized_issuer = serde_json::to_string(&issuer).expect("issuer serializes");
         let serialized_audience = serde_json::to_string(&audience).expect("audience serializes");
-        let serialized_token = serde_json::to_string(&token).expect("token serializes");
-        assert_eq!(serialized_issuer, format!("\"{}\"", issuer.as_str()));
-        assert_eq!(serialized_audience, format!("\"{}\"", audience.as_str()));
-        assert_eq!(serialized_token, "\"header.payload.signature\"");
         assert_eq!(serde_json::from_str::<IssuerDid>(&serialized_issuer).expect("issuer deserializes"), issuer);
         assert_eq!(serde_json::from_str::<AudienceDid>(&serialized_audience).expect("audience deserializes"), audience);
-        assert_eq!(serde_json::from_str::<CompactToken>(&serialized_token).expect("token deserializes"), token);
     }
 
     #[test]
-    fn public_string_wrappers_reject_malformed_parse_and_serde_inputs() {
-        assert!(matches!("".parse::<CompactToken>(), Err(TokenError::EmptyCompactToken)));
-        assert!(matches!(" token ".parse::<CompactToken>(), Err(TokenError::CompactTokenMustBeTrimmed)));
+    fn compact_owner_rejects_malformed_constructor_inputs() {
+        assert!(matches!(CompactToken::new(""), Err(TokenError::EmptyCompactToken)));
+        assert!(matches!(CompactToken::new(" token "), Err(TokenError::CompactTokenMustBeTrimmed)));
         assert!(matches!(IssuerDid::try_from(""), Err(TokenError::CoreClaims { .. })));
         assert!(matches!(AudienceDid::try_from(" did:key:z6Mkaudience "), Err(TokenError::CoreClaims { .. })));
-        assert!(serde_json::from_str::<IssuerDid>("123").is_err());
-        assert!(serde_json::from_str::<AudienceDid>("\"\"").is_err());
-        assert!(serde_json::from_str::<CompactToken>("\" token \"").is_err());
+    }
+
+    #[test]
+    fn compact_owner_and_base64_decode_keep_exact_non_growing_capacity() {
+        const ENCODED_FIXTURE: &str = "aGVsbG8";
+        const DECODED_FIXTURE_BYTES: usize = 5;
+        let token = CompactToken::new("header.payload.signature").expect("compact token should allocate");
+        assert_eq!(token.allocation_len(), token.as_str().len());
+
+        let decoded =
+            super::decode_part(ENCODED_FIXTURE, super::CompactPart::Payload).expect("base64 fixture should decode");
+        assert_eq!(decoded.len(), DECODED_FIXTURE_BYTES);
+        assert_eq!(decoded.allocation_len(), DECODED_FIXTURE_BYTES);
+    }
+
+    #[test]
+    fn fixed_secret_writer_rejects_growth_without_reallocation() {
+        const FIXED_BYTES: usize = 4;
+        const OVERSIZED_BYTES: usize = FIXED_BYTES + 1;
+        let mut output = super::SecretBytes::empty_exact_capacity(FIXED_BYTES);
+        let oversized = [0_u8; OVERSIZED_BYTES];
+
+        let error = output.write_all(&oversized).expect_err("fixed secret allocation must reject growth");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::WriteZero);
+        assert_eq!(output.len(), 0);
+        assert_eq!(output.allocation_len(), FIXED_BYTES);
+    }
+
+    #[test]
+    fn borrowed_verification_succeeds_without_a_compact_owner_copy() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+
+        let verified =
+            super::verify_compact_token_str(token.as_str(), &context).expect("borrowed compact text should verify");
+
+        assert_eq!(verified.issuer().as_str(), issuer_key.issuer().expect("issuer should derive").as_str());
+    }
+
+    #[test]
+    fn oversized_borrowed_input_fails_before_parse_or_exact_identity() {
+        const INPUT_BYTE_LIMIT: usize = 8;
+        const OVERSIZED_INPUT_BYTES: usize = INPUT_BYTE_LIMIT + 1;
+        let input = "x".repeat(OVERSIZED_INPUT_BYTES);
+        let context = VerificationContext::with_limits(
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            KeyResolutionContext::new(Vec::new()),
+            ProofCollection::empty(),
+            VerificationLimits::new(0, 0, INPUT_BYTE_LIMIT),
+        );
+
+        let error = super::verify_compact_token_str(input.as_str(), &context)
+            .expect_err("oversized input must fail before malformed syntax");
+
+        assert!(matches!(error, TokenError::LimitExceeded {
+            source: VerificationLimitError::CompactTokenTooLarge {
+                byte_len: OVERSIZED_INPUT_BYTES,
+                max_byte_len: INPUT_BYTE_LIMIT,
+            }
+        }));
+    }
+
+    #[test]
+    fn early_decode_error_drops_zeroizing_output_and_errors_do_not_echo_bearer_text() {
+        super::SECRET_BYTES_DROP_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        let token = CompactToken::new("abc=.payload.signature").expect("fixture should enter parser");
+        let error = parse_compact_token(&token).expect_err("invalid base64 must fail");
+        assert!(super::SECRET_BYTES_DROP_COUNT.load(std::sync::atomic::Ordering::SeqCst) > 0);
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        assert!(!display.contains(token.as_str()));
+        assert!(!debug.contains(token.as_str()));
+    }
+
+    #[test]
+    fn serde_escape_path_is_rejected_before_borrowed_json_decode() {
+        let token = token_with_header(
+            r#"{"alg":"Ed\\u0044SA","typ":"JWT"}"#,
+            r#"{"iss":"did:key:zIssuer","aud":"did:key:zAudience","att":[],"prf":[],"exp":2,"nbf":1}"#,
+        );
+        let error = parse_compact_token(&token).expect_err("escaped JSON string must fail before serde");
+        assert!(matches!(error, TokenError::JsonEscapesNotSupported {
+            part: super::CompactPart::Header
+        }));
+    }
+
+    #[test]
+    fn compact_references_bind_complete_bounded_inputs() {
+        let first = CompactToken::new("header.payload.signature-a").expect("first token should wrap");
+        let second = CompactToken::new("header.payload.signature-b").expect("second token should wrap");
+        assert_ne!(proof_reference(&first), proof_reference(&second));
+        assert_eq!(proof_reference(&first).as_bytes().len(), blake3::OUT_LEN);
+    }
+
+    #[test]
+    fn compact_secret_surface_has_only_redacted_debug_and_borrowed_access() {
+        let source = include_str!("token.rs");
+        let production_source = source.split("#[cfg(test)]\nmod tests").next().expect("production source prefix");
+        for forbidden in [
+            "impl Clone for CompactToken",
+            "impl fmt::Display for CompactToken",
+            "impl Serialize for CompactToken",
+            "Deserialize<'de> for CompactToken",
+            "impl TryFrom<String> for CompactToken",
+            "into_string(self)",
+            "Result<CompactToken, ProofStoreError>",
+            "serde_json::to_vec",
+            "URL_SAFE_NO_PAD.decode(",
+            "bytes: Zeroizing<Vec<u8>>",
+            "pub fn new(bytes: Vec<u8>)",
+            "SignerSignature::new",
+        ] {
+            assert!(!production_source.contains(forbidden), "forbidden bearer surface appeared: {forbidden}");
+        }
+        let verified_source = include_str!("verified.rs");
+        let verified_production =
+            verified_source.split("#[cfg(test)]\nmod tests").next().expect("verified production source prefix");
+        for forbidden in [
+            "pub struct VerifiedCompactToken",
+            "pub struct VerifiedSigningInputByteProvenance",
+            "message.to_vec()",
+            "signature_bytes.to_vec()",
+        ] {
+            assert!(!verified_production.contains(forbidden), "forbidden verified bearer copy appeared: {forbidden}");
+        }
+        let token = CompactToken::new("header.payload.signature").expect("token should wrap");
+        let debug = format!("{token:?}");
+        assert!(debug.contains(super::REDACTED_SECRET_MATERIAL_DEBUG));
+        assert!(!debug.contains(token.as_str()));
     }
 
     #[test]
@@ -4089,15 +4621,19 @@ mod tests {
         let audience =
             AudienceDid::from(signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive"));
         let capabilities = capabilities("did:key:z6Mkresource", "store/*");
-        let proofs = ProofCollection::empty();
         let bounds = token_time_bounds();
-        let positional_issue =
-            IssueRequest::new(issuer_key.clone(), audience.clone(), capabilities.clone(), proofs.clone(), bounds);
+        let positional_issue = IssueRequest::new(
+            issuer_key.clone(),
+            audience.clone(),
+            capabilities.clone(),
+            ProofReferences::empty(),
+            bounds,
+        );
         let built_issue = IssueRequest::builder()
             .signing_key(issuer_key.clone())
             .audience(audience)
             .capabilities(capabilities)
-            .proofs(proofs.clone())
+            .proofs(ProofReferences::empty())
             .time_bounds(bounds)
             .build()
             .expect("issue builder should complete");
@@ -4109,11 +4645,11 @@ mod tests {
         ]);
         let time = VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS);
         let limits = VerificationLimits::new(2, 3, 4_096);
-        let positional_context = VerificationContext::with_limits(time, keys.clone(), proofs.clone(), limits);
+        let positional_context = VerificationContext::with_limits(time, keys.clone(), ProofCollection::empty(), limits);
         let built_context = VerificationContext::builder()
             .time(time)
             .keys(keys)
-            .proofs(proofs)
+            .proofs(ProofCollection::empty())
             .limits(limits)
             .build()
             .expect("verification builder should complete");
@@ -4272,7 +4808,7 @@ mod tests {
             issuer_key.clone(),
             AudienceDid::from(audience),
             CapabilitySet::new(vec![capability]).expect("capability set should validate"),
-            ProofCollection::empty(),
+            ProofReferences::empty(),
             token_time_bounds(),
         ))
         .expect("token should issue");
@@ -4380,7 +4916,6 @@ mod tests {
             panic!("invocation should be allowed");
         };
         assert_eq!(invocation.issuer().as_str(), issuer_key.issuer().expect("issuer").as_str());
-        assert_eq!(invocation.invoker().as_str(), audience.as_str());
         assert_eq!(invocation.audience().as_str(), audience.as_str());
         assert_eq!(invocation.matched_capability().resource, "did:key:z6Mkresource");
         assert_eq!(invocation.effective_time_bounds(), token_time_bounds());
@@ -4412,7 +4947,7 @@ mod tests {
         let InvocationResult::Allowed { invocation } = result else {
             panic!("concrete invocation should be allowed");
         };
-        assert_eq!(invocation.invoker().as_str(), audience.as_str());
+        assert_eq!(invocation.audience().as_str(), audience.as_str());
         assert_eq!(invocation.matched_capability().ability, "store/add");
     }
 
@@ -4601,7 +5136,7 @@ mod tests {
             issuer: IssuerDid::new("did:key:z6Mkissuer").expect("issuer should validate"),
             audience: AudienceDid::new("did:key:z6Mkaudience").expect("audience should validate"),
             capabilities: capabilities("did:key:z6Mkresource", "store/*"),
-            proofs: ProofCollection::empty(),
+            proofs: super::ProofReferences::default(),
             effective: EffectiveDelegation {
                 capabilities: capabilities("did:key:z6Mkresource/photos", "store/add"),
                 time_bounds: token_time_bounds(),
@@ -4634,7 +5169,7 @@ mod tests {
         let signer = in_memory_signer(ISSUER_SECRET_BYTE);
         let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
         let capabilities = capabilities("did:key:z6Mkresource", "store/*");
-        let proofs = ProofCollection::empty();
+        let proofs = ProofReferences::empty();
         let bounds = token_time_bounds();
         let token = issue_token_with_signer(&signer, &AudienceDid::from(audience), &capabilities, &proofs, bounds)
             .expect("signer should issue");
@@ -4659,7 +5194,7 @@ mod tests {
             &signer,
             &AudienceDid::from(audience),
             &capabilities("did:key:z6Mkresource", "store/*"),
-            &ProofCollection::empty(),
+            &ProofReferences::empty(),
             token_time_bounds(),
         )
         .expect("signer should issue");
@@ -4676,7 +5211,7 @@ mod tests {
             &signer,
             &AudienceDid::from(audience),
             &capabilities("did:key:z6Mkresource", "store/*"),
-            &ProofCollection::empty(),
+            &ProofReferences::empty(),
             token_time_bounds(),
         )
         .expect_err("refusing signer should fail");
@@ -4695,7 +5230,7 @@ mod tests {
             &signer,
             &AudienceDid::from(audience),
             &capabilities("did:key:z6Mkresource", "store/*"),
-            &ProofCollection::empty(),
+            &ProofReferences::empty(),
             token_time_bounds(),
         )
         .expect_err("unsupported algorithm should fail");
@@ -4708,37 +5243,26 @@ mod tests {
     }
 
     #[test]
-    fn signer_with_wrong_signature_length_is_rejected() {
-        let key = signing_key(ISSUER_SECRET_BYTE);
-        let signer = FixedSignatureSigner::new(&key, SignerSignature::new(vec![0_u8; SHORT_SIGNATURE_LEN]));
-        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
-        let error = issue_token_with_signer(
-            &signer,
-            &AudienceDid::from(audience),
-            &capabilities("did:key:z6Mkresource", "store/*"),
-            &ProofCollection::empty(),
-            token_time_bounds(),
-        )
-        .expect_err("short signature should fail");
+    fn signer_signature_constructor_rejects_wrong_length() {
+        let short_signature = [0_u8; SHORT_SIGNATURE_LEN];
+        let error = SignerSignature::try_from_slice(&short_signature).expect_err("short signature should fail");
 
-        assert_eq!(error, TokenError::Signer {
-            source: SignerError::InvalidSignatureLength {
-                actual: SHORT_SIGNATURE_LEN,
-                expected: super::ED25519_SIGNATURE_BYTES,
-            }
+        assert_eq!(error, SignerError::InvalidSignatureLength {
+            actual: SHORT_SIGNATURE_LEN,
+            expected: super::ED25519_SIGNATURE_BYTES,
         });
     }
 
     #[test]
     fn signer_with_invalid_signature_bytes_is_rejected_by_verification() {
         let key = signing_key(ISSUER_SECRET_BYTE);
-        let signer = FixedSignatureSigner::new(&key, SignerSignature::new(vec![0_u8; super::ED25519_SIGNATURE_BYTES]));
+        let signer = FixedSignatureSigner::new(&key, [0_u8; super::ED25519_SIGNATURE_BYTES]);
         let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience did should derive");
         let token = issue_token_with_signer(
             &signer,
             &AudienceDid::from(audience),
             &capabilities("did:key:z6Mkresource", "store/*"),
-            &ProofCollection::empty(),
+            &ProofReferences::empty(),
             token_time_bounds(),
         )
         .expect("fixed-length malformed signature can produce a structurally valid token");
@@ -4758,7 +5282,7 @@ mod tests {
             &signer,
             &AudienceDid::from(audience),
             &capabilities("did:key:z6Mkresource", "store/*"),
-            &ProofCollection::empty(),
+            &ProofReferences::empty(),
             token_time_bounds(),
         )
         .expect_err("issuer mismatch should fail");
@@ -4797,14 +5321,14 @@ mod tests {
         assert!(matches!(padding_error, TokenError::Base64Decode {
             part: super::CompactPart::Header,
             message,
-        } if message.contains("verified base64url-no-pad structural admission")));
+        } if message.contains("invalid base64url-no-pad shape")));
 
         let invalid_length = CompactToken::new("A.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
         let length_error = parse_compact_token(&invalid_length).expect_err("length class should reject");
         assert!(matches!(length_error, TokenError::Base64Decode {
             part: super::CompactPart::Header,
             message,
-        } if message.contains("verified base64url-no-pad structural admission")));
+        } if message.contains("invalid base64url-no-pad shape")));
 
         let invalid_json = CompactToken::new("bm90LWpzb24.eyJpc3MiOiJkaWQ6a2V5OnoifQ.AAAA").expect("shape should wrap");
         let json_error = parse_compact_token(&invalid_json).expect_err("header JSON should reject");
@@ -4821,7 +5345,7 @@ mod tests {
         assert!(matches!(array_error, TokenError::JsonDecode {
             part: super::CompactPart::Header,
             message,
-        } if message.contains("verified decoded JSON object structural admission")));
+        } if message.contains("decoded JSON must be an object")));
 
         let scalar_payload =
             CompactToken::new("IHsiYWxnIjoiRWREU0EiLCJ0eXAiOiJKV1QifSA.dHJ1ZQ.AAAA").expect("shape should wrap");
@@ -4829,7 +5353,7 @@ mod tests {
         assert!(matches!(scalar_error, TokenError::JsonDecode {
             part: super::CompactPart::Payload,
             message,
-        } if message.contains("verified decoded JSON object structural admission")));
+        } if message.contains("decoded JSON must be an object")));
 
         let whitespace_payload =
             CompactToken::new("IHsiYWxnIjoiRWREU0EiLCJ0eXAiOiJKV1QifSA.ICAg.AAAA").expect("shape should wrap");
@@ -4837,19 +5361,19 @@ mod tests {
         assert!(matches!(whitespace_error, TokenError::JsonDecode {
             part: super::CompactPart::Payload,
             message,
-        } if message.contains("verified decoded JSON object structural admission")));
+        } if message.contains("decoded JSON must be an object")));
     }
 
     #[test]
     fn compact_signing_input_and_proof_reference_are_stable_boundary_values() {
         let header = "encoded-header";
         let payload = "encoded-payload";
-        assert_eq!(super::signing_input(header, payload), "encoded-header.encoded-payload");
+        let token = test_compact_token(header, payload, "encoded-signature");
+        let parts = super::compact_parts(token.as_str()).expect("compact token should split");
+        assert_eq!(parts.signing_input, "encoded-header.encoded-payload");
 
-        let token = CompactToken::new(super::join_compact_parts(header, payload, "encoded-signature"))
-            .expect("joined compact token should wrap");
-        let first_reference = super::proof_reference_for_token(&token);
-        let second_reference = super::proof_reference_for_token(&token);
+        let first_reference = proof_reference(&token);
+        let second_reference = proof_reference(&token);
         assert_eq!(first_reference, second_reference);
         assert_eq!(first_reference.as_bytes().len(), blake3::OUT_LEN);
     }
@@ -4862,8 +5386,7 @@ mod tests {
         );
         let decoded = parse_compact_token(&wrong_algorithm).expect("token should parse before header admission");
         let error = validate_decoded_token(decoded).expect_err("unsupported algorithm should fail closed");
-        assert!(matches!(error, TokenError::UnsupportedHeader { algorithm, token_type }
-            if algorithm == "ES256" && token_type == super::TOKEN_TYPE_JWT));
+        assert!(matches!(error, TokenError::UnsupportedHeader));
 
         let wrong_type = token_with_header(
             r#"{"alg":"EdDSA","typ":"JWS"}"#,
@@ -4871,8 +5394,7 @@ mod tests {
         );
         let decoded = parse_compact_token(&wrong_type).expect("token should parse before header admission");
         let error = validate_decoded_token(decoded).expect_err("unsupported token type should fail closed");
-        assert!(matches!(error, TokenError::UnsupportedHeader { algorithm, token_type }
-            if algorithm == super::TOKEN_ALGORITHM_EDDSA && token_type == "JWS"));
+        assert!(matches!(error, TokenError::UnsupportedHeader));
     }
 
     #[test]
@@ -5084,7 +5606,10 @@ mod tests {
     struct FailingProofStore;
 
     impl ProofStore for FailingProofStore {
-        fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+        fn resolve_proof<'a>(
+            &'a self,
+            reference: &ProofReference,
+        ) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
             Err(ProofStoreError::Backend {
                 reference: reference.clone(),
                 message: "fixture proof backend unavailable".to_owned(),
@@ -5668,7 +6193,10 @@ mod tests {
     struct BackendFailingProofStore;
 
     impl ProofStore for BackendFailingProofStore {
-        fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+        fn resolve_proof<'a>(
+            &'a self,
+            reference: &ProofReference,
+        ) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
             Err(ProofStoreError::Backend {
                 reference: reference.clone(),
                 message: BACKEND_FAILURE_MESSAGE.to_owned(),
@@ -5692,7 +6220,10 @@ mod tests {
     struct CountingProofStore;
 
     impl ProofStore for CountingProofStore {
-        fn resolve_proof(&self, reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
+        fn resolve_proof<'a>(
+            &'a self,
+            reference: &ProofReference,
+        ) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
             panic!("proof store should not be called after proof-count limit for {reference}");
         }
     }
@@ -5700,11 +6231,17 @@ mod tests {
     struct OversizedProofStore;
 
     impl ProofStore for OversizedProofStore {
-        fn resolve_proof(&self, _reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
-            CompactToken::new("x".repeat(8192)).map_err(|error| ProofStoreError::Backend {
-                reference: ProofReference::new(Vec::new()),
-                message: error.to_string(),
-            })
+        fn resolve_proof<'a>(
+            &'a self,
+            _reference: &ProofReference,
+        ) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
+            let oversized = "x".repeat(8192);
+            CompactToken::new(oversized.as_str())
+                .map(ProofToken::Owned)
+                .map_err(|error| ProofStoreError::Backend {
+                    reference: ProofReference::new(Vec::new()),
+                    message: error.to_string(),
+                })
         }
     }
 
@@ -5755,8 +6292,11 @@ mod tests {
     }
 
     impl ProofStore for CyclicProofStore {
-        fn resolve_proof(&self, _reference: &ProofReference) -> std::result::Result<CompactToken, ProofStoreError> {
-            Ok(self.token.clone())
+        fn resolve_proof<'a>(
+            &'a self,
+            _reference: &ProofReference,
+        ) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
+            Ok(ProofToken::Borrowed(&self.token))
         }
     }
 
@@ -5822,19 +6362,18 @@ mod tests {
         }
 
         fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
-            Ok(SignerSignature::new(vec![0_u8; super::ED25519_SIGNATURE_BYTES]))
+            Ok(SignerSignature::from_bytes([0_u8; super::ED25519_SIGNATURE_BYTES]))
         }
     }
 
-    #[derive(Clone)]
     struct FixedSignatureSigner {
         issuer: IssuerDid,
         public_key: Ed25519PublicKey,
-        signature: SignerSignature,
+        signature: [u8; super::ED25519_SIGNATURE_BYTES],
     }
 
     impl FixedSignatureSigner {
-        fn new(signing_key: &Ed25519SigningKey, signature: SignerSignature) -> Self {
+        fn new(signing_key: &Ed25519SigningKey, signature: [u8; super::ED25519_SIGNATURE_BYTES]) -> Self {
             Self {
                 issuer: signing_key.issuer().expect("issuer should derive"),
                 public_key: signing_key.public_key().expect("public key should derive"),
@@ -5857,7 +6396,7 @@ mod tests {
         }
 
         fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
-            Ok(self.signature.clone())
+            Ok(SignerSignature::from_bytes(self.signature))
         }
     }
 
@@ -5890,11 +6429,13 @@ mod tests {
         }
 
         fn sign(&self, _signing_input: &[u8]) -> SignerResult<SignerSignature> {
-            Ok(SignerSignature::new(vec![0_u8; super::ED25519_SIGNATURE_BYTES]))
+            Ok(SignerSignature::from_bytes([0_u8; super::ED25519_SIGNATURE_BYTES]))
         }
     }
 
-    fn assert_claim_presence_failure(decoded: super::DecodedToken, expected: crate::verified::TokenValidationFailure) {
+    fn assert_payload_failure(payload: &str, expected: crate::verified::TokenValidationFailure) {
+        let token = token_with_payload(payload);
+        let decoded = parse_compact_token(&token).expect("payload should decode before structural validation");
         assert!(matches!(
             validate_decoded_token(decoded),
             Err(TokenError::VerifiedPrimitive {
@@ -5930,7 +6471,7 @@ mod tests {
             issuer_key.clone(),
             audience,
             capabilities(resource, ability),
-            proofs,
+            proofs.into(),
             TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
     }
@@ -5949,7 +6490,7 @@ mod tests {
                     .expect("capability with caveat should validate"),
             ])
             .expect("capability set should validate"),
-            proofs,
+            proofs.into(),
             TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
     }
@@ -5969,7 +6510,7 @@ mod tests {
             issuer_key.clone(),
             AudienceDid::from(audience),
             capabilities("did:key:z6Mkresource/photos", "store/add"),
-            ProofCollection::from_tokens(parents),
+            ProofCollection::from_tokens(parents).into(),
             TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
     }
@@ -5992,7 +6533,7 @@ mod tests {
                 .expect("capability with caveat should validate"),
             ])
             .expect("capability set should validate"),
-            ProofCollection::from_tokens(vec![parent]),
+            ProofCollection::from_tokens(vec![parent]).into(),
             TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
     }
@@ -6004,7 +6545,7 @@ mod tests {
             issuer_key.clone(),
             AudienceDid::from(audience),
             capabilities("did:key:z6Mkresource/photos", "store/add"),
-            ProofCollection::from_tokens(vec![parent]),
+            ProofCollection::from_tokens(vec![parent]).into(),
             TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, WIDENED_CHILD_EXPIRES_AT_SECONDS)
                 .expect("bounds should validate"),
         )
@@ -6016,7 +6557,7 @@ mod tests {
             issuer_key.clone(),
             AudienceDid::from(audience),
             capabilities("did:key:z6Mkresource/photos", "admin/delete"),
-            ProofCollection::from_tokens(vec![parent]),
+            ProofCollection::from_tokens(vec![parent]).into(),
             TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS).expect("bounds should validate"),
         )
     }
@@ -6088,15 +6629,14 @@ mod tests {
             REPLACEMENT_A
         };
         let signature = String::from_utf8(signature).expect("base64url signature should remain utf-8");
-        CompactToken::new(super::join_compact_parts(parts[0], parts[1], signature.as_str()))
-            .expect("tampered token should wrap")
+        test_compact_token(parts[0], parts[1], signature.as_str())
     }
 
     fn token_with_header(header_json: &str, payload_json: &str) -> CompactToken {
         let header = super::URL_SAFE_NO_PAD.encode(header_json.as_bytes());
         let payload = super::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
         let signature = super::URL_SAFE_NO_PAD.encode([0_u8; super::ED25519_SIGNATURE_BYTES]);
-        CompactToken::new(super::join_compact_parts(&header, &payload, &signature)).expect("token should wrap")
+        test_compact_token(&header, &payload, &signature)
     }
 
     fn token_with_payload(payload_json: &str) -> CompactToken {
@@ -6104,10 +6644,16 @@ mod tests {
             alg: super::TOKEN_ALGORITHM_EDDSA,
             typ: super::TOKEN_TYPE_JWT,
         };
-        let header = super::encode_json_part(&header).expect("header should encode");
+        let header_json = serde_json::to_vec(&header).expect("header should encode");
+        let header = super::URL_SAFE_NO_PAD.encode(header_json);
         let payload = super::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
         let signature = super::URL_SAFE_NO_PAD.encode([0_u8; super::ED25519_SIGNATURE_BYTES]);
-        CompactToken::new(super::join_compact_parts(&header, &payload, &signature)).expect("token should wrap")
+        test_compact_token(&header, &payload, &signature)
+    }
+
+    fn test_compact_token(header: &str, payload: &str, signature: &str) -> CompactToken {
+        let text = format!("{header}.{payload}.{signature}");
+        CompactToken::new(text.as_str()).expect("test compact token should wrap")
     }
 
     fn assert_token_shape_and_claim_names(token: &CompactToken) {

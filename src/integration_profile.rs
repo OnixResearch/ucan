@@ -18,6 +18,14 @@ use crate::readiness::SupportLevel;
 use crate::readiness::production_readiness_report;
 use crate::token::VerificationLimits;
 
+// r[impl ucan.integration_support_profiles.support_catalog]
+// r[impl ucan.integration_support_profiles.support_levels]
+// r[impl ucan.integration_support_profiles.profile_contract]
+// r[impl ucan.integration_support_profiles.subset_admission]
+// r[impl ucan.integration_support_profiles.fixture_manifests]
+// r[verify ucan.integration_support_profiles.fixtures]
+// r[verify ucan.integration_support_profiles.freshness]
+// r[impl ucan.integration_support_profiles.runtime_boundary]
 /// Canonical support-catalog schema.
 pub const SUPPORT_CATALOG_SCHEMA: &str = "ucan.support-catalog.v1";
 /// Generated JSON projection schema.
@@ -81,6 +89,7 @@ const BASELINE_CONTROLLED_SURFACES: &[&str] = &[
     "caller-supplied-revocation",
     "generic-consumer-integration-hooks",
     "caller-supplied-replay-admission",
+    "holder-signed-invocation-admission",
     "verified-replay-admission-transcript",
     "verified-proof-traversal-orchestration",
     "verified-compact-token-codec-structure",
@@ -98,6 +107,16 @@ const BASELINE_UNSUPPORTED_SURFACES: &[&str] = &[
     "registry-backed-revocation",
     "replay-persistence-store",
     "non-ed25519-key-algorithms",
+];
+
+const NOSTR_ADAPTER_BOUNDARY_FRAGMENTS: &[&str] = &[
+    "relay access",
+    "DNS",
+    "signing",
+    "clocks",
+    "replay storage",
+    "subject resolution",
+    "authorization",
 ];
 
 const SECRET_LIKE_FRAGMENTS: &[&str] = &[
@@ -455,8 +474,17 @@ fn baseline_surface_level(id: &str) -> Option<SupportLevel> {
     None
 }
 
-const fn promotion_review(_id: &str) -> Option<PromotionReview> {
-    None
+// r[impl ucan.nostr_identity_adapter.support_profile]
+fn promotion_review(id: &str) -> Option<PromotionReview> {
+    if id != "nostr-identity-adapter" {
+        return None;
+    }
+    Some(PromotionReview {
+        from: SupportLevel::Unsupported,
+        to: SupportLevel::Preview,
+        migration_id: "add-nostr-identity-adapter".to_owned(),
+        evidence: REQUIRED_PROMOTION_EVIDENCE.iter().map(ToString::to_string).collect(),
+    })
 }
 
 /// Validate catalog shape, baseline support levels, and promotion evidence.
@@ -507,6 +535,7 @@ fn validate_surfaces(catalog: &SupportCatalog, issues: &mut Vec<ReadinessIssue>)
             issues.push(issue("surface-evidence", &path, "surface evidence and boundary must be non-empty"));
         }
         validate_surface_transition(surface, &path, &catalog.promotion_policy, issues);
+        validate_nostr_adapter_surface(surface, &path, issues);
     }
     for id in BASELINE_CONTROLLED_SURFACES
         .iter()
@@ -520,6 +549,21 @@ fn validate_surfaces(catalog: &SupportCatalog, issues: &mut Vec<ReadinessIssue>)
                 &format!("baseline surface {id} is missing"),
             ));
         }
+    }
+}
+
+fn validate_nostr_adapter_surface(surface: &CatalogSurface, path: &str, issues: &mut Vec<ReadinessIssue>) {
+    if surface.id != "nostr-identity-adapter" {
+        return;
+    }
+    let evidence_complete = ["NIP-01", "NIP-42", "NIP-98"].iter().all(|required| surface.evidence.contains(required));
+    let boundary_complete = NOSTR_ADAPTER_BOUNDARY_FRAGMENTS.iter().all(|required| surface.boundary.contains(required));
+    if surface.level != SupportLevel::Preview || !evidence_complete || !boundary_complete {
+        issues.push(issue(
+            "nostr-adapter-overclaim",
+            path,
+            "Nostr adapter support must stay preview with exact caller-owned effects",
+        ));
     }
 }
 
@@ -1237,6 +1281,7 @@ mod tests {
                 "caller-supplied-proof-store".to_owned(),
                 "caller-supplied-revocation".to_owned(),
                 "caller-supplied-replay-admission".to_owned(),
+                "holder-signed-invocation-admission".to_owned(),
                 "opaque-caveat-policy-evaluation".to_owned(),
             ],
             admitted_preview_surfaces: Vec::new(),
@@ -1346,6 +1391,22 @@ mod tests {
         assert!(codes.contains("invalid-limit"));
         assert!(codes.contains("missing-integration"));
         assert!(codes.contains("weakened-non-claims"));
+    }
+
+    // r[verify ucan.nostr_identity_adapter.support_profile]
+    #[test]
+    fn nostr_surface_rejects_effect_and_support_overclaim() {
+        let mut catalog = support_catalog();
+        let surface = catalog
+            .surfaces
+            .iter_mut()
+            .find(|surface| surface.id == "nostr-identity-adapter")
+            .expect("Nostr surface must exist");
+        surface.level = SupportLevel::ControlledIntegrationReady;
+        surface.boundary = "built-in relay, DNS, replay, and authorization".to_owned();
+        let issues = validate_support_catalog(&catalog);
+
+        assert!(issues.iter().any(|issue| issue.code == "nostr-adapter-overclaim"));
     }
 
     #[test]

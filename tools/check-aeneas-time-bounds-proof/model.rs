@@ -2,6 +2,19 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+// r[verify ucan.aeneas_time_bounds.provider_dependencies]
+// r[verify ucan.aeneas_time_bounds.exact_source]
+// r[verify ucan.aeneas_time_bounds.translation_manifest]
+// r[verify ucan.aeneas_time_bounds.feasibility]
+// r[verify ucan.aeneas_time_bounds.properties]
+// r[verify ucan.aeneas_time_bounds.theorem_adequacy]
+// r[verify ucan.aeneas_time_bounds.generated_boundary]
+// r[verify ucan.aeneas_time_bounds.evidence_chain]
+// r[verify ucan.aeneas_time_bounds.negative_evidence]
+// r[verify ucan.aeneas_time_bounds.resource_budget]
+// r[verify ucan.aeneas_time_bounds.runtime_boundary]
+// r[verify ucan.aeneas_time_bounds.claim_boundary]
+// r[verify ucan.aeneas_time_bounds.final_validation]
 const MANIFEST_SCHEMA: &str = "ucan-aeneas-time-bounds-feasibility/v1";
 const RECEIPT_SCHEMA: &str = "ucan-aeneas-time-bounds-blocked-receipt/v1";
 const PILOT_ID: &str = "ucan-core.time-bounds.aeneas-pilot";
