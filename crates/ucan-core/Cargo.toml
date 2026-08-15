@@ -12,6 +12,7 @@ categories = ["authentication", "no-std"]
 [features]
 default = []
 peer-auth = ["dep:blake3", "dep:hmac", "dep:sha2", "dep:zeroize"]
+verification-cache = ["dep:blake3"]
 
 [dependencies]
 blake3 = { version = "=1.8.4", default-features = false, features = ["pure"], optional = true }

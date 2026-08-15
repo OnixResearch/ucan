@@ -8,6 +8,7 @@ pub mod integration_profile;
 pub mod readiness;
 pub mod shell;
 pub mod token;
+pub mod verification_cache;
 pub mod verified;
 
 pub use error::Error;

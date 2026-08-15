@@ -7,6 +7,8 @@ pub mod holder_invocation;
 #[cfg(feature = "peer-auth")]
 pub mod peer_auth;
 pub mod token;
+#[cfg(feature = "verification-cache")]
+pub mod verification_cache;
 
 use core::fmt;
 
