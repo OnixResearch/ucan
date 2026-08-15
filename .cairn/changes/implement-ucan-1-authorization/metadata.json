@@ -1,0 +1,10 @@
+{
+  "workflow_profile": {
+    "id": "spec-driven",
+    "source": "change_create",
+    "version": 1
+  },
+  "depends_on": [
+    "implement-ucan-1-wire-profile"
+  ]
+}
