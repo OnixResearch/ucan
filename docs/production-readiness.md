@@ -95,3 +95,15 @@ cargo run --locked --bin check-production-readiness -- generate --root .
 Nickel is never discovered or evaluated by token issuance, parsing, verification, invocation, caveat, revocation, replay, or authorization APIs. Applications may consume a checked export in their own shell, but UCAN runtime decisions continue to receive explicit typed Rust inputs.
 
 For Aspen, this means implementing Aspen-owned resource, ability, identity, revocation, replay, and RPC mappings. Other consumers likewise own their application policy and backend semantics; no consumer-specific adapter belongs in this crate.
+
+## Dependency advisory posture
+
+Assessment date: 2026-08-16. Result: zero exploitable vulnerabilities in the
+locked dependency set at the assessment revision.
+
+Two applicable advisories are pinned with explicit non-exploitable rationale
+in `deny.toml`: `RUSTSEC-2024-0436` (paste, dev-only via
+hegeltest) and `RUSTSEC-2026-0190` (anyhow `downcast_mut`, vendored
+`repo_index` module). The `dependency-posture` Nix check enforces the policy
+against the committed `Cargo.lock`; it never resolves a fresh dependency set.
+See `docs/dependency-posture.md` for the full audit record and non-claims.
