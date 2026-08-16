@@ -2111,6 +2111,11 @@ mod tests {
     const VALID_ABILITY_GLOB: &str = "store/*";
     const VALID_ABILITY_CHILD: &str = "store/add";
     const VALID_ABILITY_OTHER_NAMESPACE: &str = "upload/add";
+    const SCOPE_RESOURCE: &str = "did:key:z6Mkresource";
+    const SCOPE_NESTED_RESOURCE: &str = "did:key:z6Mkresource/photos";
+    const SCOPE_SIBLING_OVERMATCH_RESOURCE: &str = "did:key:z6MkresourceX";
+    const SCOPE_UNRELATED_RESOURCE: &str = "did:key:z6Mkother";
+    const SCOPE_ABILITY: &str = "store/add";
     const ISSUED_AT_SECONDS: u64 = 1_000;
     const EXPIRES_AT_SECONDS: u64 = 2_000;
     const NOW_SECONDS: u64 = 1_500;
@@ -2673,6 +2678,35 @@ mod tests {
             !capability_set_authorizes(capabilities.as_slice(), "resource:other/child", VALID_ABILITY_GLOB)
                 .expect("resource-escalation inputs should validate")
         );
+    }
+
+    #[test]
+    fn pins_byte_prefix_scope_admits_nested_and_sibling_resources() {
+        // r[ucan.scope.fixtures]
+        // This fixture pins the byte-prefix containment rule: a scope
+        // covers every string that starts with its bytes.
+        let capabilities = vec![valid_capability(SCOPE_RESOURCE, SCOPE_ABILITY)];
+
+        let nested = capability_set_authorizes(capabilities.as_slice(), SCOPE_NESTED_RESOURCE, SCOPE_ABILITY)
+            .expect("capability-set inputs should validate");
+        assert!(nested, "scope must cover the nested delimited resource");
+
+        let sibling =
+            capability_set_authorizes(capabilities.as_slice(), SCOPE_SIBLING_OVERMATCH_RESOURCE, SCOPE_ABILITY)
+                .expect("capability-set inputs should validate");
+        assert!(sibling, "scope must cover the sibling string that shares its bytes");
+    }
+
+    #[test]
+    fn pins_byte_prefix_scope_rejects_unrelated_resource() {
+        // r[ucan.scope.fixtures]
+        // This fixture pins the rejection side of the containment rule: a
+        // resource that does not start with the scope bytes is not covered.
+        let capabilities = vec![valid_capability(SCOPE_RESOURCE, SCOPE_ABILITY)];
+
+        let unrelated = capability_set_authorizes(capabilities.as_slice(), SCOPE_UNRELATED_RESOURCE, SCOPE_ABILITY)
+            .expect("capability-set inputs should validate");
+        assert!(!unrelated, "scope must reject a resource that does not share its bytes");
     }
 
     #[test]
