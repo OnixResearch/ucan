@@ -1,4 +1,4 @@
-# UCAN Nickel Toolchain Delta
+# UCAN Nickel Toolchain
 
 ## ADDED Requirements
 
@@ -8,12 +8,14 @@ r[ucan.nickel_toolchain.cohort] UCAN MUST use Nickel `1.17.0` from upstream comm
 
 #### Scenario: UCAN tools resolve
 
+r[ucan.nickel_toolchain.cohort.resolve]
 - GIVEN UCAN builds policy, proof, and readiness checks
 - WHEN cohort admission runs
 - THEN every Nickel command MUST use the exact reviewed evaluator
 
 #### Scenario: An older or floating evaluator resolves
 
+r[ucan.nickel_toolchain.cohort.older]
 - GIVEN an ambient package, branch, or older pin supplies Nickel
 - WHEN admission runs
 - THEN admission MUST fail
@@ -24,6 +26,7 @@ r[ucan.nickel_toolchain.boundary] Nickel MUST validate configuration shape only.
 
 #### Scenario: Policy configuration passes
 
+r[ucan.nickel_toolchain.boundary.policy]
 - GIVEN Nickel accepts a policy value
 - WHEN UCAN verifies a request
 - THEN UCAN MUST still apply its complete authority checks
@@ -34,6 +37,7 @@ r[ucan.nickel_toolchain.compatibility] Tests MUST cover valid policy and proof f
 
 #### Scenario: The fixture matrix runs
 
+r[ucan.nickel_toolchain.compatibility.matrix]
 - GIVEN representative valid and invalid configurations
 - WHEN Nickel `1.17.0` evaluates them
 - THEN valid configurations MUST retain supported outcomes
@@ -45,6 +49,7 @@ r[ucan.nickel_toolchain.evidence] Nickel-dependent evidence MUST record the exac
 
 #### Scenario: Release evidence is generated
 
+r[ucan.nickel_toolchain.evidence.release]
 - GIVEN Nickel-backed checks pass
 - WHEN evidence is emitted
 - THEN the evaluator identity MUST be explicit
@@ -56,6 +61,7 @@ r[ucan.nickel_toolchain.validation] The change MUST pass policy fixtures, proof 
 
 #### Scenario: Validation completes
 
+r[ucan.nickel_toolchain.validation.completes]
 - GIVEN the pin, fixtures, and evidence are current
 - WHEN validation runs
 - THEN every required check MUST pass or report one exact blocker

@@ -9,6 +9,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    # Stack Nickel 1.17.0 cohort, pinned to the exact reviewed upstream commit.
+    nickel-1-17-0 = {
+      url = "github:nickel-lang/nickel/1320a983e6c3d1e2fb53dd2464b084b4903b1426";
+    };
   };
 
   outputs =
@@ -18,6 +22,7 @@
       crane,
       rust-overlay,
       flake-utils,
+      nickel-1-17-0,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -44,6 +49,10 @@
             || toString path == proofSourceString
             || pkgs.lib.hasPrefix proofSourcePrefix (toString path);
         };
+
+        # Exact stack Nickel 1.17.0 cohort evaluator.
+        nickelCohort = nickel-1-17-0.packages.${system}.default;
+        checkedNickel = "${nickelCohort}/bin/nickel";
 
         # Common build inputs
         nativeBuildInputs = with pkgs; [
@@ -86,6 +95,7 @@
         packages = {
           default = ucan;
           ucan = ucan;
+          nickel-1-17-0 = nickelCohort;
         };
 
         checks = {
@@ -123,22 +133,51 @@
           production-readiness =
             pkgs.runCommand "ucan-production-readiness"
               {
-                nativeBuildInputs = [ pkgs.nickel ];
+                nativeBuildInputs = [ nickelCohort ];
               }
               ''
                 cd ${./.}
-                ${ucan}/bin/check-production-readiness check --root . --nickel ${pkgs.nickel}/bin/nickel
+                ${ucan}/bin/check-production-readiness check --root . --nickel ${checkedNickel}
                 touch $out
               '';
 
           aeneas-time-bounds-proof =
             pkgs.runCommand "ucan-aeneas-time-bounds-proof"
               {
-                nativeBuildInputs = [ pkgs.nickel ];
+                nativeBuildInputs = [ nickelCohort ];
               }
               ''
                 cd ${./.}
-                ${ucan}/bin/check-aeneas-time-bounds-proof check --root . --nickel ${pkgs.nickel}/bin/nickel
+                ${ucan}/bin/check-aeneas-time-bounds-proof check --root . --nickel ${checkedNickel}
+                touch $out
+              '';
+
+          nickel-cohort-version =
+            pkgs.runCommand "ucan-nickel-cohort-version"
+              {
+                nativeBuildInputs = [ nickelCohort ];
+              }
+              ''
+                version=$(${checkedNickel} --version 2>&1 | head -1)
+                echo "resolved nickel: $version"
+                case "$version" in
+                  *1.17*) exit 0 ;;
+                  *)
+                    echo "older, floating, ambient, or mixed evaluator resolved: $version" >&2
+                    exit 1
+                    ;;
+                esac
+                touch $out
+              '';
+
+          nickel-toolchain-fixtures =
+            pkgs.runCommand "ucan-nickel-toolchain-fixtures"
+              {
+                nativeBuildInputs = [ nickelCohort ];
+              }
+              ''
+                cd ${./.}
+                bash scripts/check-nickel-toolchain-fixtures.sh ${checkedNickel}
                 touch $out
               '';
 
@@ -166,8 +205,8 @@
             cargo-nextest
             cargo-watch
             rust-analyzer
-            nickel
             uv
+            nickelCohort
           ];
 
           # Ensure the nightly toolchain and vendored verified-logic source are
