@@ -2526,6 +2526,16 @@ impl VerifiedToken {
         &self.proofs
     }
 
+    /// Nominal protocol profile that produced this verified token.
+    ///
+    /// The three-part compact Ed25519 token is always bound to the local
+    /// `onix-compact-ed25519-v1` profile. It is never labeled as final UCAN
+    /// `1.0.0`.
+    #[must_use]
+    pub const fn protocol_profile(&self) -> crate::protocol_profile::ProtocolProfileId {
+        crate::protocol_profile::ProtocolProfileId::OnixCompactEd25519V1
+    }
+
     #[must_use]
     pub const fn effective_delegation(&self) -> &EffectiveDelegation {
         &self.effective
@@ -5674,6 +5684,27 @@ mod tests {
         assert_eq!(transcript.parent_indices, vec![Vec::<usize>::new(), vec![0]]);
         assert_eq!(transcript.leaf_indices, vec![1]);
         assert!(transcript.total_input_bytes > 0);
+    }
+
+    #[test]
+    fn verified_token_reports_local_compact_protocol_profile() {
+        let verified = verified_child_token();
+        let profile = verified.protocol_profile();
+        assert_eq!(profile.as_str(), crate::protocol_profile::ONIX_COMPACT_ED25519_V1);
+        assert_ne!(profile.as_str(), crate::protocol_profile::UCAN_WG_1_0_0);
+    }
+
+    #[test]
+    fn dagcbor_style_input_fails_compact_parse_without_dispatch() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let context = verification_context(vec![&issuer_key], ProofCollection::empty(), VERIFICATION_TIME_SECONDS);
+        for dagcbor_style in ["", "cid:v1:dag-cbor:Qm....", "header.payload"] {
+            let result = super::verify_compact_token_str(dagcbor_style, &context);
+            assert!(
+                result.is_err(),
+                "UCAN 1.0.0-style input {dagcbor_style:?} must fail the compact parser without profile dispatch"
+            );
+        }
     }
 
     #[test]

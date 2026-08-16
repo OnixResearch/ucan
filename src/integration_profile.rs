@@ -12,6 +12,7 @@ use std::fmt::Write as _;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::protocol_profile::ProtocolProfileAdmissionError;
 use crate::readiness::ProductionReadinessReport;
 use crate::readiness::ReadinessOption;
 use crate::readiness::SupportLevel;
@@ -334,6 +335,14 @@ pub struct IntegrationSupportProfile {
     pub fail_closed: bool,
     /// Explicit bounded non-claims.
     pub non_claims: Vec<String>,
+    /// Selected nominal protocol-profile ID (defaults to the local compact profile).
+    #[serde(default = "default_local_protocol_profile")]
+    pub protocol_profile: String,
+}
+
+/// Default integration-profile protocol selection: the local compact profile.
+fn default_local_protocol_profile() -> String {
+    crate::protocol_profile::ONIX_COMPACT_ED25519_V1.to_owned()
 }
 
 /// Deterministic profile-admission report.
@@ -886,6 +895,20 @@ fn render_operator_options(output: &mut String, heading: &str, options: &[Catalo
     }
 }
 
+fn validate_profile_protocol(profile: &IntegrationSupportProfile, issues: &mut Vec<ReadinessIssue>) {
+    match crate::protocol_profile::admit_protocol_profile_id(profile.protocol_profile.as_str()) {
+        Ok(()) => {}
+        Err(error) => issues.push(ReadinessIssue {
+            code: match error {
+                ProtocolProfileAdmissionError::UnknownProfile { .. } => "unknown-protocol-profile".to_owned(),
+                ProtocolProfileAdmissionError::UnsupportedProfile { .. } => "unsupported-protocol-profile".to_owned(),
+            },
+            path: "profile.protocol_profile".to_owned(),
+            message: error.to_string(),
+        }),
+    }
+}
+
 /// Admit a reviewed integration profile as a pure subset of the support catalog.
 #[must_use]
 pub fn admit_integration_profile(
@@ -907,6 +930,7 @@ pub fn admit_integration_profile(
     validate_profile_integrations(catalog, profile, &mut issues);
     validate_required_non_claims(&profile.non_claims, "profile.non_claims", &mut issues);
     validate_overclaims(&profile.non_claims, "profile.non_claims", &mut issues);
+    validate_profile_protocol(profile, &mut issues);
     ProfileAdmissionReport {
         schema: PROFILE_ADMISSION_SCHEMA.to_owned(),
         profile_id: profile.id.clone(),
@@ -1306,6 +1330,7 @@ mod tests {
             },
             fail_closed: true,
             non_claims: REQUIRED_NON_CLAIMS.iter().map(ToString::to_string).collect(),
+            protocol_profile: crate::protocol_profile::ONIX_COMPACT_ED25519_V1.to_owned(),
         }
     }
 
@@ -1341,6 +1366,35 @@ mod tests {
         let catalog = support_catalog();
         let report = admit_integration_profile(&catalog, &valid_profile(&catalog));
         assert!(report.valid, "{:#?}", report.issues);
+    }
+
+    #[test]
+    fn profile_with_local_protocol_profile_is_admitted() {
+        let catalog = support_catalog();
+        let mut profile = valid_profile(&catalog);
+        profile.protocol_profile = crate::protocol_profile::ONIX_COMPACT_ED25519_V1.to_owned();
+        let report = admit_integration_profile(&catalog, &profile);
+        assert!(report.valid, "{:#?}", report.issues);
+    }
+
+    #[test]
+    fn profile_with_final_unsupported_protocol_profile_is_rejected() {
+        let catalog = support_catalog();
+        let mut profile = valid_profile(&catalog);
+        profile.protocol_profile = crate::protocol_profile::UCAN_WG_1_0_0.to_owned();
+        let report = admit_integration_profile(&catalog, &profile);
+        assert!(!report.valid);
+        assert!(report.issues.iter().any(|issue| issue.code == "unsupported-protocol-profile"));
+    }
+
+    #[test]
+    fn profile_with_unknown_protocol_profile_is_rejected() {
+        let catalog = support_catalog();
+        let mut profile = valid_profile(&catalog);
+        profile.protocol_profile = "hummingbird-v42".to_owned();
+        let report = admit_integration_profile(&catalog, &profile);
+        assert!(!report.valid);
+        assert!(report.issues.iter().any(|issue| issue.code == "unknown-protocol-profile"));
     }
 
     #[test]

@@ -106,6 +106,7 @@ let IntegrationProfileContract = std.contract.Sequence [{
   integrations | IntegrationModes,
   fail_closed | Bool,
   non_claims | Array String,
+  protocol_profile | optional | StableId,
 }, std.contract.from_predicate profile_invariants] in
 let fixture_invariants = fun fixture =>
   optional_unique fixture.required_surfaces

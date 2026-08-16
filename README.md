@@ -129,6 +129,19 @@ lower-level building blocks beneath `web_of_trust_ucan_authorization`; they do n
 resolve identities, fetch evidence, sign records, consult registries, persist state,
 or read ambient clocks.
 
+## Protocol profiles
+
+This crate binds every compact token to the nominal `onix-compact-ed25519-v1`
+protocol profile. The profile describes the three-part base64url JWT format,
+Ed25519 EdDSA signing, JSON claims, and BLAKE3 proof references. It does not
+claim final UCAN `1.0.0` compatibility.
+
+Final UCAN `1.0.0` (DAG-CBOR, Varsig, CIDv1) is a declared but unsupported
+target profile. `VerifiedToken::protocol_profile()` reports the local profile
+for every verified token. See [`docs/protocol-profiles.md`](docs/protocol-profiles.md) for the pinned
+source revisions, the fixture manifest, and the bounded conformance report.
+AWAKE remains a separate session protocol with no token-format claims here.
+
 ## Optional Nostr identity adapter
 
 <!-- r[impl ucan.nostr_identity_adapter.package_boundary] -->

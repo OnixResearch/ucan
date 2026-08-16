@@ -5,6 +5,7 @@ pub use ucan_core as core;
 
 pub mod error;
 pub mod integration_profile;
+pub mod protocol_profile;
 pub mod readiness;
 pub mod shell;
 pub mod token;
@@ -13,6 +14,15 @@ pub mod verified;
 
 pub use error::Error;
 pub use error::Result;
+pub use protocol_profile::ConformanceClass;
+pub use protocol_profile::ConformanceReport;
+pub use protocol_profile::ProtocolProfileAdmissionError;
+pub use protocol_profile::ProtocolProfileId;
+pub use protocol_profile::Ucan100FixtureManifest;
+pub use protocol_profile::admit_protocol_profile_id;
+pub use protocol_profile::build_conformance_report;
+pub use protocol_profile::protocol_profile_catalog;
+pub use protocol_profile::validate_ucan100_fixture_manifest;
 pub use readiness::IntegrationProfile;
 pub use readiness::ProductionReadinessReport;
 pub use readiness::ReadinessOption;
