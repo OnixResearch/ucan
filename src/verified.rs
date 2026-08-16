@@ -44,7 +44,7 @@ use zeroize::Zeroizing;
 use crate::shell::CapabilityDocument;
 
 const ABILITY_SEGMENT_SEPARATOR: char = '/';
-const DEFAULT_CLOCK_SKEW_SECONDS: u64 = 60;
+pub const DEFAULT_CLOCK_SKEW_SECONDS: u64 = 60;
 
 pub type VerifiedResult<T> = std::result::Result<T, VerifiedPrimitiveError>;
 
@@ -1660,9 +1660,9 @@ pub fn validate_token_envelope(
     envelope: &TokenEnvelopeInput,
     signature_valid: bool,
     now_seconds: u64,
+    tolerance_seconds: u64,
 ) -> VerifiedResult<()> {
     let payload = build_token_payload(envelope)?;
-    let tolerance_seconds = DEFAULT_CLOCK_SKEW_SECONDS;
     ucan_token::validate_envelope(&payload, signature_valid, now_seconds, tolerance_seconds)
         .map(|_| ())
         .map_err(|error| VerifiedPrimitiveError::TokenValidation {
@@ -3172,7 +3172,7 @@ mod tests {
             expires_at_seconds: EXPIRES_AT_SECONDS,
             not_before_seconds: ISSUED_AT_SECONDS,
         };
-        let result = validate_token_envelope(&envelope, true, NOW_SECONDS);
+        let result = validate_token_envelope(&envelope, true, NOW_SECONDS, super::DEFAULT_CLOCK_SKEW_SECONDS);
 
         assert!(result.is_ok());
     }
@@ -3187,7 +3187,8 @@ mod tests {
             expires_at_seconds: EXPIRES_AT_SECONDS,
             not_before_seconds: ISSUED_AT_SECONDS,
         };
-        let error = validate_token_envelope(&envelope, true, NOW_SECONDS).expect_err("missing issuer should fail");
+        let error = validate_token_envelope(&envelope, true, NOW_SECONDS, super::DEFAULT_CLOCK_SKEW_SECONDS)
+            .expect_err("missing issuer should fail");
 
         assert_eq!(error, VerifiedPrimitiveError::TokenValidation {
             failure: TokenValidationFailure::MissingIssuer,

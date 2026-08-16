@@ -106,6 +106,7 @@ const PROOF_REFERENCE_DIGEST_LEN: usize = blake3::OUT_LEN;
 const DEFAULT_MAX_PROOF_DEPTH: usize = 16;
 const DEFAULT_MAX_PROOF_COUNT: usize = 64;
 const DEFAULT_MAX_COMPACT_TOKEN_BYTES: usize = 64 * 1024;
+const ZERO_CLOCK_SKEW_TOLERANCE_SECONDS: u64 = 0;
 pub const ED25519_SECRET_KEY_BYTES: usize = verified_logic::ucan_signature::SECRET_KEY_LEN;
 pub const ED25519_PUBLIC_KEY_BYTES: usize = verified_logic::ucan_signature::PUBLIC_KEY_LEN;
 pub const ED25519_SIGNATURE_BYTES: usize = verified_logic::ucan_signature::SIGNATURE_LEN;
@@ -1603,6 +1604,7 @@ pub struct VerificationLimits {
     proof_depth_limit: usize,
     proof_count_limit: usize,
     compact_token_byte_limit: usize,
+    clock_skew_tolerance_seconds: u64,
 }
 
 impl VerificationLimits {
@@ -1612,8 +1614,34 @@ impl VerificationLimits {
             proof_depth_limit: max_proof_depth,
             proof_count_limit: max_proof_count,
             compact_token_byte_limit: max_compact_token_bytes,
+            clock_skew_tolerance_seconds: crate::verified::DEFAULT_CLOCK_SKEW_SECONDS,
         }
     }
+
+    /// Build strict zero-tolerance limits with the default resource bounds.
+    #[must_use]
+    pub const fn strict() -> Self {
+        Self {
+            proof_depth_limit: DEFAULT_MAX_PROOF_DEPTH,
+            proof_count_limit: DEFAULT_MAX_PROOF_COUNT,
+            compact_token_byte_limit: DEFAULT_MAX_COMPACT_TOKEN_BYTES,
+            clock_skew_tolerance_seconds: ZERO_CLOCK_SKEW_TOLERANCE_SECONDS,
+        }
+    }
+
+    /// Select a clock-skew tolerance in seconds for this verification.
+    #[must_use]
+    pub const fn with_clock_skew_tolerance_seconds(mut self, seconds: u64) -> Self {
+        self.clock_skew_tolerance_seconds = seconds;
+        self
+    }
+
+    /// Return the clock-skew tolerance in seconds used by every gate.
+    #[must_use]
+    pub const fn clock_skew_tolerance_seconds(self) -> u64 {
+        self.clock_skew_tolerance_seconds
+    }
+
 
     #[must_use]
     pub const fn max_proof_depth(self) -> usize {
@@ -3058,7 +3086,7 @@ where
     V: RevocationChecker + ?Sized,
 {
     let token = signed.token;
-    validate_envelope_for_token(&token, time)?;
+    validate_envelope_for_token(&token, time, limits)?;
     let issuer = IssuerDid::new(token.claims.issuer_did().to_owned())?;
     let audience = AudienceDid::new(token.claims.audience_did().to_owned())?;
     let capabilities = claims_capability_set(&token.claims)?;
@@ -3424,7 +3452,7 @@ fn verify_live_dag_proof_transcript(
         resource: target_capability.resource.clone(),
         ability: target_capability.ability.clone(),
         now_seconds: time.as_unix_seconds(),
-        tolerance_seconds: 0,
+        tolerance_seconds: limits.clock_skew_tolerance_seconds(),
     };
     let bridge_transcript = VerifiedProofTraversalDagTranscript {
         entries: transcript.entries.clone(),
@@ -3487,10 +3515,19 @@ fn direct_proof_references(
     Ok(ProofReferences::from_references(references))
 }
 
-fn validate_envelope_for_token(token: &StructurallyValidToken<'_>, time: VerificationTime) -> TokenResult<()> {
+fn validate_envelope_for_token(
+    token: &StructurallyValidToken<'_>,
+    time: VerificationTime,
+    limits: VerificationLimits,
+) -> TokenResult<()> {
     let envelope = token_envelope(token)?;
-    validate_token_envelope(&envelope, true, time.as_unix_seconds())
-        .map_err(|error| map_envelope_error(error, token.claims.issuer_did()))
+    validate_token_envelope(
+        &envelope,
+        true,
+        time.as_unix_seconds(),
+        limits.clock_skew_tolerance_seconds(),
+    )
+    .map_err(|error| map_envelope_error(error, token.claims.issuer_did()))
 }
 
 fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenError {
@@ -5833,6 +5870,106 @@ mod tests {
         let error = verify_compact_token(&child, &context).expect_err("expired parent should fail");
 
         assert!(matches!(error, TokenError::Temporal { .. }));
+    }
+
+    const BOUNDARY_ISSUER_BYTE: u8 = 23;
+    const BOUNDARY_AUDIENCE_BYTE: u8 = 29;
+    const BOUNDARY_NOT_BEFORE_SECONDS: u64 = 1_000;
+    const BOUNDARY_EXPIRES_AT_SECONDS: u64 = 1_200;
+    const CLOCK_SKEW_GRACE_SECONDS: u64 = crate::verified::DEFAULT_CLOCK_SKEW_SECONDS;
+
+    fn boundary_scope_token() -> CompactToken {
+        let key = signing_key(BOUNDARY_ISSUER_BYTE);
+        let audience = signing_key(BOUNDARY_AUDIENCE_BYTE).issuer().expect("audience should derive");
+        let request = IssueRequest::new(
+            key,
+            AudienceDid::from(audience),
+            capabilities("did:key:z6Mkresource", "store/*"),
+            ProofCollection::empty().into(),
+            TokenTimeBounds::new(BOUNDARY_NOT_BEFORE_SECONDS, BOUNDARY_EXPIRES_AT_SECONDS)
+                .expect("bounds should validate"),
+        );
+        issue_token(&request).expect("token should issue")
+    }
+
+    fn boundary_scope_keys() -> KeyResolutionContext {
+        KeyResolutionContext::new(vec![
+            Ed25519VerificationKey::from_signing_key(&signing_key(BOUNDARY_ISSUER_BYTE))
+                .expect("key should derive"),
+        ])
+    }
+
+    #[test]
+    fn clock_skew_default_grace_admits_documented_boundaries() {
+        let token = boundary_scope_token();
+        let keys = boundary_scope_keys();
+        for at in [
+            BOUNDARY_NOT_BEFORE_SECONDS - 1,
+            BOUNDARY_NOT_BEFORE_SECONDS,
+            BOUNDARY_EXPIRES_AT_SECONDS,
+            BOUNDARY_EXPIRES_AT_SECONDS + CLOCK_SKEW_GRACE_SECONDS,
+        ] {
+            let result = super::verify_compact_token_with_resolvers(
+                &token,
+                VerificationTime::from_unix_seconds(at),
+                &keys,
+                &ProofCollection::empty(),
+                VerificationLimits::default(),
+            );
+            assert!(
+                result.is_ok(),
+                "default surface must admit the in-grace boundary time {at}"
+            );
+        }
+    }
+
+    #[test]
+    fn clock_skew_out_of_grace_reports_temporal_error() {
+        let token = boundary_scope_token();
+        let keys = boundary_scope_keys();
+        for at in [
+            BOUNDARY_NOT_BEFORE_SECONDS - CLOCK_SKEW_GRACE_SECONDS - 1,
+            BOUNDARY_EXPIRES_AT_SECONDS + CLOCK_SKEW_GRACE_SECONDS + 1,
+        ] {
+            let error = super::verify_compact_token_with_resolvers(
+                &token,
+                VerificationTime::from_unix_seconds(at),
+                &keys,
+                &ProofCollection::empty(),
+                VerificationLimits::default(),
+            )
+            .expect_err("out-of-grace time must be rejected");
+            assert!(
+                matches!(error, TokenError::Temporal { .. }),
+                "boundary time {at} must fail as a temporal error, got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn clock_skew_strict_opt_in_rejects_in_grace_token() {
+        let token = boundary_scope_token();
+        let keys = boundary_scope_keys();
+        let at = BOUNDARY_EXPIRES_AT_SECONDS + 50;
+
+        let default_result = super::verify_compact_token_with_resolvers(
+            &token,
+            VerificationTime::from_unix_seconds(at),
+            &keys,
+            &ProofCollection::empty(),
+            VerificationLimits::default(),
+        );
+        assert!(default_result.is_ok(), "default surface must remain lenient at {at}");
+
+        let strict_error = super::verify_compact_token_with_resolvers(
+            &token,
+            VerificationTime::from_unix_seconds(at),
+            &keys,
+            &ProofCollection::empty(),
+            VerificationLimits::strict(),
+        )
+        .expect_err("strict surface must reject an in-grace token");
+        assert!(matches!(strict_error, TokenError::Temporal { .. }));
     }
 
     #[test]
