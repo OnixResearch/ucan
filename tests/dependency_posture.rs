@@ -16,10 +16,7 @@ const ADVISORY_ANYHOW: &str = "RUSTSEC-2026-0190";
 
 fn has_pin_with_reason(text: &str, id: &str) -> bool {
     let marker = format!("id = \"{id}\"");
-    match text.find(&marker) {
-        None => false,
-        Some(index) => text[index + marker.len()..].contains("reason = \""),
-    }
+    text.find(&marker).is_some_and(|index| text[index + marker.len()..].contains("reason = \""))
 }
 
 #[test]

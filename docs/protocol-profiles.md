@@ -10,7 +10,7 @@ the canonical core. This file preserves the review record and non-claims.
 | Profile ID | State | Behavior |
 |---|---|---|
 | `onix-compact-ed25519-v1` | Supported | Three-part unpadded base64url compact token, Ed25519 EdDSA signature, JSON JWT-style claims, BLAKE3 proof references, repository resource and ability model |
-| `ucan-wg-1.0.0` | Unsupported target | DAG-CBOR signing, Varsig envelope, CIDv1 SHA-256 proof references, typed payload tags, subject, slash commands, arguments or policy, nonce, 53-bit time admission, nullable expiry |
+| `ucan-wg-1.0.0` | Wire slice supported; authorization slice unsupported | DAG-CBOR signing and canonical encoding, Varsig-subset envelope, CIDv1 SHA-256, slash commands, bounded arguments/policy values, nonce, 53-bit time, nullable expiry |
 
 No profile ID implies another profile. Unknown profile IDs fail closed and
 select no decoder or authority evaluator.
@@ -64,12 +64,23 @@ validates every manifest entry, and writes `fixtures/1.0.0/report.json`.
 `unsupported`, or `untested`. It binds the profile, implementation revision,
 upstream revision, fixture identity, stage, reason code, and non-claims.
 
-Every pinned case is `unsupported` in this revision because the final UCAN
-`1.0.0` wire component is not implemented. The report never converts fixture
-presence into conformance.
+With the `implement-ucan-1-wire-profile` slice, the Delegation and
+Invocation rows are `pass` (executed by the profile wire API with canonical
+DAG-CBOR, CID construction, and Ed25519 sign/verify round trips). The Policy
+row stays `unsupported` because policy and authorization semantics belong to
+the `implement-ucan-1-authorization` slice. The example
+`cargo run --example protocol_profile_report` regenerates the report
+from the committed manifest and fixtures.
 
-A release claim for `ucan-wg-1.0.0` remains unsupported until positive and
-negative cases have executable evidence.
+Known limitation: the upstream encoder binary layout is not yet re-derived
+byte-for-byte, so the upstream `token`/`cid` byte parity is a documented
+differential item for a later slice. The profile's own canonical form is
+deterministic and self-consistent, and the pinned CID validates as CIDv1
+DAG-CBOR SHA-256.
+
+A release claim for `ucan-wg-1.0.0` authorization remains unsupported until
+positive and negative cases have executable evidence in the authorization
+slice.
 
 ## Non-claims
 

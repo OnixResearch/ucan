@@ -6,6 +6,7 @@ extern crate alloc;
 pub mod holder_invocation;
 #[cfg(feature = "peer-auth")]
 pub mod peer_auth;
+pub mod profile;
 pub mod token;
 #[cfg(feature = "verification-cache")]
 pub mod verification_cache;

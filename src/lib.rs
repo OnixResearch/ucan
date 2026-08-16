@@ -5,6 +5,7 @@ pub use ucan_core as core;
 
 pub mod error;
 pub mod integration_profile;
+pub mod profile;
 pub mod protocol_profile;
 pub mod readiness;
 pub mod shell;
