@@ -387,6 +387,7 @@ pub enum ProofStoreError {
     Stale { reference: ProofReference, message: String },
     Malformed { reference: ProofReference, message: String },
     Backend { reference: ProofReference, message: String },
+    ReferenceMismatch { expected: ProofReference, actual: ProofReference },
 }
 
 impl fmt::Display for ProofStoreError {
@@ -402,6 +403,10 @@ impl fmt::Display for ProofStoreError {
             Self::Backend { reference, message } => {
                 write!(formatter, "backend failed resolving proof {reference}: {message}")
             }
+            Self::ReferenceMismatch { expected, actual } => write!(
+                formatter,
+                "resolved proof token {actual} does not match requested reference {expected}"
+            ),
         }
     }
 }
@@ -1405,6 +1410,16 @@ impl ProofToken<'_> {
 }
 
 /// Synchronous shell-owned proof store used by verification.
+///
+/// # Reference-binding contract
+///
+/// The token returned for a requested reference MUST be the token whose
+/// bounded-compact BLAKE3 digest equals that reference. `resolve_proof` MAY
+/// return `Ok` only for a matching token. The shell enforces the binding: it
+/// recomputes the digest of every returned token and rejects a mismatch with a
+/// deterministic [`ProofStoreError::ReferenceMismatch`] before the token is
+/// used in delegation evaluation. The built-in [`ProofCollection`] selects
+/// tokens by digest equality, so it satisfies the binding by construction.
 pub trait ProofStore {
     /// Resolve a compact proof token by its proof reference.
     ///
@@ -1413,6 +1428,9 @@ pub trait ProofStore {
     /// Returns [`ProofStoreError`] when the proof is missing, stale, malformed,
     /// or the store backend fails. The returned value must borrow secure storage
     /// or own a zeroizing compact token.
+    ///
+    /// The returned token must match the requested reference by digest. The
+    /// shell recomputes the digest and enforces the mismatch rejection.
     fn resolve_proof<'a>(&'a self, reference: &ProofReference) -> std::result::Result<ProofToken<'a>, ProofStoreError>;
 }
 
@@ -3166,6 +3184,7 @@ where
         };
         let proof_text = proof.as_str();
         enforce_compact_token_size(proof_text, limits)?;
+        bind_proof_to_reference(proof_text, reference)?;
         let parent = verify_compact_token_with_traversal(
             proof_text,
             time,
@@ -3179,6 +3198,19 @@ where
         parents.push(parent);
     }
     Ok(parents)
+}
+
+fn bind_proof_to_reference(token: &str, requested: &ProofReference) -> TokenResult<()> {
+    let actual = proof_reference_for_bounded_token(token);
+    if actual.as_bytes() != requested.as_bytes() {
+        return Err(TokenError::ProofStore {
+            source: ProofStoreError::ReferenceMismatch {
+                expected: requested.clone(),
+                actual,
+            },
+        });
+    }
+    Ok(())
 }
 
 fn verify_child_is_linked_to_parent_audience(child_issuer: &IssuerDid, parents: &[VerifiedToken]) -> TokenResult<()> {
@@ -6149,14 +6181,17 @@ mod tests {
     }
 
     #[test]
-    fn proof_store_cycle_is_rejected_by_trail_detection() {
+    fn substituting_proof_store_is_rejected_as_reference_mismatch() {
         let parent_key = signing_key(ISSUER_SECRET_BYTE);
         let child_key = signing_key(CHILD_SECRET_BYTE);
         let child_issuer = child_key.issuer().expect("child issuer should derive");
-        let parent =
-            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
-                .expect("parent should issue");
-        let child = issue_token(&child_request(&child_key, parent)).expect("child should issue");
+        let parent = issue_token(&issue_request(
+            &parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+        ))
+        .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
         let keys = KeyResolutionContext::new(
             [&parent_key, &child_key]
                 .into_iter()
@@ -6164,7 +6199,7 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()
                 .expect("keys should derive"),
         );
-        let store = CyclicProofStore { token: child.clone() };
+        let store = SubstitutingProofStore { token: child.clone() };
         let error = super::verify_compact_token_with_resolvers(
             &child,
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
@@ -6172,9 +6207,62 @@ mod tests {
             &store,
             VerificationLimits::default(),
         )
-        .expect_err("proof cycle should fail");
+        .expect_err("a substituted proof token must fail the reference binding");
 
-        assert!(matches!(error, TokenError::ProofChain { .. }));
+        match error {
+            TokenError::ProofStore {
+                source: ProofStoreError::ReferenceMismatch { expected, actual },
+            } => {
+                assert_eq!(expected.as_bytes(), proof_reference(&parent).as_bytes());
+                assert_eq!(actual.as_bytes(), proof_reference(&child).as_bytes());
+            }
+            other => panic!("substitution must fail with ReferenceMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reference_respecting_store_verifies_child_chain() {
+        let parent_key = signing_key(ISSUER_SECRET_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let parent = issue_token(&issue_request(
+            &parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+        ))
+        .expect("parent should issue");
+        let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
+        let keys = KeyResolutionContext::new(
+            [&parent_key, &child_key]
+                .into_iter()
+                .map(Ed25519VerificationKey::from_signing_key)
+                .collect::<Result<Vec<_>, _>>()
+                .expect("keys should derive"),
+        );
+        let store = ReferenceRespectingProofStore { token: parent };
+        let verified = super::verify_compact_token_with_resolvers(
+            &child,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &store,
+            VerificationLimits::default(),
+        )
+        .expect("a correctly resolved proof must verify");
+
+        assert_eq!(verified.issuer().as_str(), child_key.issuer().expect("child issuer should derive").as_str());
+    }
+
+    #[test]
+    fn reject_cycle_contains_repeated_proof_reference() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let reference = proof_reference(&token);
+        let token_text = token.as_str();
+
+        assert!(super::reject_cycle(token_text, &[reference]).is_err());
+        assert!(super::reject_cycle(token_text, &[]).is_ok());
     }
 
     const BACKEND_FAILURE_MESSAGE: &str = "backend unavailable";
@@ -6287,16 +6375,35 @@ mod tests {
         }
     }
 
-    struct CyclicProofStore {
+    struct SubstitutingProofStore {
         token: CompactToken,
     }
 
-    impl ProofStore for CyclicProofStore {
+    impl ProofStore for SubstitutingProofStore {
         fn resolve_proof<'a>(
             &'a self,
             _reference: &ProofReference,
         ) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
             Ok(ProofToken::Borrowed(&self.token))
+        }
+    }
+
+    struct ReferenceRespectingProofStore {
+        token: CompactToken,
+    }
+
+    impl ProofStore for ReferenceRespectingProofStore {
+        fn resolve_proof<'a>(
+            &'a self,
+            reference: &ProofReference,
+        ) -> std::result::Result<ProofToken<'a>, ProofStoreError> {
+            if proof_reference(&self.token).as_bytes() == reference.as_bytes() {
+                Ok(ProofToken::Borrowed(&self.token))
+            } else {
+                Err(ProofStoreError::MissingProof {
+                    reference: reference.clone(),
+                })
+            }
         }
     }
 
