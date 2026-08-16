@@ -384,11 +384,25 @@ impl std::error::Error for KeyResolverError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofStoreError {
-    MissingProof { reference: ProofReference },
-    Stale { reference: ProofReference, message: String },
-    Malformed { reference: ProofReference, message: String },
-    Backend { reference: ProofReference, message: String },
-    ReferenceMismatch { expected: ProofReference, actual: ProofReference },
+    MissingProof {
+        reference: ProofReference,
+    },
+    Stale {
+        reference: ProofReference,
+        message: String,
+    },
+    Malformed {
+        reference: ProofReference,
+        message: String,
+    },
+    Backend {
+        reference: ProofReference,
+        message: String,
+    },
+    ReferenceMismatch {
+        expected: ProofReference,
+        actual: ProofReference,
+    },
 }
 
 impl fmt::Display for ProofStoreError {
@@ -404,10 +418,9 @@ impl fmt::Display for ProofStoreError {
             Self::Backend { reference, message } => {
                 write!(formatter, "backend failed resolving proof {reference}: {message}")
             }
-            Self::ReferenceMismatch { expected, actual } => write!(
-                formatter,
-                "resolved proof token {actual} does not match requested reference {expected}"
-            ),
+            Self::ReferenceMismatch { expected, actual } => {
+                write!(formatter, "resolved proof token {actual} does not match requested reference {expected}")
+            }
         }
     }
 }
@@ -819,7 +832,37 @@ impl CapabilitySet {
     ///
     /// Returns [`TokenError`] when core claim validation rejects the collection.
     pub fn new(capabilities: Vec<CapabilityDocument>) -> TokenResult<Self> {
-        let inputs = capability_inputs(capabilities.as_slice());
+        // All caveat input holders live in this block and are dropped after
+        // core claim validation, so no verification or issuance self-check
+        // allocation is leaked.
+        let caveat_holders: Vec<Vec<ucan_core::token::CaveatInput<'_>>> = capabilities
+            .iter()
+            .map(|capability| {
+                capability
+                    .caveats
+                    .iter()
+                    .map(|caveat| {
+                        ucan_core::token::CaveatInput::new(
+                            caveat.domain.as_str(),
+                            caveat.caveat_type.as_str(),
+                            caveat.key.as_str(),
+                            caveat.payload.as_slice(),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let inputs: Vec<ucan_core::token::CapabilityInput<'_>> = capabilities
+            .iter()
+            .zip(caveat_holders.iter())
+            .map(|(capability, holders)| {
+                ucan_core::token::CapabilityInput::with_caveats(
+                    capability.resource.as_str(),
+                    capability.ability.as_str(),
+                    holders.as_slice(),
+                )
+            })
+            .collect();
         let empty_proofs: [ucan_core::token::ProofReferenceInput<'_>; 0] = [];
         let input = ucan_core::token::ClaimsInput {
             issuer_did: Some("did:key:z6Mkissuer"),
@@ -1641,7 +1684,6 @@ impl VerificationLimits {
     pub const fn clock_skew_tolerance_seconds(self) -> u64 {
         self.clock_skew_tolerance_seconds
     }
-
 
     #[must_use]
     pub const fn max_proof_depth(self) -> usize {
@@ -3521,13 +3563,8 @@ fn validate_envelope_for_token(
     limits: VerificationLimits,
 ) -> TokenResult<()> {
     let envelope = token_envelope(token)?;
-    validate_token_envelope(
-        &envelope,
-        true,
-        time.as_unix_seconds(),
-        limits.clock_skew_tolerance_seconds(),
-    )
-    .map_err(|error| map_envelope_error(error, token.claims.issuer_did()))
+    validate_token_envelope(&envelope, true, time.as_unix_seconds(), limits.clock_skew_tolerance_seconds())
+        .map_err(|error| map_envelope_error(error, token.claims.issuer_did()))
 }
 
 fn map_envelope_error(error: VerifiedPrimitiveError, issuer_did: &str) -> TokenError {
@@ -4321,31 +4358,6 @@ fn proof_reference_inputs(references: &[Vec<u8>]) -> Vec<ucan_core::token::Proof
         .collect()
 }
 
-fn capability_inputs(capabilities: &[CapabilityDocument]) -> Vec<ucan_core::token::CapabilityInput<'_>> {
-    capabilities
-        .iter()
-        .map(|capability| {
-            let caveats: Vec<ucan_core::token::CaveatInput<'_>> = capability
-                .caveats
-                .iter()
-                .map(|caveat| {
-                    ucan_core::token::CaveatInput::new(
-                        caveat.domain.as_str(),
-                        caveat.caveat_type.as_str(),
-                        caveat.key.as_str(),
-                        caveat.payload.as_slice(),
-                    )
-                })
-                .collect();
-            ucan_core::token::CapabilityInput::with_caveats(
-                capability.resource.as_str(),
-                capability.ability.as_str(),
-                caveats.leak(),
-            )
-        })
-        .collect()
-}
-
 fn copy_secret_key(bytes: &[u8]) -> TokenResult<[u8; ED25519_SECRET_KEY_BYTES]> {
     bytes.try_into().map_err(|_| TokenError::InvalidSecretKeyLength { actual: bytes.len() })
 }
@@ -4356,7 +4368,53 @@ fn copy_public_key(bytes: &[u8]) -> TokenResult<[u8; ED25519_PUBLIC_KEY_BYTES]> 
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::GlobalAlloc;
+    use std::alloc::Layout;
     use std::cell::RefCell;
+    use std::sync::atomic::AtomicIsize;
+    use std::sync::atomic::Ordering;
+
+    static LIVE_ALLOCATED_BYTES: AtomicIsize = AtomicIsize::new(0);
+
+    struct CountingAllocator;
+
+    #[
+        allow(
+            unsafe_code, // test-only wrapper around the system allocator for leak accounting
+            clippy::cast_possible_wrap // usize layout sizes are far below isize::MAX on 64-bit test hosts
+        )
+    ]
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            LIVE_ALLOCATED_BYTES.fetch_add(layout.size() as isize, Ordering::Relaxed);
+            // SAFETY: delegated to the system allocator with a validated layout.
+            unsafe { std::alloc::System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            LIVE_ALLOCATED_BYTES.fetch_sub(layout.size() as isize, Ordering::Relaxed);
+            // SAFETY: delegated to the system allocator with the matching layout.
+            unsafe { std::alloc::System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            let new_layout = Layout::from_size_align(new_size, layout.align()).unwrap_or(layout);
+            let new_ptr = unsafe { std::alloc::System.alloc(new_layout) };
+            if new_ptr.is_null() {
+                return new_ptr;
+            }
+            let copy_len = usize::min(layout.size(), new_size);
+            unsafe {
+                std::ptr::copy_nonoverlapping(ptr, new_ptr, copy_len);
+                std::alloc::System.dealloc(ptr, layout);
+            }
+            LIVE_ALLOCATED_BYTES.fetch_add((new_size as isize) - (layout.size() as isize), Ordering::Relaxed);
+            new_ptr
+        }
+    }
+
+    #[global_allocator]
+    static TEST_ALLOCATOR: CountingAllocator = CountingAllocator;
     use std::collections::HashSet;
     use std::io::Write as _;
 
@@ -5894,8 +5952,7 @@ mod tests {
 
     fn boundary_scope_keys() -> KeyResolutionContext {
         KeyResolutionContext::new(vec![
-            Ed25519VerificationKey::from_signing_key(&signing_key(BOUNDARY_ISSUER_BYTE))
-                .expect("key should derive"),
+            Ed25519VerificationKey::from_signing_key(&signing_key(BOUNDARY_ISSUER_BYTE)).expect("key should derive"),
         ])
     }
 
@@ -5916,10 +5973,7 @@ mod tests {
                 &ProofCollection::empty(),
                 VerificationLimits::default(),
             );
-            assert!(
-                result.is_ok(),
-                "default surface must admit the in-grace boundary time {at}"
-            );
+            assert!(result.is_ok(), "default surface must admit the in-grace boundary time {at}");
         }
     }
 
@@ -5972,6 +6026,212 @@ mod tests {
         assert!(matches!(strict_error, TokenError::Temporal { .. }));
     }
 
+    const LEAK_REGRESSION_ISSUER_BYTE: u8 = 31;
+    const LEAK_REGRESSION_AUDIENCE_BYTE: u8 = 37;
+    const LARGE_CAVEAT_PAYLOAD_BYTES: usize = 4_096;
+    const REPEATED_VERIFICATION_COUNT: usize = 4_096;
+    const REPEATED_MULTI_PARENT_VERIFICATION_COUNT: usize = 1_024;
+    const REPEATED_ISSUANCE_COUNT: usize = 1_024;
+    const MAX_RETAINED_GROWTH_BYTES: isize = 64 * 1024;
+
+    fn retained_allocator_bytes() -> isize {
+        LIVE_ALLOCATED_BYTES.load(Ordering::Relaxed)
+    }
+
+    fn assert_repeated_verification_retains_bounded_memory(
+        label: &str,
+        token: &CompactToken,
+        context: &VerificationContext,
+        repetitions: usize,
+    ) {
+        for _ in 0..3 {
+            verify_compact_token(token, context).expect("token should verify");
+        }
+        let before = retained_allocator_bytes();
+        for _ in 0..repetitions {
+            verify_compact_token(token, context).expect("token should verify");
+        }
+        let growth = retained_allocator_bytes() - before;
+        assert!(
+            growth <= MAX_RETAINED_GROWTH_BYTES,
+            "{label}: retained memory grew {growth} bytes across {repetitions} verifications; the leak-free bound is {MAX_RETAINED_GROWTH_BYTES}"
+        );
+    }
+
+    #[test]
+    fn repeated_caveated_verification_retains_bounded_memory() {
+        let issuer_key = signing_key(LEAK_REGRESSION_ISSUER_BYTE);
+        let audience = signing_key(LEAK_REGRESSION_AUDIENCE_BYTE).issuer().expect("audience should derive");
+        let token = issue_token(&issue_request_with_caveat(
+            &issuer_key,
+            AudienceDid::from(audience),
+            ProofCollection::empty(),
+            caveat("rate", "limit", "quota", &[b'x'; LARGE_CAVEAT_PAYLOAD_BYTES]),
+        ))
+        .expect("caveated token should issue");
+        let context = VerificationContext::new(
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            KeyResolutionContext::new(vec![
+                Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
+            ]),
+            ProofCollection::empty(),
+        );
+
+        assert_repeated_verification_retains_bounded_memory(
+            "caveated verification",
+            &token,
+            &context,
+            REPEATED_VERIFICATION_COUNT,
+        );
+    }
+
+    #[test]
+    fn repeated_caveat_free_verification_retains_bounded_memory() {
+        let issuer_key = signing_key(LEAK_REGRESSION_ISSUER_BYTE);
+        let audience = signing_key(LEAK_REGRESSION_AUDIENCE_BYTE).issuer().expect("audience should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let context = VerificationContext::new(
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            KeyResolutionContext::new(vec![
+                Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
+            ]),
+            ProofCollection::empty(),
+        );
+
+        assert_repeated_verification_retains_bounded_memory(
+            "caveat-free verification",
+            &token,
+            &context,
+            REPEATED_VERIFICATION_COUNT,
+        );
+    }
+
+    #[test]
+    fn repeated_single_parent_traversal_retains_bounded_memory() {
+        let parent_key = signing_key(LEAK_REGRESSION_ISSUER_BYTE);
+        let child_key = signing_key(LEAK_REGRESSION_AUDIENCE_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let shared_caveat = caveat("rate", "limit", "quota", &[b'x'; LARGE_CAVEAT_PAYLOAD_BYTES]);
+        let parent = issue_token(&issue_request_with_caveat(
+            &parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+            shared_caveat.clone(),
+        ))
+        .expect("parent should issue");
+        let child = issue_token(&child_request_with_caveat(&child_key, parent.clone(), shared_caveat))
+            .expect("child should issue");
+        let context = verification_context(
+            vec![&parent_key, &child_key],
+            ProofCollection::from_tokens(vec![parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+
+        assert_repeated_verification_retains_bounded_memory(
+            "single-parent traversal",
+            &child,
+            &context,
+            REPEATED_VERIFICATION_COUNT,
+        );
+    }
+
+    #[test]
+    fn repeated_multi_parent_traversal_retains_bounded_memory() {
+        let storage_parent_key = signing_key(LEAK_REGRESSION_ISSUER_BYTE);
+        let audit_parent_key = signing_key(LEAK_REGRESSION_AUDIENCE_BYTE);
+        let child_key = signing_key(CHILD_SECRET_BYTE);
+        let child_issuer = child_key.issuer().expect("child issuer should derive");
+        let shared_caveat = caveat("rate", "limit", "quota", &[b'x'; LARGE_CAVEAT_PAYLOAD_BYTES]);
+        let storage_parent = issue_token(&issue_request_with_caveat(
+            &storage_parent_key,
+            AudienceDid::from(child_issuer.clone()),
+            ProofCollection::empty(),
+            shared_caveat.clone(),
+        ))
+        .expect("first parent should issue");
+        let audit_parent = issue_token(&issue_request_with_caveat(
+            &audit_parent_key,
+            AudienceDid::from(child_issuer),
+            ProofCollection::empty(),
+            shared_caveat.clone(),
+        ))
+        .expect("second parent should issue");
+        let child = issue_token(&IssueRequest::new(
+            child_key.clone(),
+            AudienceDid::from(signing_key(OTHER_SECRET_BYTE).issuer().expect("audience should derive")),
+            CapabilitySet::new(vec![
+                CapabilityDocument::with_caveats(
+                    "did:key:z6Mkresource/photos".to_owned(),
+                    "store/add".to_owned(),
+                    vec![shared_caveat],
+                )
+                .expect("capability with caveat should validate"),
+            ])
+            .expect("capability set should validate"),
+            ProofCollection::from_tokens(vec![storage_parent.clone(), audit_parent.clone()]).into(),
+            TokenTimeBounds::new(CHILD_NOT_BEFORE_SECONDS, CHILD_EXPIRES_AT_SECONDS)
+                .expect("child bounds should validate"),
+        ))
+        .expect("child should issue");
+        let context = verification_context(
+            vec![&storage_parent_key, &audit_parent_key, &child_key],
+            ProofCollection::from_tokens(vec![storage_parent, audit_parent]),
+            VERIFICATION_TIME_SECONDS,
+        );
+
+        assert_repeated_verification_retains_bounded_memory(
+            "multi-parent traversal",
+            &child,
+            &context,
+            REPEATED_MULTI_PARENT_VERIFICATION_COUNT,
+        );
+    }
+
+    #[test]
+    fn repeated_caveated_issuance_retains_bounded_memory() {
+        let signed_issuer = in_memory_signer(LEAK_REGRESSION_ISSUER_BYTE);
+        let signed_audience_key = in_memory_signer(LEAK_REGRESSION_AUDIENCE_BYTE);
+        let auditor_did = AudienceDid::from(signed_audience_key.issuer().expect("audience should derive"));
+        let caps =
+            CapabilitySet::new(vec![
+                CapabilityDocument::with_caveats("did:key:z6Mkresource".to_owned(), "store/*".to_owned(), vec![
+                    caveat("rate", "limit", "quota", &[b'x'; LARGE_CAVEAT_PAYLOAD_BYTES]),
+                ])
+                .expect("capability with caveat should validate"),
+            ])
+            .expect("capability set should validate");
+        let mut last_token_reference = None;
+        for _ in 0..3 {
+            let token = super::issue_token_with_signer(
+                &signed_issuer,
+                &auditor_did,
+                &caps,
+                &super::ProofReferences::empty(),
+                token_time_bounds(),
+            )
+            .expect("token should issue");
+            last_token_reference = Some(proof_reference(&token));
+        }
+        let before = retained_allocator_bytes();
+        for _ in 0..REPEATED_ISSUANCE_COUNT {
+            let token = super::issue_token_with_signer(
+                &signed_issuer,
+                &auditor_did,
+                &caps,
+                &super::ProofReferences::empty(),
+                token_time_bounds(),
+            )
+            .expect("token should issue");
+            last_token_reference = Some(proof_reference(&token));
+        }
+        let growth = retained_allocator_bytes() - before;
+        assert!(
+            growth <= MAX_RETAINED_GROWTH_BYTES,
+            "caveated issuance: retained memory grew {growth} bytes across {REPEATED_ISSUANCE_COUNT} issuances; the leak-free bound is {MAX_RETAINED_GROWTH_BYTES}"
+        );
+        assert!(last_token_reference.is_some());
+    }
     #[test]
     fn self_delegation_is_rejected_directly_and_in_chain() {
         let key = signing_key(ISSUER_SECRET_BYTE);
@@ -6322,12 +6582,9 @@ mod tests {
         let parent_key = signing_key(ISSUER_SECRET_BYTE);
         let child_key = signing_key(CHILD_SECRET_BYTE);
         let child_issuer = child_key.issuer().expect("child issuer should derive");
-        let parent = issue_token(&issue_request(
-            &parent_key,
-            AudienceDid::from(child_issuer),
-            ProofCollection::empty(),
-        ))
-        .expect("parent should issue");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
         let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
         let keys = KeyResolutionContext::new(
             [&parent_key, &child_key]
@@ -6362,12 +6619,9 @@ mod tests {
         let parent_key = signing_key(ISSUER_SECRET_BYTE);
         let child_key = signing_key(CHILD_SECRET_BYTE);
         let child_issuer = child_key.issuer().expect("child issuer should derive");
-        let parent = issue_token(&issue_request(
-            &parent_key,
-            AudienceDid::from(child_issuer),
-            ProofCollection::empty(),
-        ))
-        .expect("parent should issue");
+        let parent =
+            issue_token(&issue_request(&parent_key, AudienceDid::from(child_issuer), ProofCollection::empty()))
+                .expect("parent should issue");
         let child = issue_token(&child_request(&child_key, parent.clone())).expect("child should issue");
         let keys = KeyResolutionContext::new(
             [&parent_key, &child_key]
