@@ -1,6 +1,6 @@
 {
   "projection_schema": "ucan.support-catalog-projection.v1",
-  "catalog_blake3": "d46317f0a99645a40f799fa6644873d785d2af87c8f68d6668bbec4a77bce5ee",
+  "catalog_blake3": "2bd91f2d23540781ded43e409130bb23dd77785ac641a33394f8514edd2c6f25",
   "catalog": {
     "schema": "ucan.support-catalog.v1",
     "report_schema_version": 1,
@@ -13,6 +13,24 @@
         "boundary": "caller owns key custody, key provenance, request policy, and deployment hardening",
         "baseline_level": "controlled-integration-ready",
         "promotion_review": null
+      },
+      {
+        "id": "ucan-wg-1.0.0-authorization",
+        "level": "controlled-integration-ready",
+        "evidence": "pinned final-profile wire fixtures, command and policy matrices, ordered CID-bound Delegation chains, exact executor admission, one replay commit, private live values, and redacted receipt tests pass",
+        "boundary": "callers own key truth, proof transport and availability, executor identity, clock truth, revocation freshness, replay durability, policy completeness, transport security, resource ownership, and effect correctness",
+        "baseline_level": null,
+        "promotion_review": {
+          "from": "unsupported",
+          "to": "controlled-integration-ready",
+          "migration_id": "implement-ucan-1-authorization",
+          "evidence": [
+            "positive-tests",
+            "negative-fail-closed-tests",
+            "operator-evidence",
+            "migration-review"
+          ]
+        }
       },
       {
         "id": "caller-supplied-key-resolution",

@@ -485,13 +485,15 @@ fn baseline_surface_level(id: &str) -> Option<SupportLevel> {
 
 // r[impl ucan.nostr_identity_adapter.support_profile]
 fn promotion_review(id: &str) -> Option<PromotionReview> {
-    if id != "nostr-identity-adapter" {
-        return None;
-    }
+    let (to, migration_id) = match id {
+        "nostr-identity-adapter" => (SupportLevel::Preview, "add-nostr-identity-adapter"),
+        "ucan-wg-1.0.0-authorization" => (SupportLevel::ControlledIntegrationReady, "implement-ucan-1-authorization"),
+        _ => return None,
+    };
     Some(PromotionReview {
         from: SupportLevel::Unsupported,
-        to: SupportLevel::Preview,
-        migration_id: "add-nostr-identity-adapter".to_owned(),
+        to,
+        migration_id: migration_id.to_owned(),
         evidence: REQUIRED_PROMOTION_EVIDENCE.iter().map(ToString::to_string).collect(),
     })
 }
@@ -1378,13 +1380,12 @@ mod tests {
     }
 
     #[test]
-    fn profile_with_final_unsupported_protocol_profile_is_rejected() {
+    fn profile_with_final_protocol_profile_is_admitted() {
         let catalog = support_catalog();
         let mut profile = valid_profile(&catalog);
         profile.protocol_profile = crate::protocol_profile::UCAN_WG_1_0_0.to_owned();
         let report = admit_integration_profile(&catalog, &profile);
-        assert!(!report.valid);
-        assert!(report.issues.iter().any(|issue| issue.code == "unsupported-protocol-profile"));
+        assert!(report.valid, "{:#?}", report.issues);
     }
 
     #[test]

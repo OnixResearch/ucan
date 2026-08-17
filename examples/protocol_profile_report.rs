@@ -1,13 +1,11 @@
-//! Regenerate the pinned UCAN `1.0.0` conformance report with wire-executed
-//! evidence.
+//! Regenerate the pinned UCAN `1.0.0` conformance report with executed wire
+//! and authorization evidence.
 //!
 //! The example reads `fixtures/1.0.0/manifest.json`, recomputes BLAKE3 and
-//! Git blob identities of the local fixture bytes and validates every entry.
-//! For the Delegation and Invocation entries it then executes the profile
-//! wire API against the fixture metadata (project, canonical DAG-CBOR encode,
-//! CID construction, Ed25519 sign and verify) and classifies the row as
-//! `pass`. The policy entry remains `unsupported` because policy and
-//! authorization semantics belong to the authorization slice.
+//! Git blob identities of the local fixture bytes, and validates every entry.
+//! Delegation and Invocation entries execute canonical DAG-CBOR, CID, signing,
+//! and verification paths. The policy entry parses and evaluates all pinned
+//! positive and negative cases before it can pass.
 //!
 //! Run from the repository root:
 //!
@@ -20,17 +18,21 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use ucan::profile::v1 as wire;
+use ucan::profile::v1_authorization::Policy;
 use ucan::protocol_profile::ComputedFixtureFacts;
+use ucan::protocol_profile::ConformanceClass;
 use ucan::protocol_profile::ConformanceReport;
+use ucan::protocol_profile::UCAN_WG_1_0_0;
 use ucan::protocol_profile::Ucan100FixtureManifest;
 use ucan::protocol_profile::classify_conformance_case;
 use ucan::protocol_profile::validate_ucan100_fixture_manifest;
+use ucan_core::profile::v1_authorization::MAX_POLICY_EVALUATION_STEPS;
+use wire::IpldValue;
 use wire::SpecKind;
 
 const FIXTURE_ROOT_RELATIVE: &str = "fixtures/1.0.0";
 const MANIFEST_FILE: &str = "manifest.json";
 const REPORT_FILE: &str = "report.json";
-const POLICY_ID: &str = "policy-json";
 
 #[allow(clippy::too_many_lines)] // the report runner is intentionally linear and explicit
 fn main() -> Result<(), Box<dyn Error>> {
@@ -52,11 +54,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut rows = Vec::new();
     for entry in &manifest.entries {
         let executed = execute_entry(&fixture_root, entry.id.as_str())?;
-        // Only the policy row stays unsupported: its semantics belong to the
-        // authorization slice, not the wire slice.
-        let profile_supported = entry.id != POLICY_ID && executed.valid;
-        let facts_match = executed.facts_match;
-        rows.push(classify_conformance_case(entry, profile_supported, facts_match));
+        let mut row = classify_conformance_case(entry, true, executed.facts_match);
+        UCAN_WG_1_0_0.clone_into(&mut row.profile_id);
+        if !executed.valid {
+            row.class = ConformanceClass::Fail;
+            "executed-case-rejected".clone_into(&mut row.reason_code);
+            "execution".clone_into(&mut row.stage);
+        } else if entry.id == "policy-json" {
+            "executed-with-pinned-json-normalization".clone_into(&mut row.reason_code);
+        }
+        rows.push(row);
     }
 
     let report = ConformanceReport {
@@ -100,10 +107,105 @@ fn execute_entry(root: &Path, id: &str) -> Result<Execution, Box<dyn Error>> {
             let fields = wire::payload_from_json_metadata(SpecKind::Invocation, &value);
             round_trip(&fields, SpecKind::Invocation)
         }
+        "policy-json" => execute_policy_fixture(root),
         _ => Ok(Execution {
             valid: false,
             facts_match: true,
         }),
+    }
+}
+
+fn execute_policy_fixture(root: &Path) -> Result<Execution, Box<dyn Error>> {
+    let source = String::from_utf8(std::fs::read(root.join("policy.json"))?)?;
+    let normalized = normalize_pinned_policy_json(&source)?;
+    let fixture: serde_json::Value = serde_json::from_str(&normalized)?;
+    let valid = fixture.get("valid").and_then(serde_json::Value::as_array).ok_or("policy valid cases")?;
+    let invalid = fixture.get("invalid").and_then(serde_json::Value::as_array).ok_or("policy invalid cases")?;
+
+    for (case_index, case) in valid.iter().enumerate() {
+        let args = ipld_from_json(case.get("args").ok_or("valid policy args")?)?;
+        let policies = ipld_from_json(case.get("policies").ok_or("valid policy list")?)?;
+        let parsed = Policy::parse(&policies).map_err(|error| format!("valid policy parse failed: {error}"))?;
+        let mut budget = MAX_POLICY_EVALUATION_STEPS;
+        if !parsed
+            .satisfied(&args, &mut budget)
+            .map_err(|error| format!("valid policy evaluation failed: {error}"))?
+        {
+            eprintln!("policy valid case {case_index}: DENIED");
+            return Ok(Execution {
+                valid: false,
+                facts_match: true,
+            });
+        }
+    }
+    for (case_index, case) in invalid.iter().enumerate() {
+        let args = ipld_from_json(case.get("args").ok_or("invalid policy args")?)?;
+        let policies = ipld_from_json(case.get("policies").ok_or("invalid policy list")?)?;
+        let parsed = Policy::parse(&policies).map_err(|error| format!("invalid policy parse failed: {error}"))?;
+        let mut budget = MAX_POLICY_EVALUATION_STEPS;
+        if parsed
+            .satisfied(&args, &mut budget)
+            .map_err(|error| format!("invalid policy evaluation failed: {error}"))?
+        {
+            eprintln!("policy invalid case {case_index}: ALLOWED");
+            return Ok(Execution {
+                valid: false,
+                facts_match: true,
+            });
+        }
+    }
+    Ok(Execution {
+        valid: true,
+        facts_match: true,
+    })
+}
+
+fn normalize_pinned_policy_json(source: &str) -> Result<String, Box<dyn Error>> {
+    // The pinned upstream fixture contains one anonymous object wrapper at
+    // lines 86 and 93. Keep the pinned bytes unchanged; remove only those two
+    // exact lines from the in-memory execution projection.
+    const NEWSLETTER_FIELD_LINE_INDEX: usize = 84;
+    const ANONYMOUS_OPEN_LINE_INDEX: usize = 85;
+    const CHRISTMAS_FIELD_LINE_INDEX: usize = 86;
+    const ANONYMOUS_CLOSE_LINE_INDEX: usize = 92;
+    let mut lines = source.lines().collect::<Vec<_>>();
+    if lines.len() <= ANONYMOUS_CLOSE_LINE_INDEX
+        || lines[NEWSLETTER_FIELD_LINE_INDEX].trim() != "\"newsletters\": {"
+        || lines[ANONYMOUS_OPEN_LINE_INDEX].trim() != "{"
+        || lines[CHRISTMAS_FIELD_LINE_INDEX].trim() != "\"christmas\": {"
+        || lines[ANONYMOUS_CLOSE_LINE_INDEX].trim() != "}"
+    {
+        return Err("pinned policy JSON syntax differential changed".into());
+    }
+    lines.remove(ANONYMOUS_CLOSE_LINE_INDEX);
+    lines.remove(ANONYMOUS_OPEN_LINE_INDEX);
+    Ok(lines.join("\n"))
+}
+
+fn ipld_from_json(value: &serde_json::Value) -> Result<IpldValue, Box<dyn Error>> {
+    match value {
+        serde_json::Value::Null => Ok(IpldValue::Null),
+        serde_json::Value::Bool(value) => Ok(IpldValue::Bool(*value)),
+        serde_json::Value::Number(number) => {
+            if let Some(integer) = number.as_i64() {
+                return Ok(IpldValue::Int(integer));
+            }
+            let rendered = number.to_string();
+            let integral = rendered.strip_suffix(".0").ok_or("non-integral policy number")?;
+            Ok(IpldValue::Float(integral.parse()?))
+        }
+        serde_json::Value::String(text) => Ok(IpldValue::Text(text.clone())),
+        serde_json::Value::Array(items) => {
+            let values = items.iter().map(ipld_from_json).collect::<Result<Vec<_>, _>>()?;
+            Ok(IpldValue::List(values))
+        }
+        serde_json::Value::Object(map) => {
+            let values = map
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), ipld_from_json(value)?)))
+                .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            Ok(IpldValue::Map(values))
+        }
     }
 }
 

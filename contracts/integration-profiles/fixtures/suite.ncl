@@ -73,13 +73,13 @@ let Contracts = import "../contracts.ncl" in
     expected_code = "unsupported-option",
   },
   {
-    id = "negative-unsupported-protocol-profile",
-    path = "contracts/integration-profiles/fixtures/negative/unsupported-protocol-profile.ncl",
+    id = "negative-unknown-protocol-profile",
+    path = "contracts/integration-profiles/fixtures/negative/unknown-protocol-profile.ncl",
     profile_path = "",
     kind = "profile",
     expected = "reject",
     expected_stage = "admission",
-    expected_code = "unsupported-protocol-profile",
+    expected_code = "unknown-protocol-profile",
   },
   {
     id = "negative-implicit-preview",

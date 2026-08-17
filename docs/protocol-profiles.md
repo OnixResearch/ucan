@@ -10,13 +10,15 @@ the canonical core. This file preserves the review record and non-claims.
 | Profile ID | State | Behavior |
 |---|---|---|
 | `onix-compact-ed25519-v1` | Supported | Three-part unpadded base64url compact token, Ed25519 EdDSA signature, JSON JWT-style claims, BLAKE3 proof references, repository resource and ability model |
-| `ucan-wg-1.0.0` | Wire slice supported; authorization slice unsupported | DAG-CBOR signing and canonical encoding, Varsig-subset envelope, CIDv1 SHA-256, slash commands, bounded arguments/policy values, nonce, 53-bit time, nullable expiry |
+| `ucan-wg-1.0.0` | Controlled-integration supported | Canonical DAG-CBOR, Ed25519 Varsig subset, CIDv1 SHA-256, bounded slash commands and policy, ordered CID-bound Delegation chains, exact Invocation admission, caller-owned replay, private live values, and redacted receipts |
 
 No profile ID implies another profile. Unknown profile IDs fail closed and
 select no decoder or authority evaluator.
 
-The local profile is not labeled as final UCAN `1.0.0`. The final profile is
-not promoted until positive and negative execution evidence exists.
+The local compact profile is not labeled as final UCAN `1.0.0`. The final
+profile is a separate bounded implementation with positive and negative
+execution evidence. See [UCAN 1.0.0 Authorization](ucan-1-authorization.md)
+for the orchestration and caller-owned boundaries.
 
 ## Pinned sources
 
@@ -45,9 +47,9 @@ Inventory:
 
 | File | Git blob | BLAKE3 | Class | Expected status |
 |---|---|---|---|---|
-| `delegation.json` | `99b84b7c0028edabcae5796bbd0d485f4b7b7b96` | `23ddd201dd206cebacfce06b181916519f5635aa645ab3c71db08703d8ca9db4` | positive | unsupported |
-| `invocation.json` | `2f6e10c8a6016046ad79f0123aa5b6b176bdb2eb` | `01aeb9aa8f82530fd5bc177acd4401aeacd8d72d3301e3df34b78b54efb8c380` | positive | unsupported |
-| `policy.json` | `8f291e0d400e323c3ecdcb91e90e722ca9ea6e46` | `8c2bdedee1be764ee7ef9e5e75fa138287c92979e43c53fc429889f37296e0bc` | positive | unsupported |
+| `delegation.json` | `99b84b7c0028edabcae5796bbd0d485f4b7b7b96` | `23ddd201dd206cebacfce06b181916519f5635aa645ab3c71db08703d8ca9db4` | positive | pass |
+| `invocation.json` | `2f6e10c8a6016046ad79f0123aa5b6b176bdb2eb` | `01aeb9aa8f82530fd5bc177acd4401aeacd8d72d3301e3df34b78b54efb8c380` | positive | pass |
+| `policy.json` | `8f291e0d400e323c3ecdcb91e90e722ca9ea6e46` | `8c2bdedee1be764ee7ef9e5e75fa138287c92979e43c53fc429889f37296e0bc` | positive and negative groups | pass |
 
 Regenerate the manifest-derived report with:
 
@@ -64,29 +66,29 @@ validates every manifest entry, and writes `fixtures/1.0.0/report.json`.
 `unsupported`, or `untested`. It binds the profile, implementation revision,
 upstream revision, fixture identity, stage, reason code, and non-claims.
 
-With the `implement-ucan-1-wire-profile` slice, the Delegation and
-Invocation rows are `pass` (executed by the profile wire API with canonical
-DAG-CBOR, CID construction, and Ed25519 sign/verify round trips). The Policy
-row stays `unsupported` because policy and authorization semantics belong to
-the `implement-ucan-1-authorization` slice. The example
-`cargo run --example protocol_profile_report` regenerates the report
-from the committed manifest and fixtures.
+All three rows are `pass`. Delegation and Invocation execute canonical
+DAG-CBOR, CID construction, and Ed25519 sign/verify round trips. Policy
+executes every pinned positive and negative case through the bounded parser
+and evaluator.
 
-Known limitation: the upstream encoder binary layout is not yet re-derived
-byte-for-byte, so the upstream `token`/`cid` byte parity is a documented
-differential item for a later slice. The profile's own canonical form is
-deterministic and self-consistent, and the pinned CID validates as CIDv1
-DAG-CBOR SHA-256.
+The pinned upstream `policy.json` has one invalid anonymous object wrapper at
+lines 86 and 93. The report generator validates the pinned raw byte identity,
+then removes only those two exact lines from its in-memory execution
+projection. The `executed-with-pinned-json-normalization` reason code records
+this differential. The pinned fixture bytes stay unchanged.
 
-A release claim for `ucan-wg-1.0.0` authorization remains unsupported until
-positive and negative cases have executable evidence in the authorization
-slice.
+The upstream encoder binary layout is not yet re-derived byte-for-byte.
+Therefore, the report does not claim upstream `token` or `cid` byte parity.
+The local canonical form is deterministic and self-consistent. The pinned CID
+validates as CIDv1 DAG-CBOR SHA-256.
 
 ## Non-claims
 
-- No DAG-CBOR parsing or signing exists in this revision.
-- No Varsig envelope or CIDv1 construction exists in this revision.
-- Fixture presence is not interoperability.
+- Passing fixtures do not prove full interoperability or upstream byte parity.
 - `rs-ucan` behavior is advisory, not authority.
-- AWAKE, Promise, Revocation, transport, resolver, and storage belong to later
-  profiles and remain out of scope for `ucan-wg-1.0.0` admission.
+- Callers own key truth, proof transport, executor identity, clock truth,
+  revocation freshness, replay durability, and backend availability.
+- Admission does not prove transport security, global freshness, external
+  resource ownership, policy completeness, or effect correctness.
+- AWAKE, Promise, registry clients, transport, remote resolution, and storage
+  remain outside this bounded profile.

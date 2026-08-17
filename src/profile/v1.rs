@@ -877,6 +877,13 @@ fn cbor_from_json(value: &serde_json::Value) -> Cbor {
     }
 }
 
+/// Project a JSON value to the bounded wire CBOR value used by the profile
+/// payload builders.
+#[must_use]
+pub fn cbor_from_json_value(value: &serde_json::Value) -> Cbor {
+    cbor_from_json(value)
+}
+
 /// Serialize a payload field list back to JSON form for evidence rendering.
 #[must_use]
 pub fn payload_to_json(payload: &[(String, Cbor)]) -> serde_json::Value {

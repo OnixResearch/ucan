@@ -1043,7 +1043,14 @@ mod tests {
 
         assert!(CORE_MANIFEST.contains("peer-auth = ["));
         assert!(CORE_MANIFEST.contains("optional = true"));
-        assert!(ROOT_MANIFEST.contains("ucan-core = { path = \"crates/ucan-core\", default-features = false }"));
+        let root_core_dependency = ROOT_MANIFEST
+            .lines()
+            .find(|line| line.starts_with("ucan-core = "))
+            .expect("root ucan-core dependency");
+        assert_eq!(
+            root_core_dependency,
+            "ucan-core = { path = \"crates/ucan-core\", default-features = false, features = [\"verification-cache\"] }"
+        );
         assert!(!CORE_TOKEN_SOURCE.contains("peer_auth"));
         assert!(!ROOT_LIBRARY_SOURCE.contains("peer_auth"));
         assert!(!ROOT_TOKEN_SOURCE.contains("peer_auth"));

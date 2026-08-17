@@ -24,7 +24,7 @@ const REQUIRED_CASE_IDS: &[&str] = &[
     "negative-proof-transport",
     "negative-unsupported-did",
     "negative-unsupported-signature",
-    "negative-unsupported-protocol-profile",
+    "negative-unknown-protocol-profile",
     "negative-implicit-preview",
     "negative-stale-catalog",
     "negative-production-overclaim",

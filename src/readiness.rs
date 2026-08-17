@@ -163,6 +163,12 @@ const SURFACES: &[ReadinessSurface] = &[
         boundary: "caller owns key custody, key provenance, request policy, and deployment hardening",
     },
     ReadinessSurface {
+        id: "ucan-wg-1.0.0-authorization",
+        level: SupportLevel::ControlledIntegrationReady,
+        evidence: "pinned final-profile wire fixtures, command and policy matrices, ordered CID-bound Delegation chains, exact executor admission, one replay commit, private live values, and redacted receipt tests pass",
+        boundary: "callers own key truth, proof transport and availability, executor identity, clock truth, revocation freshness, replay durability, policy completeness, transport security, resource ownership, and effect correctness",
+    },
+    ReadinessSurface {
         id: "caller-supplied-key-resolution",
         level: SupportLevel::ControlledIntegrationReady,
         evidence: "KeyResolver injection and KeyResolutionContext support deterministic local resolution; backend errors fail closed",

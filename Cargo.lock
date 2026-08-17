@@ -1035,6 +1035,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "hmac",
+ "serde_json",
  "sha2",
  "zeroize",
 ]

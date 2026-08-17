@@ -1,5 +1,5 @@
 let Contracts = import "../../contracts.ncl" in
 ((import "../../profiles/base.ncl") & {
-  id | force = "ucan.negative-unsupported-protocol-profile",
-  protocol_profile = "ucan-wg-1.0.0",
+  id | force = "ucan.negative-unknown-protocol-profile",
+  protocol_profile = "hummingbird-v42",
 }) | Contracts.IntegrationProfile

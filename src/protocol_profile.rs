@@ -150,17 +150,15 @@ pub fn protocol_profile_catalog() -> Vec<ProtocolProfileEntry> {
         },
         ProtocolProfileEntry {
             id: ProtocolProfileId::UcanWg100,
-            support: ProtocolProfileSupport::Unsupported {
-                reason: "DAG-CBOR signing, Varsig envelope, CIDv1 SHA-256 proof references, typed payload tags, subject, slash commands, arguments or policy, nonce, 53-bit time admission, and nullable expiry are not implemented in this revision"
-                    .to_owned(),
-            },
+            support: ProtocolProfileSupport::Supported,
             facts: vec![
-                "DAG-CBOR signing layer".to_owned(),
-                "Varsig envelope".to_owned(),
-                "CIDv1 with SHA-256".to_owned(),
-                "typed payload tags".to_owned(),
-                "subject, slash commands, arguments or policy, nonce".to_owned(),
-                "53-bit time admission and nullable expiry".to_owned(),
+                "canonical DAG-CBOR signing layer and Ed25519 Varsig subset".to_owned(),
+                "CIDv1 with SHA-256 proof references".to_owned(),
+                "typed Delegation and Invocation payload admission".to_owned(),
+                "bounded slash-command attenuation and policy evaluation".to_owned(),
+                "ordered CID-bound Delegation-chain authorization".to_owned(),
+                "caller-owned resolver, proof, revocation, executor, time, and replay facts".to_owned(),
+                "private live authorization and redacted BLAKE3 receipts".to_owned(),
             ],
         },
     ]
@@ -577,15 +575,9 @@ mod tests {
     }
 
     #[test]
-    fn final_ucan100_profile_is_known_but_unsupported() {
+    fn final_ucan100_profile_is_known_and_supported() {
         assert_eq!(ProtocolProfileId::parse_id(UCAN_WG_1_0_0), Some(ProtocolProfileId::UcanWg100));
-        match admit_protocol_profile_id(UCAN_WG_1_0_0) {
-            Err(ProtocolProfileAdmissionError::UnsupportedProfile { id, reason }) => {
-                assert_eq!(id, UCAN_WG_1_0_0);
-                assert!(!reason.is_empty());
-            }
-            other => panic!("the final UCAN 1.0.0 profile must be declined as unsupported, got {other:?}"),
-        }
+        assert!(admit_protocol_profile_id(UCAN_WG_1_0_0).is_ok());
     }
 
     #[test]
