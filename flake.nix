@@ -122,6 +122,15 @@
             }
           );
 
+          # Verify both shared cores remain pinned to one exact admitted Radicle object.
+          durable-authority-source = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "-p ucan --test durable_authority_source";
+            }
+          );
+
           # Format only workspace packages; keep the vendored verified-logic snapshot byte-for-byte.
           fmt = craneLib.cargoFmt (
             commonArgs
@@ -161,7 +170,7 @@
                 version=$(${checkedNickel} --version 2>&1 | head -1)
                 echo "resolved nickel: $version"
                 case "$version" in
-                  *1.17*) exit 0 ;;
+                  *1.17*) : ;;
                   *)
                     echo "older, floating, ambient, or mixed evaluator resolved: $version" >&2
                     exit 1

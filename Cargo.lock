@@ -793,6 +793,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "replay-ledger-core"
+version = "0.1.0"
+source = "git+https://seed.radicle.garden/z3kGDT73ja8rewvGLwJFLF5MTx1ih.git?rev=a0de79303f3f45c18a34fff535b690a85cb3cf59#a0de79303f3f45c18a34fff535b690a85cb3cf59"
+dependencies = [
+ "blake3",
+ "serde",
+]
+
+[[package]]
+name = "revocation-view-core"
+version = "0.1.0"
+source = "git+https://seed.radicle.garden/z3kGDT73ja8rewvGLwJFLF5MTx1ih.git?rev=a0de79303f3f45c18a34fff535b690a85cb3cf59#a0de79303f3f45c18a34fff535b690a85cb3cf59"
+dependencies = [
+ "blake3",
+ "serde",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1019,6 +1037,8 @@ dependencies = [
  "hegeltest",
  "pretty_assertions",
  "proptest",
+ "replay-ledger-core",
+ "revocation-view-core",
  "serde",
  "serde_json",
  "sha2",
