@@ -131,7 +131,7 @@
             }
           );
 
-          # Bind exact BLAKE3 requirements, the lock, and implementation-identity inputs together.
+          # Bind reviewed exact requirements, the lock, and implementation-identity inputs together.
           blake3-identity-posture = craneLib.cargoTest (
             commonArgs
             // {

@@ -46,7 +46,7 @@ snafu = "0.8"
 replay-ledger-core = { git = "https://seed.radicle.garden/z3kGDT73ja8rewvGLwJFLF5MTx1ih.git", rev = "a0de79303f3f45c18a34fff535b690a85cb3cf59" }
 revocation-view-core = { git = "https://seed.radicle.garden/z3kGDT73ja8rewvGLwJFLF5MTx1ih.git", rev = "a0de79303f3f45c18a34fff535b690a85cb3cf59" }
 ucan-core = { path = "crates/ucan-core", default-features = false, features = ["verification-cache"] }
-zeroize = "=1.8.2"
+zeroize = "=1.9.0"
 verified-logic = { path = "vendor/verified-logic" }
 
 [dev-dependencies]
