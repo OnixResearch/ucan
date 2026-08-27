@@ -131,6 +131,15 @@
             }
           );
 
+          # Bind exact BLAKE3 requirements, the lock, and implementation-identity inputs together.
+          blake3-identity-posture = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "-p ucan --test dependency_posture";
+            }
+          );
+
           # Format only workspace packages; keep the vendored verified-logic snapshot byte-for-byte.
           fmt = craneLib.cargoFmt (
             commonArgs
@@ -207,7 +216,10 @@
           dependency-posture =
             pkgs.runCommand "ucan-dependency-posture"
               {
-                nativeBuildInputs = [ rustToolchain pkgs.cargo-deny ];
+                nativeBuildInputs = [
+                  rustToolchain
+                  pkgs.cargo-deny
+                ];
               }
               ''
                 cd ${./.}

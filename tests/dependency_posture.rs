@@ -12,9 +12,13 @@ const NEGATIVE_FIXTURE: &str = include_str!("../cargo-deny/fixtures/negative-mis
 const CARGO_LOCK: &str = include_str!("../Cargo.lock");
 const UCAN_CORE_MANIFEST: &str = include_str!("../crates/ucan-core/Cargo.toml");
 const UCAN_NOSTR_MANIFEST: &str = include_str!("../crates/ucan-nostr/Cargo.toml");
+const UCAN_PEER_AUTH_SOURCE: &str = include_str!("../crates/ucan-core/src/peer_auth.rs");
+const UCAN_NOSTR_CONTEXT_SOURCE: &str = include_str!("../crates/ucan-nostr/src/context.rs");
 
 const REVIEWED_BLAKE3: &str = "=1.8.5";
 const DRIFTED_BLAKE3: &str = "=1.8.4";
+const REVIEWED_BLAKE3_IDENTITY: &str = "blake3@1.8.5";
+const DRIFTED_BLAKE3_IDENTITY: &str = "blake3@1.8.4";
 const ADVISORY_PASTE: &str = "RUSTSEC-2024-0436";
 const ADVISORY_ANYHOW: &str = "RUSTSEC-2026-0190";
 
@@ -23,8 +27,11 @@ fn has_pin_with_reason(text: &str, id: &str) -> bool {
     text.find(&marker).is_some_and(|index| text[index + marker.len()..].contains("reason = \""))
 }
 
-fn blake3_pins_align(core: &str, nostr: &str) -> bool {
-    core.contains(REVIEWED_BLAKE3) && nostr.contains(REVIEWED_BLAKE3)
+fn blake3_cohort_align(core: &str, nostr: &str, peer_auth: &str, nostr_context: &str) -> bool {
+    core.contains(REVIEWED_BLAKE3)
+        && nostr.contains(REVIEWED_BLAKE3)
+        && peer_auth.contains(REVIEWED_BLAKE3_IDENTITY)
+        && nostr_context.contains(REVIEWED_BLAKE3_IDENTITY)
 }
 
 #[test]
@@ -42,16 +49,34 @@ fn workspace_lockfile_still_binds_pinned_crates() {
 }
 
 #[test]
-fn exact_blake3_pins_and_lock_use_one_reviewed_cohort() {
-    assert!(blake3_pins_align(UCAN_CORE_MANIFEST, UCAN_NOSTR_MANIFEST));
+fn exact_blake3_pins_identities_and_lock_use_one_reviewed_cohort() {
+    assert!(blake3_cohort_align(
+        UCAN_CORE_MANIFEST,
+        UCAN_NOSTR_MANIFEST,
+        UCAN_PEER_AUTH_SOURCE,
+        UCAN_NOSTR_CONTEXT_SOURCE,
+    ));
     assert_eq!(CARGO_LOCK.matches("name = \"blake3\"").count(), 1);
     assert!(CARGO_LOCK.contains("version = \"1.8.5\""));
 }
 
 #[test]
-fn exact_blake3_pin_drift_is_rejected() {
-    let drifted = UCAN_NOSTR_MANIFEST.replace(REVIEWED_BLAKE3, DRIFTED_BLAKE3);
-    assert!(!blake3_pins_align(UCAN_CORE_MANIFEST, &drifted));
+fn exact_blake3_manifest_and_identity_drift_are_rejected() {
+    let drifted_manifest = UCAN_NOSTR_MANIFEST.replace(REVIEWED_BLAKE3, DRIFTED_BLAKE3);
+    assert!(!blake3_cohort_align(
+        UCAN_CORE_MANIFEST,
+        &drifted_manifest,
+        UCAN_PEER_AUTH_SOURCE,
+        UCAN_NOSTR_CONTEXT_SOURCE,
+    ));
+
+    let drifted_identity = UCAN_PEER_AUTH_SOURCE.replace(REVIEWED_BLAKE3_IDENTITY, DRIFTED_BLAKE3_IDENTITY);
+    assert!(!blake3_cohort_align(
+        UCAN_CORE_MANIFEST,
+        UCAN_NOSTR_MANIFEST,
+        &drifted_identity,
+        UCAN_NOSTR_CONTEXT_SOURCE,
+    ));
 }
 
 #[test]
