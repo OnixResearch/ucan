@@ -964,6 +964,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "transactional-reconciliation-core"
+version = "0.1.0"
+source = "git+https://seed.radicle.garden/z4Tky6zvC8w4Y6c4YBzNxVbq5n752.git?rev=eb2bd3441753af97bfcb247cef7cc22d72675b62#eb2bd3441753af97bfcb247cef7cc22d72675b62"
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -986,6 +991,7 @@ dependencies = [
  "sha2",
  "snafu",
  "tempfile",
+ "transactional-reconciliation-core",
  "ucan-core",
  "verified-logic",
  "zeroize",

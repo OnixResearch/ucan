@@ -27,6 +27,7 @@ use revocation_view_core::StoredSnapshot;
 use revocation_view_core::UnixTime;
 use revocation_view_core::UpdateDecision;
 use revocation_view_core::plan_update;
+use transactional_reconciliation_core as reconciliation;
 
 use super::DurableAuthorityConfigError;
 use super::DurableAuthorityField;
@@ -54,12 +55,21 @@ const OTHER_REQUEST_BYTE: u8 = 8;
 const SOURCE_BYTE: u8 = 9;
 const REFERENCE_BYTE: u8 = 10;
 const OTHER_REFERENCE_BYTE: u8 = 11;
+const PILOT_SUCCESSOR_BYTE: u8 = 12;
 const CURRENT_TIME_SECONDS: u64 = 100;
 const EFFECTIVE_TIME_SECONDS: u64 = 90;
 const EXPIRY_TIME_SECONDS: u64 = 110;
 const EXPIRED_TIME_SECONDS: u64 = 120;
 const ENTRY_LIMIT: u32 = 8;
 const AUDIENCE: &str = "did:key:z6MkDurableAuthorityPilot";
+
+struct PilotBlake3;
+
+impl reconciliation::Blake3IdentityDeriver for PilotBlake3 {
+    fn derive_identity(&self, framed_bytes: &[u8]) -> Result<reconciliation::Identity, reconciliation::CoreError> {
+        reconciliation::Identity::new(*blake3::hash(framed_bytes).as_bytes())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoryError {
@@ -191,6 +201,43 @@ fn audience() -> AudienceDid {
     AudienceDid::new(AUDIENCE).expect("test audience must be valid")
 }
 
+fn reconciliation_identity(byte: u8) -> Result<reconciliation::Identity, reconciliation::CoreError> {
+    reconciliation::Identity::new([byte; blake3::OUT_LEN])
+}
+
+fn reconciliation_pilot()
+-> Result<(reconciliation::PersistenceBinding, reconciliation::AttemptReservation), reconciliation::CoreError> {
+    let revision = reconciliation::Revision::observed(1);
+    let desired = reconciliation_identity(TENANT_BYTE)?;
+    let policy = reconciliation_identity(OPERATION_BYTE)?;
+    let plan = reconciliation::build_plan(
+        &PilotBlake3,
+        reconciliation::Limits::new(reconciliation::Bound::new(1)?, reconciliation::Bound::new(1)?),
+        reconciliation::PlanningInput::new(revision, desired, policy, Vec::new(), vec![
+            reconciliation::OperationDraft::new(
+                reconciliation_identity(NAMESPACE_BYTE)?,
+                reconciliation_identity(REQUEST_BYTE)?,
+                reconciliation::Generation::observed(1),
+                reconciliation_identity(SOURCE_BYTE)?,
+            ),
+        ]),
+    )?;
+    let current = reconciliation::CurrentFacts::new(revision, desired, policy, Vec::new());
+    let publication =
+        reconciliation::plan_publication(&plan, &current, reconciliation_identity(PILOT_SUCCESSOR_BYTE)?)?;
+    let reservation = reconciliation::reserve_attempt(
+        &plan,
+        plan.operations()[0].idempotency_identity(),
+        reconciliation_identity(ATTEMPT_BYTE)?,
+    )?;
+    let binding = reconciliation::PersistenceBinding::new(
+        publication,
+        reservation,
+        reconciliation_identity(OTHER_REQUEST_BYTE)?,
+    )?;
+    Ok((binding, reservation))
+}
+
 fn reference(byte: u8) -> ProofReference {
     ProofReference::new(vec![byte; revocation_view_core::DIGEST_BYTES])
 }
@@ -318,6 +365,34 @@ fn stale_incomplete_and_unavailable_views_fail_closed() {
     unavailable_port.fail_load.set(true);
     let unavailable = DurableRevocationChecker::new(&unavailable_port, revocation_context(CURRENT_TIME_SECONDS));
     assert!(matches!(unavailable.is_revoked(&reference(REFERENCE_BYTE)), Err(RevocationError::Backend { .. })));
+}
+
+#[test]
+fn exact_durable_authority_publication_admits_dispatch() -> Result<(), reconciliation::CoreError> {
+    let (binding, reservation) = reconciliation_pilot()?;
+    let decision = reconciliation::classify_commit(binding, reconciliation::CommitObservation::Applied(binding));
+    let published = reconciliation::admit_published(decision, reservation)?;
+
+    assert_eq!(decision.state(), reconciliation::PersistenceState::Published);
+    assert_eq!(published.binding().attempt_identity(), reservation.attempt_identity());
+    Ok(())
+}
+
+#[test]
+fn uncertain_durable_authority_publication_denies_dispatch() -> Result<(), reconciliation::CoreError> {
+    let (binding, reservation) = reconciliation_pilot()?;
+    let decision = reconciliation::classify_commit(binding, reconciliation::CommitObservation::OutcomeUnknown);
+
+    assert_eq!(decision.state(), reconciliation::PersistenceState::PublicationUnknown);
+    assert!(matches!(
+        decision.quarantine(),
+        reconciliation::QuarantineStatus::Quarantined(reconciliation::QuarantineReason::CommitOutcomeUnknown)
+    ));
+    assert_eq!(
+        reconciliation::admit_published(decision, reservation),
+        Err(reconciliation::CoreError::PersistenceQuarantined)
+    );
+    Ok(())
 }
 
 #[test]

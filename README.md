@@ -227,6 +227,7 @@ The snapshot records a committed Trellis source revision and preserves its licen
 
 ## References
 
+- [Transactional Reconciliation Core at `eb2bd3441753af97bfcb247cef7cc22d72675b62`](https://seed.radicle.garden/z4Tky6zvC8w4Y6c4YBzNxVbq5n752.git) — exact publication, quarantine, and read-back pilot for durable authority state. UCAN retains replay, revocation, authorization, persistence adapters, and protected-effect authority.
 - [Nostr NIPs at `656cecc7c0a815b6a2b218d3b5d6f078b3f4dbab`](https://github.com/nostr-protocol/nips/tree/656cecc7c0a815b6a2b218d3b5d6f078b3f4dbab) — NIP-01, NIP-42, and NIP-98 interoperability reference. UCAN retains token algorithms, DIDs, and authority boundaries.
 - [BIP-340 and vectors at `c38071c8c45a1fc50cecaac0d82d99e3bbd56911`](https://github.com/bitcoin/bips/tree/c38071c8c45a1fc50cecaac0d82d99e3bbd56911/bip-0340) — x-only secp256k1 signature and test-vector reference.
 - [AeneasVerif/aeneas](https://github.com/AeneasVerif/aeneas) — exact-source Aeneas/Lean proof-pilot reference for selected safe deterministic `ucan-core` functions; any receipt remains property- and source-scoped and does not transfer parser, cryptographic, authorization, interoperability, or whole-system claims.

@@ -51,6 +51,7 @@ verified-logic = { path = "vendor/verified-logic" }
 
 [dev-dependencies]
 hegeltest = "0.2"
+transactional-reconciliation-core = { git = "https://seed.radicle.garden/z4Tky6zvC8w4Y6c4YBzNxVbq5n752.git", rev = "eb2bd3441753af97bfcb247cef7cc22d72675b62" }
 pretty_assertions = "1.0"
 proptest = "1.0"
 tempfile = "3"
