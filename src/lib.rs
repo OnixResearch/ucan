@@ -3,6 +3,7 @@
 
 pub use ucan_core as core;
 
+#[cfg(feature = "durable-authority")]
 pub mod durable_authority;
 pub mod error;
 pub mod integration_profile;
@@ -14,15 +15,25 @@ pub mod token;
 pub mod verification_cache;
 pub mod verified;
 
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableAuthorityConfigError;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableAuthorityField;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableHolderReplayAdmission;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableReplayContext;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableReplayContextInput;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableReplayDurability;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableRevocationChecker;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableRevocationContext;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::DurableRevocationContextInput;
+#[cfg(feature = "durable-authority")]
 pub use durable_authority::durable_revocation_entry_digest;
 pub use error::Error;
 pub use error::Result;

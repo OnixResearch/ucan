@@ -36,6 +36,8 @@
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+        compatibilityToolchain = pkgs.rust-bin.stable."1.95.0".default;
+        compatibilityCrane = (crane.mkLib pkgs).overrideToolchain compatibilityToolchain;
 
         # Keep Cargo sources plus the Aeneas checker's compile-time evidence fixtures.
         proofSource = ./proofs;
@@ -100,6 +102,31 @@
 
         checks = {
           inherit ucan;
+
+          minimal-profile = compatibilityCrane.buildPackage (commonArgs // {
+            cargoArtifacts = null;
+            doCheck = false;
+            installPhase = ''
+              mkdir -p "$out"
+              cp profile.txt "$out/dependencies.txt"
+            '';
+            cargoExtraArgs = "--locked -p ucan --no-default-features --lib";
+            postBuild = ''
+              rustc --version
+              rustc --edition=2024 --test tools/check-minimal-profile.rs -o profile-tests
+              ./profile-tests
+              rustc --edition=2024 tools/check-minimal-profile.rs -o profile-check
+              cargo tree --locked -p ucan --no-default-features --edges normal --prefix none --format '{lib}' > profile.txt
+              ./profile-check < profile.txt
+            '';
+          });
+
+          minimal-tests = craneLib.cargoNextest (commonArgs // {
+            inherit cargoArtifacts;
+            partitions = 1;
+            partitionType = "count";
+            cargoExtraArgs = "--locked -p ucan --no-default-features --lib";
+          });
 
           # Run tests with nextest
           nextest = craneLib.cargoNextest (

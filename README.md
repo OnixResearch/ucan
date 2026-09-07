@@ -112,6 +112,14 @@ Proof material is explicit. A child token carries BLAKE3 proof references in `pr
 
 `KeyResolver`, `ProofStore`, `RevocationChecker`, `ReplayAdmission`, `OperationProfileAdmission`, and `HolderInvocationReplayAdmission` are std-shell injection points only. The crate does not provide built-in HTTP, IPFS, database, filesystem, profile registry, replay persistence, or ambient global lookup. `KeyResolutionContext` implements `KeyResolver`, `ProofCollection` implements `ProofStore`, and `RevocationList` implements `RevocationChecker`. `AllowAllReplayAdmission` preserves audience-only compatibility, but it is not holder proof. Holder-signed verification requires an explicit profile observer and replay commit boundary. These hooks remain consumer-agnostic: Aspen, Basalt, or another caller owns resource/action mapping, request canonicalization, identity trust, envelopes, backend freshness, retry, persistence, and outage policy. `VerificationLimits` bounds token and proof verification. `HolderInvocationLimits` adds reviewed field maxima, a 16,384-byte total canonical limit, and fallible exact allocation. See `docs/verified-boundaries.md` for the audit record.
 
+The default-on `durable-authority` feature exposes the concrete durable-state
+adapters. Select `default-features = false` to omit that module, its root re-exports,
+and its two normal dependency edges. Token and holder verification still require
+explicit replay/revocation services; opting out never installs a permissive fallback.
+The minimal normal library has a pinned Rust 1.95 check. Full default and dev-test
+profiles retain the current owner toolchain and dependency requirements. This is
+feature selection, not a storage, freshness, or authority guarantee.
+
 `DurableHolderReplayAdmission` and `DurableRevocationChecker` are shell composition adapters over the separately published Durable Authority State cores. They use exact Radicle source object `a0de79303f3f45c18a34fff535b690a85cb3cf59`. They keep storage ports, time, tenant, generation, authenticity, recovery, and outage policy caller-owned. See [`docs/durable-authority-state.md`](docs/durable-authority-state.md). Resource containment is byte-prefix matching. The exact rule, the shared-prefix overmatch example, and the delimited resource-construction guidance are in [`docs/authorization-reference.md`](docs/authorization-reference.md).
 
 ```bash

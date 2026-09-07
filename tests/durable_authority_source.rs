@@ -7,7 +7,8 @@ const CARGO_LOCK: &str = include_str!("../Cargo.lock");
 #[test]
 fn both_cores_use_one_exact_radicle_object() {
     for package in ["replay-ledger-core", "revocation-view-core"] {
-        let expected = format!("{package} = {{ git = \"{ADMITTED_ADAPTER}\", rev = \"{REVIEWED_OBJECT}\" }}");
+        let expected =
+            format!("{package} = {{ git = \"{ADMITTED_ADAPTER}\", rev = \"{REVIEWED_OBJECT}\", optional = true }}");
         assert!(CARGO_MANIFEST.contains(&expected), "missing exact source for {package}");
     }
 
