@@ -260,6 +260,7 @@
 
         devShells.default = craneLib.devShell {
           inherit buildInputs;
+          UV_CONSTRAINT = "${./tests/hegel-constraints.txt}";
 
           packages = with pkgs; [
             cargo-fuzz

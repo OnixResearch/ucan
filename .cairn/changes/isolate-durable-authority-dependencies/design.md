@@ -12,6 +12,12 @@ The supported minimal library gets an actual pinned Rust 1.95 check without vers
 bypasses. Dev-only test dependencies can require the current owner compiler, so the
 older-compiler check selects only the normal library, not dev dependencies.
 
-No vendor edit or dependency revision change. Cargo/Nix locks remain generated.
+The full workspace test exposed an unrelated Hegel bootstrap incompatibility:
+hegel-core 0.2.3 uses a private Hypothesis API absent in 6.167.1. Its declared
+minimum 6.148.5 passed the three actual properties. The development shell therefore
+supplies a UV constraint for that test-only Python dependency. Fresh bootstrap
+must pass; no Rust dependency, property assertion or third-party code is changed.
+
+No vendor edit or runtime dependency revision change. Cargo/Nix locks remain generated.
 Default API compatibility does not imply every historical no-default consumer used
 the new opt-out contract. Document the explicit selection and its non-claims.

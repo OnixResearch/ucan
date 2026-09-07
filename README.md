@@ -9,6 +9,12 @@
 The boundary is FCIS-first: the shell gathers bytes and environment state, then hands plain strings and values into `ucan-core`. When a primitive needs verified semantics, the shell bridges validated core values into `verified-logic` instead of reimplementing the logic locally.
 
 The shell crate now carries `serde`, `serde_json`, `base64`, `blake3`, and `snafu` as the correctness-focused foundation for compact-token parsing, strict claim decoding, proof references, and typed error reporting. Property-based integration coverage uses Hegel via the `hegeltest` crate.
+The development shell applies `tests/hegel-constraints.txt` to fresh UV bootstrap.
+Hegel 0.2.3 is tested here with Hypothesis 6.148.5; 6.167.1 causes a server error.
+For an existing incompatible test environment, run
+`uv pip install --python .hegel/venv/bin/python -c tests/hegel-constraints.txt hegel-core==0.2.3`
+inside the development shell. This changes only test infrastructure, not UCAN
+verification or runtime dependencies.
 
 ## End-to-end issue/parse/verify
 

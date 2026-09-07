@@ -16,7 +16,7 @@ r[ucan.durable_profile.selection] UCAN MUST enable durable-authority adapters by
 - THEN caller-provided replay and revocation checks remain required without the concrete durable adapters
 
 ### Requirement: Observed profile compatibility
-r[ucan.durable_profile.verification] Verification MUST cover both library profiles and reject durable libraries in the minimal normal dependency graph. The minimal library SHALL compile on pinned Rust 1.95 without ignoring version requirements. Evidence MUST NOT imply backend durability or production authority.
+r[ucan.durable_profile.verification] Verification MUST cover both library profiles and reject durable libraries in the minimal normal dependency graph. The minimal library SHALL compile on pinned Rust 1.95 without ignoring version requirements. Evidence MUST NOT imply backend durability or production authority. The development property-test bootstrap MUST select a tested compatible Hypothesis version without changing property assertions.
 
 #### Scenario: Minimal compiler
 - GIVEN the selected normal library graph and pinned Rust 1.95
@@ -27,3 +27,8 @@ r[ucan.durable_profile.verification] Verification MUST cover both library profil
 - GIVEN either durable library in a minimal dependency observation
 - WHEN the profile gate runs
 - THEN the gate fails rather than treating command exit alone as acceptance
+
+#### Scenario: Fresh property server
+- GIVEN no cached Hegel version marker and the development-shell constraint
+- WHEN Hegel bootstraps its property server
+- THEN the declared compatible Hypothesis version is installed and all three properties finish
