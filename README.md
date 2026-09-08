@@ -104,6 +104,11 @@ installing default caveat policies or changing opaque shell caveat behavior.
 
 Use `sign_holder_invocation` and `verify_holder_signed_invocation` when a live sender must prove possession of the verified audience key. The borrowed verifier binds the complete bounded token BLAKE3 reference, verified audience DID, resource, ability, fixed operation-profile identity, exact request-binding digest, and fixed nonce in the `ucan/holder-invocation/v1` canonical format. It confirms that the resolved public key encodes the verified audience DID. It then verifies the audience signature before non-consuming profile and caveat observations. It calls `HolderInvocationReplayAdmission` once as the final state-consuming commit point and returns a private-construction, non-serde, non-clone `HolderInvocationAuthorized` value.
 
+For an ongoing operation, `recheck_holder_authorization` borrows the original live
+holder authorization and rechecks the same token, proofs, revocation, profile,
+and caveats without a replay port. Its borrowed observation is not another
+invocation or continuous authority. See [the recheck boundary](docs/holder-authorization-recheck.md).
+
 `OperationBinding` lets Basalt map its closed action enum to a stable `OperationProfileId` and exact `RequestBindingDigest`. UCAN does not interpret downstream action or request semantics. Profile and caveat checks must not spend quota or mutate admission state. Consumers must apply consumptive rate limits and execution effects in a separate downstream atomic boundary after UCAN success.
 
 ```bash
