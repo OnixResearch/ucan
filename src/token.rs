@@ -1436,6 +1436,68 @@ pub trait KeyResolver {
     fn resolve_key(&self, issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError>;
 }
 
+/// Root-authority admission failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootIssuerAdmissionError {
+    /// The issuer is not trusted to originate authority.
+    Untrusted,
+    /// The caller-owned trust backend could not answer.
+    Backend { message: String },
+}
+
+impl fmt::Display for RootIssuerAdmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Untrusted => formatter.write_str("root issuer is not trusted to originate authority"),
+            Self::Backend { message } => write!(formatter, "root issuer admission backend failed: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for RootIssuerAdmissionError {}
+
+/// Caller-owned decision about which issuers may sign proof-less tokens.
+///
+/// This is separate from [`KeyResolver`]: a resolver answers "which key signed
+/// this", and must also resolve holder and intermediate delegator keys. Being
+/// resolvable must never imply root authority.
+pub trait RootIssuerAdmission {
+    /// Admit `issuer` as the origin of a proof-less token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RootIssuerAdmissionError`] when `issuer` may not originate authority.
+    fn admit_root_issuer(&self, issuer: &IssuerDid) -> std::result::Result<(), RootIssuerAdmissionError>;
+}
+
+/// A fixed, explicit set of trusted root issuers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrustedRootIssuers {
+    issuers: Vec<IssuerDid>,
+}
+
+impl TrustedRootIssuers {
+    #[must_use]
+    pub const fn new(issuers: Vec<IssuerDid>) -> Self {
+        Self { issuers }
+    }
+
+    #[must_use]
+    pub const fn as_slice(&self) -> &[IssuerDid] {
+        self.issuers.as_slice()
+    }
+}
+
+impl RootIssuerAdmission for TrustedRootIssuers {
+    fn admit_root_issuer(&self, issuer: &IssuerDid) -> std::result::Result<(), RootIssuerAdmissionError> {
+        if self.issuers.contains(issuer) {
+            Ok(())
+        } else {
+            Err(RootIssuerAdmissionError::Untrusted)
+        }
+    }
+}
+
 /// A proof token returned by a caller-owned proof store.
 ///
 /// Borrowed values avoid token copies. Owned values retain zeroizing ownership.
@@ -2473,6 +2535,7 @@ pub struct EffectiveDelegation {
 struct EffectiveDelegationEvaluation {
     effective: EffectiveDelegation,
     parent_proof_transcript: Option<LiveProofTraversalTranscript>,
+    parent_root_issuers: Vec<IssuerDid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2503,9 +2566,39 @@ pub struct VerifiedToken {
     proofs: ProofReferences,
     effective: EffectiveDelegation,
     proof_transcript: Option<LiveProofTraversalTranscript>,
+    root_issuers: Vec<IssuerDid>,
 }
 
 impl VerifiedToken {
+    /// Issuers of every proof-less token in the verified delegation graph.
+    ///
+    /// A token with no proofs claims authority directly. Signature and key
+    /// resolution only prove who signed it, not that the signer may originate
+    /// authority. Callers must admit each root issuer, for example with
+    /// [`VerifiedToken::admit_root_issuers`].
+    #[must_use]
+    pub const fn root_issuers(&self) -> &[IssuerDid] {
+        self.root_issuers.as_slice()
+    }
+
+    /// Require every root issuer of the verified graph to pass `roots`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`RootIssuerAdmissionError`] reported by `roots`.
+    pub fn admit_root_issuers(
+        &self,
+        roots: &(impl RootIssuerAdmission + ?Sized),
+    ) -> std::result::Result<(), RootIssuerAdmissionError> {
+        if self.root_issuers.is_empty() {
+            return Err(RootIssuerAdmissionError::Untrusted);
+        }
+        for issuer in &self.root_issuers {
+            roots.admit_root_issuer(issuer)?;
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub const fn issuer(&self) -> &IssuerDid {
         &self.issuer
@@ -3168,6 +3261,11 @@ where
         time_bounds,
         evaluation.parent_proof_transcript.as_ref(),
     )?;
+    let root_issuers = if proofs.as_slice().is_empty() {
+        vec![issuer.clone()]
+    } else {
+        evaluation.parent_root_issuers
+    };
     let verified = VerifiedToken {
         issuer,
         audience,
@@ -3175,6 +3273,7 @@ where
         proofs,
         effective: evaluation.effective,
         proof_transcript,
+        root_issuers,
     };
     verify_live_dag_proof_transcript(&verified, time, limits)?;
     Ok(verified)
@@ -3206,6 +3305,7 @@ where
                 time_bounds,
             },
             parent_proof_transcript: None,
+            parent_root_issuers: Vec::new(),
         });
     }
     let parent_tokens =
@@ -3219,6 +3319,7 @@ where
             time_bounds: effective_time,
         },
         parent_proof_transcript: parent_proof_transcript(parent_tokens.as_slice()),
+        parent_root_issuers: parent_root_issuers(parent_tokens.as_slice()),
     })
 }
 
@@ -3365,6 +3466,16 @@ fn parent_effective_capabilities(parents: &[VerifiedToken]) -> Vec<CapabilityDoc
         .iter()
         .flat_map(|parent| parent.effective_delegation().capabilities().as_slice().iter().cloned())
         .collect()
+}
+
+fn parent_root_issuers(parents: &[VerifiedToken]) -> Vec<IssuerDid> {
+    let mut roots: Vec<IssuerDid> = Vec::new();
+    for root in parents.iter().flat_map(|parent| parent.root_issuers.iter()) {
+        if !roots.contains(root) {
+            roots.push(root.clone());
+        }
+    }
+    roots
 }
 
 fn parent_proof_transcript(parents: &[VerifiedToken]) -> Option<LiveProofTraversalTranscript> {
@@ -5279,6 +5390,7 @@ mod tests {
                 time_bounds: token_time_bounds(),
             },
             proof_transcript: None,
+            root_issuers: vec![IssuerDid::new("did:key:z6Mkissuer").expect("issuer should validate")],
         };
         assert_eq!(verified.capabilities().as_slice(), capabilities("did:key:z6Mkresource", "store/*").as_slice());
 
