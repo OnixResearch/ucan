@@ -24,6 +24,8 @@ use super::KeyResolver;
 use super::KeyResolverError;
 use super::ProofStore;
 use super::RevocationChecker;
+use super::RootIssuerAdmission;
+use super::RootIssuerAdmissionError;
 use super::SignerError;
 use super::SignerSignature;
 use super::TokenError;
@@ -541,21 +543,29 @@ impl<'a> HolderTokenVerificationContext<'a> {
 pub struct HolderInvocationPolicyContext<'a> {
     caveats: &'a dyn CaveatPolicySet,
     profiles: &'a dyn OperationProfileAdmission,
+    roots: &'a dyn RootIssuerAdmission,
     replay: &'a dyn HolderInvocationReplayAdmission,
     limits: HolderInvocationLimits,
 }
 
 impl<'a> HolderInvocationPolicyContext<'a> {
+    /// Build the non-consuming policies and the final replay commit.
+    ///
+    /// `roots` decides which issuers may sign proof-less tokens. The key
+    /// resolver must also resolve holder keys, so resolvability alone never
+    /// grants root authority.
     #[must_use]
     pub const fn new(
         caveats: &'a dyn CaveatPolicySet,
         profiles: &'a dyn OperationProfileAdmission,
+        roots: &'a dyn RootIssuerAdmission,
         replay: &'a dyn HolderInvocationReplayAdmission,
         limits: HolderInvocationLimits,
     ) -> Self {
         Self {
             caveats,
             profiles,
+            roots,
             replay,
             limits,
         }
@@ -659,6 +669,7 @@ pub enum HolderInvocationError {
     Limit { source: HolderInvocationLimitError },
     Token { source: TokenError },
     Authorization { reason: AuthorizationDenialReason },
+    RootIssuer { source: RootIssuerAdmissionError },
     KeyResolution { source: KeyResolverError },
     ResolvedAudienceKeyMismatch,
     Signer { source: SignerError },
@@ -677,6 +688,7 @@ impl fmt::Display for HolderInvocationError {
             Self::Limit { source } => write!(formatter, "holder invocation limit failed: {source}"),
             Self::Token { source } => write!(formatter, "compact token verification failed: {source}"),
             Self::Authorization { reason } => write!(formatter, "audience capability authorization failed: {reason:?}"),
+            Self::RootIssuer { source } => write!(formatter, "root issuer admission failed: {source}"),
             Self::KeyResolution { source } => write!(formatter, "audience key resolution failed: {source}"),
             Self::ResolvedAudienceKeyMismatch => {
                 formatter.write_str("resolved audience public key does not encode the verified audience DID")
@@ -707,6 +719,7 @@ impl std::error::Error for HolderInvocationError {
             Self::OperationProfile { source } => Some(source),
             Self::SignaturePrimitive { source } => Some(source),
             Self::Replay { source } => Some(source),
+            Self::RootIssuer { source } => Some(source),
             Self::Authorization { .. }
             | Self::ResolvedAudienceKeyMismatch
             | Self::SignerAudienceMismatch
@@ -756,8 +769,8 @@ where
 /// Verify one borrowed holder-signed invocation through explicit injected boundaries.
 ///
 /// Token verification completes before request canonicalization. The fixed
-/// order is token verification, bounds and canonicalization, audience signature,
-/// non-consuming profile admission, non-consuming capability and caveat policy,
+/// order is token verification, root-issuer admission, bounds and canonicalization, audience
+/// signature, non-consuming profile admission, non-consuming capability and caveat policy,
 /// prebuilt success, and one replay commit. No work occurs after replay accepts.
 /// Profile truth, replay truth, downstream action semantics, and execution remain caller-owned.
 ///
@@ -779,6 +792,9 @@ pub fn verify_holder_signed_invocation(
         token_context.limits,
     )
     .map_err(|source| HolderInvocationError::Token { source })?;
+    verified
+        .admit_root_issuers(policy_context.roots)
+        .map_err(|source| HolderInvocationError::RootIssuer { source })?;
 
     let token_reference = token_reference(request.compact_token);
     let canonical = canonical_request(
@@ -1288,14 +1304,26 @@ mod tests {
                 self.revocations,
                 self.token_limits,
             );
-            let policy_context =
-                HolderInvocationPolicyContext::new(self.caveats, self.profiles, self.replay, self.holder_limits);
+            let roots = trusted_roots();
+            let policy_context = HolderInvocationPolicyContext::new(
+                self.caveats,
+                self.profiles,
+                &roots,
+                self.replay,
+                self.holder_limits,
+            );
             verify_holder_signed_invocation(request, &token_context, &policy_context)
         }
     }
 
     fn signer(byte: u8) -> Ed25519InMemorySigner {
         Ed25519InMemorySigner::from_seed_bytes([byte; ED25519_SECRET_KEY_BYTES])
+    }
+
+    /// Only the fixture issuer may originate authority; holder and delegate
+    /// keys are resolvable but are not roots.
+    fn trusted_roots() -> crate::TrustedRootIssuers {
+        crate::TrustedRootIssuers::new(vec![signer(ISSUER_KEY_BYTE).issuer().expect("issuer DID must derive")])
     }
 
     fn direct_capability() -> CapabilityDocument {
@@ -1398,6 +1426,75 @@ mod tests {
         assert_eq!(authorized.token_reference().as_bytes(), blake3::hash(fixture.token.as_str().as_bytes()).as_bytes());
         assert_eq!(profiles.calls.get(), 1);
         assert_eq!(replay.calls.get(), 1);
+    }
+
+    #[test]
+    fn resolvable_non_root_key_cannot_originate_holder_authority() {
+        // The delegate is resolvable (it signs real delegations) but is not a
+        // trusted root. A proof-less token it signs must not reach the holder
+        // signature check, profile admission, or replay.
+        let delegate = signer(DELEGATE_KEY_BYTE);
+        let holder = signer(HOLDER_KEY_BYTE);
+        let audience = AudienceDid::from(holder.issuer().expect("holder DID must derive"));
+        let forged = issue_token_with_signer(
+            &delegate,
+            &audience,
+            &CapabilitySet::new(vec![direct_capability()]).expect("forged capability set must validate"),
+            &ProofReferences::empty(),
+            test_time_bounds(),
+        )
+        .expect("forged token must issue");
+        let keys = KeyResolutionContext::new(vec![
+            signer(ISSUER_KEY_BYTE).verification_key().expect("issuer verification key must derive"),
+            delegate.verification_key().expect("delegate verification key must derive"),
+            holder.verification_key().expect("holder verification key must derive"),
+        ]);
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = RecordingReplay::default();
+        let signature = sign_request(&forged, &audience, RESOURCE, ABILITY, operation(), nonce(), &holder);
+        let verifier = TestVerifier {
+            time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            keys: &keys,
+            proofs: &proofs,
+            revocations: &revocations,
+            profiles: &profiles,
+            replay: &replay,
+            caveats: &DenyUnknownCaveats,
+            token_limits: VerificationLimits::default(),
+            holder_limits: HolderInvocationLimits::default(),
+        };
+        let request =
+            HolderInvocationRequest::new(forged.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+
+        let error = verifier.verify(&request).expect_err("non-root issuer must not originate authority");
+
+        assert!(matches!(error, HolderInvocationError::RootIssuer {
+            source: crate::RootIssuerAdmissionError::Untrusted
+        }));
+        assert_eq!(profiles.calls.get(), 0);
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn delegated_chain_reports_its_root_issuer() {
+        let fixture = DelegatedFixture::new();
+        let verified = crate::verify_compact_token_str_with_resolvers(
+            fixture.token.as_str(),
+            VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            &fixture.keys,
+            &fixture.proofs,
+            VerificationLimits::default(),
+        )
+        .expect("delegated token must verify");
+
+        assert_eq!(verified.root_issuers(), trusted_roots().as_slice());
+        assert!(verified.admit_root_issuers(&trusted_roots()).is_ok());
+        assert_eq!(
+            verified.admit_root_issuers(&crate::TrustedRootIssuers::default()),
+            Err(crate::RootIssuerAdmissionError::Untrusted)
+        );
     }
 
     #[test]
@@ -1525,9 +1622,11 @@ mod tests {
             &revocations,
             VerificationLimits::default(),
         );
+        let roots = trusted_roots();
         let policy_context = HolderInvocationPolicyContext::new(
             &DenyUnknownCaveats,
             &profiles,
+            &roots,
             &replay,
             HolderInvocationLimits::default(),
         );

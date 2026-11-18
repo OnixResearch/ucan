@@ -32,6 +32,7 @@ use ucan::ProofReferences;
 use ucan::RequestBindingDigest;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
+use ucan::TrustedRootIssuers;
 use ucan::VerificationLimits;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
@@ -130,6 +131,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_SECONDS)?,
     )?;
     let keys = KeyResolutionContext::new(vec![issuer.verification_key()?, audience_key.verification_key()?]);
+    // The resolver also holds the holder's key; only the issuer may sign root tokens.
+    let roots = TrustedRootIssuers::new(vec![issuer.issuer()?]);
     let proofs = ProofCollection::empty();
     let revocations = NoRevocations;
     let policies = ExamplePolicies {
@@ -160,7 +163,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         VerificationLimits::default(),
     );
     let policy_context =
-        HolderInvocationPolicyContext::new(&policies, &profiles, &replay, HolderInvocationLimits::default());
+        HolderInvocationPolicyContext::new(&policies, &profiles, &roots, &replay, HolderInvocationLimits::default());
     let request = HolderInvocationRequest::new(token.as_str(), RESOURCE, ABILITY, operation, nonce, &signature);
     let authorized = verify_holder_signed_invocation(&request, &token_context, &policy_context)?;
 

@@ -37,6 +37,7 @@ impl super::TestVerifier<'_> {
             &crate::HolderRecheckPolicies {
                 caveats: self.caveats,
                 profiles: self.profiles,
+                roots: &super::trusted_roots(),
             },
         )
     }
@@ -161,6 +162,7 @@ fn substitution_regression_and_size_fail_before_external_services() {
             &crate::HolderRecheckPolicies {
                 caveats: &crate::token::DenyUnknownCaveats,
                 profiles: &profiles,
+                roots: &super::trusted_roots(),
             },
         );
         assert!(result.is_err());
@@ -303,5 +305,37 @@ fn changed_profile_or_caveat_denies_original_operation() {
         Err(crate::HolderRecheckError::Verification(crate::HolderInvocationError::OperationProfile { .. }))
     ));
     assert_eq!(events.borrow().len(), calls);
+    assert_eq!(replay.calls.get(), 1);
+}
+
+#[test]
+fn withdrawn_root_trust_ends_observation_before_profile_and_replay() {
+    let fixture = super::DirectFixture::new();
+    let proofs = crate::ProofCollection::empty();
+    let profiles = super::KnownProfile::new(super::profile());
+    let replay = super::RecordingReplay::default();
+    let verifier = verifier(&fixture.keys, &proofs, &profiles, &replay, &crate::token::DenyUnknownCaveats);
+    let authorized = admit_direct(&fixture, &verifier).expect("initial holder admission");
+    let result = crate::recheck_holder_authorization(
+        &authorized,
+        fixture.token.as_str(),
+        &crate::HolderTokenVerificationContext::new(
+            verifier.time,
+            verifier.keys,
+            verifier.proofs,
+            verifier.revocations,
+            verifier.token_limits,
+        ),
+        &crate::HolderRecheckPolicies {
+            caveats: &crate::token::DenyUnknownCaveats,
+            profiles: &profiles,
+            roots: &crate::TrustedRootIssuers::default(),
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(crate::HolderRecheckError::Verification(crate::HolderInvocationError::RootIssuer { .. }))
+    ));
+    assert_eq!(profiles.calls.get(), 1);
     assert_eq!(replay.calls.get(), 1);
 }
