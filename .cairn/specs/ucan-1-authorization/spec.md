@@ -68,6 +68,13 @@ r[ucan.v1_authorization.chain] UCAN MUST compose Invocation proof chains in decl
 - WHEN chain composition runs
 - THEN it MUST reject the chain
 
+#### Scenario: Root issuer is not the subject
+
+- GIVEN the root Delegation names a subject other than its own issuer
+- WHEN chain composition runs
+- THEN it MUST reject the chain as a root substitution
+- AND it MUST NOT call replay admission
+
 ### Requirement: Proof stores bind returned Delegations
 
 r[ucan.v1_authorization.proof_store] The shell MUST request Delegations by typed CID and MUST recompute and compare each returned token CID before using it. Resolution MUST remain caller-owned and bounded.
