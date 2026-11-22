@@ -15,8 +15,8 @@ enforce the recorded result.
 - Advisory database: RustSec `advisory-db` revision
   `55e1c3dfbd834237a05bbbf7b50ba3b5be27b662`.
 - Result: zero exploitable vulnerabilities in the locked dependency set at
-  the assessment revision. `cargo audit` reports no vulnerability; its two
-  warnings are listed below.
+  the assessment revision. `cargo audit` reports no vulnerability. Its two
+  warnings are `RUSTSEC-2024-0436` and `RUSTSEC-2026-0486`, listed below.
 
 ## Resolved advisory
 
@@ -27,35 +27,29 @@ enforce the recorded result.
   `k256 0.14.0`, which resolves `crypto-bigint 0.7.11`. The advisory left
   the locked graph; it is not pinned in `deny.toml`.
 
-## Applicable advisories
+## Advisory status at the 2026-11-22 audit
 
-The audit found two applicable advisories. Both are pinned with an explicit
-non-exploitable rationale in `deny.toml`:
+These results use advisory-db revision `55e1c3df`:
 
-- `RUSTSEC-2024-0436` (`paste`): the crate is unmaintained, but it is a
-  dev-only dependency reached through `hegeltest`. No runtime path uses it.
-- `RUSTSEC-2026-0190` (`anyhow`): the `downcast_mut` unsoundness reaches only
-  the vendored `repo_index` tooling module. That module uses `chain()` and
-  never calls `downcast_mut`.
+- `RUSTSEC-2024-0436` (`paste 1.0.15`, unmaintained): applies, and it is
+  pinned in `deny.toml`. It is a dev-only dependency reached through
+  `hegeltest`; no runtime path uses it.
+- `RUSTSEC-2026-0190` (`anyhow` `downcast_mut` unsoundness): not encountered.
+  The lock resolves `anyhow 1.0.104`, so `cargo-deny` reports the pin as
+  unused. The pin stays in `deny.toml` only because
+  `tools/check-dependency-posture.rs` requires it. Its original rationale
+  still describes the earlier exposure: the vendored `repo_index` tooling
+  module uses `chain()` and never calls `downcast_mut`.
+- `RUSTSEC-2026-0486` (`rustix 1.1.4`, unsound xattr buffer handling):
+  applies, and it is open. It is not pinned. It is reached only through the
+  dev-only `tempfile` dependency of `hegeltest`, `proptest`, and the root
+  test suite. `cargo-deny check advisories -D warnings` reports it.
 
-The policy pins both applicable advisories with an explicit rationale.
 `cargo-deny check advisories -D warnings` treats any unpinned applicable
-advisory as an error. The license allow list covers the workspace licenses.
-
-## Open findings outside the pinned set
-
-The 2026-11-22 audit also reported two items that predate this change and
-are not addressed by it:
-
-- `RUSTSEC-2026-0486` (`rustix 1.1.4`, unsound xattr buffer handling): it is
-  reached only through the dev-only `tempfile` dependency of `hegeltest`,
-  `proptest`, and the root test suite. It is not pinned, so
-  `cargo-deny check advisories -D warnings` still reports it.
-- `RUSTSEC-2026-0190`: the lock now resolves `anyhow 1.0.104`, and
-  `cargo-deny` reports the pin as not encountered. The pin stays because the
-  posture gate requires it.
-
-Each item needs its own reviewed policy change.
+advisory as an error, so the open `rustix` finding fails that scan until a
+reviewed policy change pins or removes it. Dropping the stale `anyhow` pin
+also needs a reviewed change to the posture checker. The license allow list
+covers the workspace licenses.
 
 ## Enforcement
 

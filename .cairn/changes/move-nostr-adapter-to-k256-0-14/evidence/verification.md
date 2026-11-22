@@ -26,6 +26,17 @@ The Nostr implementation-identity input in `crates/ucan-nostr/src/context.rs` no
 
 No UCAN fixture, test, document, or Nickel contract pinned the old label or hash, so no other pinned value changed.
 
+## BIP-340 verification vectors
+
+`k256 0.14` computes R in verification on a different, variable-time wNAF path. `crates/ucan-nostr/src/tests.rs` now runs all 19 verification rows of `https://raw.githubusercontent.com/bitcoin/bips/c38071c8c45a1fc50cecaac0d82d99e3bbd56911/bip-0340/test-vectors.csv` (SHA-256 `34c9d1d9c3a88d524bc80778540dc43f8306ec249a7485293063c376db851c2d`) through `verify_bip340_message`. A script outside the repository compared the test table with the downloaded file: every public key, message, signature, published result, and comment matches verbatim.
+
+All 19 vectors produce their published results. Vectors 0–4 and 15–18 are accepted, including the 0-, 1-, 17-, and 100-byte messages. The rejections map to typed issues as follows:
+
+- vectors 5 and 14 (public key not on the curve, or at least the field size): `InvalidPublicKeyPoint`;
+- vectors 12 and 13 (`r` equal to the field size, `s` equal to the group order): `InvalidSignatureEncoding`;
+- vectors 6, 7, and 8 (odd R, negated message, negated `s`): `SignatureInvalid`;
+- vectors 9, 10, and 11 (`r` = 0, `r` = 1, `r` not an x coordinate): the test requires one of the two signature issues, because the curve library decides which stage rejects a degenerate `r`. `k256 0.14.0` currently returns `InvalidSignatureEncoding` for vector 9 and `SignatureInvalid` for vectors 10 and 11.
+
 ## Checks
 
 All of these exited 0 after the identity change:

@@ -11,7 +11,7 @@ The review used these exact sources:
 | `nostr-protocol/nips` | `656cecc7c0a815b6a2b218d3b5d6f078b3f4dbab` | NIP-01, NIP-42, and NIP-98 | The pinned `README.md` states that all NIPs are public domain. |
 | `bitcoin/bips` | `c38071c8c45a1fc50cecaac0d82d99e3bbd56911` | BIP-340 and `bip-0340/test-vectors.csv` | BIP-340 states `BSD-2-Clause`; its code and vectors offer `BSD-2-Clause OR MIT OR CC0-1.0`. Test-vector literals use the CC0-1.0 option. |
 
-The focused test uses BIP-340 vectors 0 and 5. It also creates signed NIP-01 events for each supported authentication profile.
+The focused test runs every BIP-340 verification vector, indices 0 through 18, from the pinned `bip-0340/test-vectors.csv` (SHA-256 `34c9d1d9c3a88d524bc80778540dc43f8306ec249a7485293063c376db851c2d`). Each vector must produce its published accept or reject result. Rejections must also produce the expected typed issue: an invalid public key gives `InvalidPublicKeyPoint`, an out-of-range `r` or `s` gives `InvalidSignatureEncoding`, and a failed verification equation gives `SignatureInvalid`. For a degenerate `r` (vectors 9 to 11), the test accepts either signature issue, because the curve library decides which stage rejects it. The test also creates signed NIP-01 events for each supported authentication profile.
 
 ## Dependency evidence
 
