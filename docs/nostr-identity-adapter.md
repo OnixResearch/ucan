@@ -19,7 +19,7 @@ The focused test uses BIP-340 vectors 0 and 5. It also creates signed NIP-01 eve
 
 | Package | Version | Registry checksum | License |
 |---|---:|---|---|
-| `k256` | `0.13.4` | `f6e3919bbaa2945715f0bb6d3934a173d1e9a59ac23767fbaaef277265a7411b` | `Apache-2.0 OR MIT` |
+| `k256` | `0.14.0` | `93f50113171a713f4a4231ef82eb26703607139b35dcb56241f0ceab2ae1f7d8` | `Apache-2.0 OR MIT` |
 | `sha2` | `0.10.9` | `a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283` | `MIT OR Apache-2.0` |
 | `blake3` | `1.8.5` | `0aa83c34e62843d924f905e0f5c866eb1dd6545fc4d719e803d9ba6030371fce` | `CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception` |
 | `serde_json` | `1.0.149` | `83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86` | `MIT OR Apache-2.0` |

@@ -8,11 +8,24 @@ enforce the recorded result.
 
 ## Assessment
 
-- Assessment date: 2026-08-16
+- Assessment date: 2026-11-22
 - Assessment basis: the committed `Cargo.lock` at the change revision
-  integrated as `track-dependency-posture`.
+  integrated as `move-nostr-adapter-to-k256-0-14`. The original audit
+  (2026-08-16, `track-dependency-posture`) set the policy below.
+- Advisory database: RustSec `advisory-db` revision
+  `55e1c3dfbd834237a05bbbf7b50ba3b5be27b662`.
 - Result: zero exploitable vulnerabilities in the locked dependency set at
-  the assessment revision.
+  the assessment revision. `cargo audit` reports no vulnerability; its two
+  warnings are listed below.
+
+## Resolved advisory
+
+- `RUSTSEC-2026-0387` (`crypto-bigint`): timing variability in operations
+  intended to be constant-time; patched in `0.7.6`. Before this change,
+  `k256 0.13.4` was the only path to `crypto-bigint 0.5.5`, through
+  `elliptic-curve 0.13.8`. The Nostr adapter now requires exact
+  `k256 0.14.0`, which resolves `crypto-bigint 0.7.11`. The advisory left
+  the locked graph; it is not pinned in `deny.toml`.
 
 ## Applicable advisories
 
@@ -29,13 +42,29 @@ The policy pins both applicable advisories with an explicit rationale.
 `cargo-deny check advisories -D warnings` treats any unpinned applicable
 advisory as an error. The license allow list covers the workspace licenses.
 
+## Open findings outside the pinned set
+
+The 2026-11-22 audit also reported two items that predate this change and
+are not addressed by it:
+
+- `RUSTSEC-2026-0486` (`rustix 1.1.4`, unsound xattr buffer handling): it is
+  reached only through the dev-only `tempfile` dependency of `hegeltest`,
+  `proptest`, and the root test suite. It is not pinned, so
+  `cargo-deny check advisories -D warnings` still reports it.
+- `RUSTSEC-2026-0190`: the lock now resolves `anyhow 1.0.104`, and
+  `cargo-deny` reports the pin as not encountered. The pin stays because the
+  posture gate requires it.
+
+Each item needs its own reviewed policy change.
+
 ## Enforcement
 
 - `tools/check-dependency-posture.rs` validates the policy and the lockfile
   deterministically: both pins must carry a non-empty rationale, the
   license section must deny unlicensed packages, the lockfile must still bind
-  `paste` and `anyhow`, and the positive fixture must pass while the negative
-  fixture must fail.
+  `paste` and `anyhow`, the lockfile must resolve exactly `k256 0.14.0` and
+  no `crypto-bigint` below `0.7.6`, and the positive fixture must pass while
+  the negative fixture must fail.
 - The Nix `dependency-posture` check runs the checker and then invokes
   `cargo-deny check advisories` against the committed `Cargo.lock` with the
   committed policy. The check never resolves a fresh dependency set.
