@@ -11,4 +11,4 @@
 ## Verification
 
 - [x] [serial] Run workspace tests, the `issue_and_verify` example, scoped formatting, strict Clippy, the posture checker, and Cairn validation; record the evidence. r[track_dependency_posture.k256_advisory_closure]
-- [ ] [serial] Run the `nix develop` and `nix flake check` rails at integration, then sync the accepted spec and archive the change. r[track_dependency_posture.k256_advisory_closure]
+- [x] [serial] Run the `nix develop` and `nix flake check` rails at integration, then sync the accepted spec and archive the change. r[track_dependency_posture.k256_advisory_closure]

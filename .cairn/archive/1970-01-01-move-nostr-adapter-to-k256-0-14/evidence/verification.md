@@ -57,9 +57,12 @@ Run against the unchanged `6b12853e` lock, the posture checker exits 1 because t
 
 With the new lock, `cargo audit` (RustSec `advisory-db` `55e1c3dfbd834237a05bbbf7b50ba3b5be27b662`) reports no vulnerability. Its two warnings are `RUSTSEC-2024-0436` (`paste`) and `RUSTSEC-2026-0486` (`rustix 1.1.4`, dev-only). Both predate this change.
 
-## Not yet run
+## Nix rails
 
-- `nix develop -c cargo test --workspace` and `nix flake check`, including the `dependency-posture` and `blake3-identity-posture` checks. These wait for the store lock to clear.
+Both rails ran on revision `4ec3ac9a` after the store lock cleared:
+
+- `nix develop . --option builders '' -c cargo test --workspace --locked` exited 0: 392 tests passed and none failed in 11 suites.
+- `nix flake check -L --keep-going --option builders ''` exited 0 on `x86_64-linux` and reported "all checks passed!". It evaluated 14 checks, including `dependency-posture`, `blake3-identity-posture`, `nextest`, `clippy`, `fmt`, `minimal-profile`, `minimal-tests`, and `production-readiness`, and every check output is in the store. The run did not check `aarch64-linux`, `aarch64-darwin`, or `x86_64-darwin`.
 
 ## Claim boundary
 
