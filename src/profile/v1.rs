@@ -425,15 +425,15 @@ pub fn cid_v1_of_payload(payload: &[u8]) -> Vec<u8> {
     cid
 }
 
-/// Encode arbitrary bytes as multibase base58btc.
+/// Encode arbitrary bytes as multibase base58btc with the required leading `z`.
 #[must_use]
 pub fn base58btc_encode(bytes: &[u8]) -> String {
     if bytes.is_empty() {
-        return String::new();
+        return String::from(BASE58_MULTIBASE_PREFIX as char);
     }
     let leading_zeros = bytes.iter().take_while(|&&byte| byte == 0).count();
-    let mut digits = vec![0_u8];
-    for &byte in bytes {
+    let mut digits: Vec<u8> = Vec::new();
+    for &byte in &bytes[leading_zeros..] {
         let mut carry = u32::from(byte);
         for digit in &mut digits {
             let value = u32::from(*digit) * 256 + carry;
@@ -446,7 +446,8 @@ pub fn base58btc_encode(bytes: &[u8]) -> String {
         }
     }
     digits.reverse();
-    let mut output = String::with_capacity(leading_zeros + digits.len());
+    let mut output = String::with_capacity(1 + leading_zeros + digits.len());
+    output.push(BASE58_MULTIBASE_PREFIX as char);
     for _ in 0..leading_zeros {
         output.push('1');
     }
@@ -456,42 +457,50 @@ pub fn base58btc_encode(bytes: &[u8]) -> String {
     output
 }
 
-/// Decode multibase base58btc bytes (with or without the leading `z`).
+/// Decode multibase base58btc bytes, requiring the single leading `z` prefix.
 ///
 /// # Errors
 ///
-/// Returns [`WireError`] on an invalid alphabet character or on leading
-/// `1` padding that disagrees with the decoded leading zero bytes.
+/// Returns [`WireError`] when the input exceeds wire limits, lacks the leading
+/// `z` multibase prefix, or contains a character outside the base58btc alphabet.
 pub fn base58btc_decode(input: &str) -> Result<Vec<u8>, WireError> {
-    let value = input.strip_prefix(BASE58_MULTIBASE_PREFIX as char).unwrap_or(input);
+    if input.len() > MAX_WIRE_INPUT_BYTES {
+        return Err(WireError::UnsupportedTag {
+            tag: "input-too-large".to_owned(),
+        });
+    }
+    let Some(value) = input.strip_prefix(BASE58_MULTIBASE_PREFIX as char) else {
+        return Err(WireError::UnsupportedTag {
+            tag: "missing-multibase-z".to_owned(),
+        });
+    };
     if value.is_empty() {
         return Ok(Vec::new());
     }
-    let base = BASE58_ALPHABET.len() as u128;
-    let mut numeric = 0_u128;
-    for character in value.chars() {
-        let Some(index) = BASE58_ALPHABET.iter().position(|&byte| char::from(byte) == character) else {
+    let leading_ones = value.bytes().take_while(|&byte| byte == b'1').count();
+    let mut bytes: Vec<u8> = Vec::new();
+    for byte in value.bytes() {
+        let Some(index) = BASE58_ALPHABET.iter().position(|&candidate| candidate == byte) else {
             return Err(WireError::UnsupportedTag {
                 tag: "invalid-base58".to_owned(),
             });
         };
-        numeric = numeric.checked_mul(base).and_then(|n| n.checked_add(index as u128)).ok_or_else(|| {
-            WireError::UnsupportedTag {
-                tag: "base58-overflow".to_owned(),
-            }
-        })?;
-    }
-    let leading_ones = value.chars().take_while(|&character| character == '1').count();
-    let mut bytes = Vec::with_capacity(value.len());
-    while numeric > 0 {
-        bytes.push((numeric % 256) as u8);
-        numeric /= 256;
+        let mut carry = index as u32;
+        for slot in &mut bytes {
+            let acc = u32::from(*slot) * 58 + carry;
+            *slot = (acc & 0xFF) as u8;
+            carry = acc >> 8;
+        }
+        while carry > 0 {
+            bytes.push((carry & 0xFF) as u8);
+            carry >>= 8;
+        }
     }
     bytes.reverse();
-    for _ in 0..leading_ones {
-        bytes.insert(0, 0);
-    }
-    Ok(bytes)
+    let mut output = Vec::with_capacity(leading_ones + bytes.len());
+    output.resize(leading_ones, 0);
+    output.extend_from_slice(&bytes);
+    Ok(output)
 }
 
 /// Validate an external base58btc CID `1` string and return its bytes.
@@ -535,7 +544,7 @@ pub fn validate_cid_bytes(bytes: &[u8]) -> Result<(), WireError> {
             tag: "cid-wrong-multihash".to_owned(),
         });
     }
-    if bytes[3] != SHA256_DIGEST_LEN as u8 {
+    if bytes[3] != SHA256_DIGEST_LEN as u8 || bytes.len() != 4 + SHA256_DIGEST_LEN {
         return Err(WireError::UnsupportedTag {
             tag: "cid-wrong-digest-len".to_owned(),
         });
@@ -912,3 +921,6 @@ fn cbor_to_json(value: &Cbor) -> serde_json::Value {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

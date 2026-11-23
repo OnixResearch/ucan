@@ -33,7 +33,10 @@ fn invocation_fields() -> Vec<(String, Cbor)> {
         (core::FIELD_AUDIENCE.to_owned(), Cbor::Text("did:key:z6Mkaudience".to_owned())),
         (core::FIELD_COMMAND.to_owned(), Cbor::Text("/msg/send".to_owned())),
         (core::FIELD_ARGS.to_owned(), Cbor::Map(vec![("to".to_owned(), Cbor::Text("alice".to_owned()))])),
-        (core::FIELD_PROOFS.to_owned(), Cbor::Array(vec![Cbor::Bytes(vec![0x00, 0x71, 0x12, 0x20; 4])])),
+        (
+            core::FIELD_PROOFS.to_owned(),
+            Cbor::Array(vec![Cbor::Bytes(cid_v1_of_payload(b"delegation-proof"))]),
+        ),
     ]
 }
 
@@ -59,7 +62,7 @@ fn canonical_payload_round_trip_is_deterministic() {
 #[test]
 fn unsorted_input_map_is_rejected() {
     let unsorted = vec![("z".to_owned(), Cbor::UInt(1)), ("a".to_owned(), Cbor::UInt(2))];
-    let bytes = super::StrictEncoderTestHelper::encode_unsorted_map(unsorted);
+    let bytes = StrictEncoderTestHelper::encode_unsorted_map(unsorted);
     assert!(decode_payload_bytes_to_values(&bytes).is_err());
 }
 
@@ -86,7 +89,7 @@ fn non_minimal_integer_is_rejected() {
 
 #[test]
 fn trailing_bytes_are_rejected() {
-    let mut bytes = canonical_payload_bytes(delegation_fields());
+    let mut bytes = canonical_payload_bytes(&delegation_fields());
     bytes.push(0x00);
     assert!(decode_payload_bytes_to_values(&bytes).is_err());
 }
@@ -106,7 +109,7 @@ fn unsupported_tag_value_is_rejected() {
 
 #[test]
 fn cross_kind_and_tag_substitution_fail() {
-    let delegation_bytes = canonical_payload_bytes(delegation_fields());
+    let delegation_bytes = canonical_payload_bytes(&delegation_fields());
     let envelope = {
         let sig = [0_u8; 64];
         encode_value(&Cbor::Array(vec![Cbor::Bytes(sig.to_vec()), Cbor::Bytes(delegation_bytes)]))
@@ -130,7 +133,7 @@ fn wrong_field_value_type_fails() {
             *value = Cbor::Bytes(vec![1, 2, 3]);
         }
     }
-    let bytes = canonical_payload_bytes(fields);
+    let bytes = canonical_payload_bytes(&fields);
     let envelope = encode_value(&Cbor::Array(vec![Cbor::Bytes(vec![0_u8; 64]), Cbor::Bytes(bytes)]));
     assert!(
         matches!(parse_envelope(&envelope, SpecKind::Delegation), Err(WireError::WrongType { field }) if field == core::FIELD_ISSUER)
@@ -152,38 +155,113 @@ fn sha256_matches_the_protocol_constant_vector() {
 fn base58btc_round_trips_and_uses_z_prefix() {
     let payload = b"hello";
     let encoded = base58btc_encode(payload);
-    assert!(encoded.starts_with('z'));
+    assert_eq!(encoded, "zCn8eVZg");
     assert_eq!(base58btc_decode(&encoded).expect("decode"), payload);
+    assert!(matches!(
+        base58btc_decode("Cn8eVZg"),
+        Err(WireError::UnsupportedTag { tag }) if tag == "missing-multibase-z"
+    ));
+    assert_eq!(base58btc_encode(b""), "z");
     assert_eq!(base58btc_decode("z").expect("empty"), b"");
+    for (bytes, expected) in [
+        (&[0_u8][..], "z1"),
+        (&[0_u8, 0][..], "z11"),
+        (&[0_u8, 1][..], "z12"),
+        (&[0x39_u8][..], "zz"),
+    ] {
+        let encoded = base58btc_encode(bytes);
+        assert_eq!(encoded, expected);
+        assert_eq!(base58btc_decode(&encoded).expect("round trip"), bytes);
+    }
 }
 
 #[test]
-fn pinned_fixture_cid_validates_as_cidv1_dagcbor_sha256() {
-    let bytes = cid_validate_string(PINNED_DELEGATION_CID).expect("pinned cid must validate");
-    assert_eq!(bytes[0], 0x01);
-    assert_eq!(bytes[1], 0x71);
-    assert_eq!(bytes[2], 0x12);
-    assert_eq!(bytes[3], 0x20);
+fn did_key_projection_uses_multibase_z_and_round_trips_34_byte_payload() {
+    let key = signing_key(1);
+    let public_bytes = key.verifying_key().to_bytes();
+    let did = did_key_from_public_key(&public_bytes).expect("did projection");
+    assert_eq!(did, "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX");
+    assert_eq!(did.as_bytes(), crate::encode_ed25519_did_key(&public_bytes).expect("verified did:key encoder"));
+
+    let decoded_did =
+        crate::decode_did_key(did.as_bytes()).expect("verified did:key decoder must accept projected DID");
+    assert_eq!(decoded_did.public_key_bytes.as_slice(), &public_bytes);
+
+    let multibase = did.strip_prefix("did:key:").expect("did:key prefix");
+    let raw_payload = base58btc_decode(multibase).expect("34-byte did:key payload must decode without overflow");
+    assert_eq!(raw_payload.len(), 34);
+    assert_eq!(&raw_payload[..2], &[0xED, 0x01]);
+    assert_eq!(&raw_payload[2..], &public_bytes);
+}
+
+#[test]
+fn cid_v1_36_byte_round_trips_and_validates() {
+    let cid_bytes = cid_v1_of_payload(b"delegation");
+    assert_eq!(cid_bytes.len(), 36);
+    let encoded = base58btc_encode(&cid_bytes);
+    assert!(encoded.starts_with('z'));
+    let decoded = cid_validate_string(&encoded).expect("36-byte base58btc CIDv1 must validate without overflow");
+    assert_eq!(decoded, cid_bytes);
+    assert_eq!(decoded[0], 0x01);
+    assert_eq!(decoded[1], 0x71);
+    assert_eq!(decoded[2], 0x12);
+    assert_eq!(decoded[3], 0x20);
 }
 
 #[test]
 fn invalid_cids_fail_closed() {
     for (cid, expected) in [
-        ("bafyreigyftnzjf4rcu7glp5kfop53vqlopc3zcldauoqdxqlz7t4343g", "cid-wrong-digest-len"),
-        ("QmYwAPJzv5CZsnAzt8auVZRnVc3Ld5fWvWz7yMvYcwm", "cid-wrong-version"),
-        ("bafykbzacedX", "cid-wrong-codec"),
-        ("bafy#!zay", "invalid-base58"),
+        (PINNED_DELEGATION_CID, "missing-multibase-z"),
+        ("QmYwAPJzv5CZsnAzt8auVZRnVc3Ld5fWvWz7yMvYcwm", "missing-multibase-z"),
+        ("z#!bad", "invalid-base58"),
     ] {
         assert!(
             matches!(cid_validate_string(cid), Err(WireError::UnsupportedTag { tag }) if tag == expected),
             "cid {cid} must fail with {expected}"
         );
     }
-    let mut structurally_wrong = cid_v1_of_payload(b"x");
-    structurally_wrong[2] = 0x13;
+
+    let valid = cid_v1_of_payload(b"x");
+
+    let short = &valid[..35];
     assert!(matches!(
-        cid_validate_string(&base58btc_encode(&structurally_wrong)),
+        cid_validate_string(&base58btc_encode(short)),
+        Err(WireError::UnsupportedTag { tag }) if tag == "cid-too-short"
+    ));
+
+    let mut wrong_version = valid.clone();
+    wrong_version[0] = 0x00;
+    assert!(matches!(
+        cid_validate_string(&base58btc_encode(&wrong_version)),
+        Err(WireError::UnsupportedTag { tag }) if tag == "cid-wrong-version"
+    ));
+
+    let mut wrong_codec = valid.clone();
+    wrong_codec[1] = 0x55;
+    assert!(matches!(
+        cid_validate_string(&base58btc_encode(&wrong_codec)),
+        Err(WireError::UnsupportedTag { tag }) if tag == "cid-wrong-codec"
+    ));
+
+    let mut wrong_multihash = valid.clone();
+    wrong_multihash[2] = 0x13;
+    assert!(matches!(
+        cid_validate_string(&base58btc_encode(&wrong_multihash)),
         Err(WireError::UnsupportedTag { tag }) if tag == "cid-wrong-multihash"
+    ));
+
+    let mut wrong_digest_len = valid.clone();
+    wrong_digest_len[3] = 0x1F;
+    assert!(matches!(
+        cid_validate_string(&base58btc_encode(&wrong_digest_len)),
+        Err(WireError::UnsupportedTag { tag }) if tag == "cid-wrong-digest-len"
+    ));
+
+    let mut trailing = valid;
+    trailing.push(0x00);
+    assert!(matches!(
+        cid_validate_string(&base58btc_encode(&trailing)),
+        Err(WireError::UnsupportedTag { tag }) if tag == "cid-wrong-digest-len"
     ));
 }
 
@@ -248,8 +326,8 @@ fn public_key_length_and_issuer_mismatch_ports_fail_closed() {
     assert_eq!(resolver.resolve_did_key("did:key:z6Mkissuer"), Ok(key.verifying_key().to_bytes()));
 
     let signer = StaticEd25519Signer(key);
-    let signed = signer.ed25519_sign(b"message").expect("sign");
-    assert_eq!(signed.len(), 64);
+    let signature = signer.ed25519_sign(b"message").expect("sign");
+    assert_eq!(signature.len(), 64);
 }
 
 // ---- pinned fixture metadata replay and derived mutations ----
@@ -262,8 +340,10 @@ fn pinned_delegation_fixture_replays_through_profile_api() {
     let payload = envelope.get("payload").expect("payload metadata");
     let fields = payload_from_json_metadata(SpecKind::Delegation, payload);
     let bytes = canonical_payload_bytes(&fields);
-    let _cid = cid_v1_of_payload(&bytes);
-    cid_validate_string(PINNED_DELEGATION_CID).expect("pinned cid structure");
+    let cid = cid_v1_of_payload(&bytes);
+    let encoded_cid = base58btc_encode(&cid);
+    assert_eq!(cid_validate_string(&encoded_cid).expect("base58btc cid structure"), cid);
+    assert_eq!(fixture.pointer("/valid/0/cid").and_then(serde_json::Value::as_str), Some(PINNED_DELEGATION_CID));
 
     let rendered = payload_to_json(&fields);
     let rendered_object = rendered.as_object().expect("map");
@@ -339,7 +419,7 @@ fn derived_mutation_fixtures_fail_with_stable_reasons() {
                 })
                 .collect(),
         };
-        let bytes = canonical_payload_bytes(base);
+        let bytes = canonical_payload_bytes(&base);
         let envelope = encode_value(&Cbor::Array(vec![Cbor::Bytes(vec![0_u8; 64]), Cbor::Bytes(bytes)]));
         let result = parse_envelope(&envelope, SpecKind::Delegation);
         assert!(result.is_err(), "mutation fixture {} must fail", mutation.id);
