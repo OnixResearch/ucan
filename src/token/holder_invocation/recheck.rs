@@ -4,6 +4,8 @@
 pub struct HolderRecheckPolicies<'a> {
     pub caveats: &'a dyn super::CaveatPolicySet,
     pub profiles: &'a dyn super::OperationProfileAdmission,
+    /// Current root-issuer trust; a revoked root ends the observation.
+    pub roots: &'a dyn super::RootIssuerAdmission,
 }
 
 #[derive(Debug)]
@@ -131,6 +133,9 @@ pub fn recheck_holder_authorization<'live>(
         token_context.limits,
     )
     .map_err(|source| HolderRecheckError::Verification(super::HolderInvocationError::Token { source }))?;
+    verified
+        .admit_root_issuers(policies.roots)
+        .map_err(|source| HolderRecheckError::Verification(super::HolderInvocationError::RootIssuer { source }))?;
     policies.profiles.admit_operation_profile(&authorization.operation().profile()).map_err(|source| {
         HolderRecheckError::Verification(super::HolderInvocationError::OperationProfile { source })
     })?;
