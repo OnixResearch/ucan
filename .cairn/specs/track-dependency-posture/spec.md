@@ -28,7 +28,7 @@ r[ucan.deps.advisory.appears]
 
 ### Requirement: Non-exploitable advisories are pinned with rationale
 
-r[ucan.deps.ignored] The two currently applicable advisories (`paste` and the `anyhow` downcast unsoundness) MUST be pinned with a BLAKE3-referenced or textual rationale that names why each is not exploitable in this repo.
+r[ucan.deps.ignored] Every applicable non-exploitable advisory (currently `RUSTSEC-2024-0436` for `paste`) MUST be pinned with a BLAKE3-referenced or textual rationale that names why it is not exploitable in this repo, and stale pins for resolved advisories (such as `RUSTSEC-2026-0190` once `anyhow >= 1.0.103`) MUST NOT remain in `deny.toml`.
 
 #### Scenario: Reviewer audits the pins
 

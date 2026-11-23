@@ -252,7 +252,7 @@
                 cd ${./.}
                 rustc --edition=2024 tools/check-dependency-posture.rs -o "$TMPDIR/check-dependency-posture"
                 "$TMPDIR/check-dependency-posture" --root .
-                cargo-deny check advisories -D warnings -A advisory-not-detected >/dev/null 2>&1 \
+                cargo-deny check advisories -D warnings >/dev/null 2>&1 \
                   || echo "cargo-deny online advisory scan unavailable (advisory DB fetch or config error); the deterministic posture gate passed above"
                 touch $out
               '';

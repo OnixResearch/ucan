@@ -106,9 +106,10 @@ assessment revision.
 
 - `RUSTSEC-2024-0436` (paste, dev-only via hegeltest): applies and is pinned
   in `deny.toml` with its rationale.
-- `RUSTSEC-2026-0190` (anyhow `downcast_mut`): not encountered at
-  `anyhow 1.0.104`. The pin is kept only because the posture checker
-  requires it.
+- `RUSTSEC-2026-0190` (anyhow `downcast_mut`): resolved at `anyhow 1.0.104`
+  (patched in `1.0.103`). The stale ignore entry is removed from `deny.toml`
+  and the posture gate rejects any `anyhow` below `1.0.103` or re-pinned
+  `RUSTSEC-2026-0190`.
 - `RUSTSEC-2026-0486` (`rustix 1.1.4`, dev-only via `tempfile`): applies, is
   not pinned, and remains open.
 - `RUSTSEC-2026-0387` (`crypto-bigint`) left the locked graph when the Nostr

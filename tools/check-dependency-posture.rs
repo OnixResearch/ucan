@@ -3,13 +3,16 @@
 //! This check runs against the committed `Cargo.lock` and the committed
 //! cargo-deny policy. It never resolves a fresh dependency set. It validates:
 //!
-//! 1. the `deny.toml` policy rejects unapproved advisories and pins the two applicable advisories
-//!    with an explicit non-exploitable rationale;
+//! 1. the `deny.toml` policy rejects unapproved advisories, pins the applicable `paste` advisory
+//!    with an explicit non-exploitable rationale, and does not carry the stale `RUSTSEC-2026-0190`
+//!    pin;
 //! 2. the license section denies unlicensed packages;
-//! 3. the workspace lockfile still contains the two pinned crates;
-//! 4. the lockfile resolves exact `k256` `0.14.0` and no `crypto-bigint` below `0.7.6`, keeping
+//! 3. the workspace lockfile still contains the pinned `paste` crate;
+//! 4. the lockfile resolves no `anyhow` below `1.0.103`, keeping `RUSTSEC-2026-0190` out of the
+//!    locked graph without a pin;
+//! 5. the lockfile resolves exact `k256` `0.14.0` and no `crypto-bigint` below `0.7.6`, keeping
 //!    `RUSTSEC-2026-0387` out of the locked graph without a pin;
-//! 5. the positive fixture passes the policy and the negative fixture fails it, proving the policy
+//! 6. the positive fixture passes the policy and the negative fixture fails it, proving the policy
 //!    rejects a missing pin.
 //!
 //! The Nix `dependency-posture` check compiles and runs this file with rustc;
@@ -35,6 +38,7 @@ const ADVISORY_PASTE: &str = "RUSTSEC-2024-0436";
 const ADVISORY_ANYHOW: &str = "RUSTSEC-2026-0190";
 const PASTE_CRATE: &str = "paste";
 const ANYHOW_CRATE: &str = "anyhow";
+const ANYHOW_PATCHED: (u64, u64, u64) = (1, 0, 103);
 const REQUIRED_LICENSE_IDS: [&str; 2] = ["MPL-2.0", "AGPL-3.0-or-later"];
 const K256_CRATE: &str = "k256";
 const REVIEWED_K256: &str = "0.14.0";
@@ -100,7 +104,7 @@ fn policy_accepts(text: &str) -> Result<(), String> {
             return Err(format!("license allow list does not cover workspace license {license_id}"));
         }
     }
-    for required in [ADVISORY_PASTE, ADVISORY_ANYHOW] {
+    for required in [ADVISORY_PASTE] {
         let marker = format!("id = \"{required}\"");
         if !text.contains(&marker) {
             return Err(format!("advisory {required} is not pinned"));
@@ -108,6 +112,10 @@ fn policy_accepts(text: &str) -> Result<(), String> {
         if !pin_entry_has_reason_after(text, required) {
             return Err(format!("advisory {required} is pinned without an explicit rationale"));
         }
+    }
+    let stale_anyhow_marker = format!("id = \"{ADVISORY_ANYHOW}\"");
+    if text.contains(&stale_anyhow_marker) {
+        return Err(format!("stale advisory {ADVISORY_ANYHOW} must not remain pinned"));
     }
     Ok(())
 }
@@ -136,6 +144,17 @@ fn version_below(version: &str, floor: (u64, u64, u64)) -> bool {
     let mut parts = version.split(['.', '-', '+']).map(|part| part.parse::<u64>().unwrap_or(0));
     let parsed = (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0));
     parsed < floor
+}
+
+fn lockfile_clears_anyhow_advisory(text: &str) -> Result<(), String> {
+    let affected: Vec<&str> = locked_versions(text, ANYHOW_CRATE)
+        .into_iter()
+        .filter(|version| version_below(version, ANYHOW_PATCHED))
+        .collect();
+    if !affected.is_empty() {
+        return Err(format!("lockfile binds {ANYHOW_CRATE} {affected:?} affected by {ADVISORY_ANYHOW}"));
+    }
+    Ok(())
 }
 
 fn lockfile_clears_crypto_bigint_advisory(text: &str) -> Result<(), String> {
@@ -167,8 +186,12 @@ fn run_all(root: &Path) -> Vec<(bool, String)> {
         Ok(()) => results.push((true, "policy accepts the locked advisory pins".to_owned())),
         Err(reason) => results.push((false, format!("policy is invalid: {reason}"))),
     }
-    match lockfile_has_crate(&lock_text, &[PASTE_CRATE, ANYHOW_CRATE]) {
+    match lockfile_has_crate(&lock_text, &[PASTE_CRATE]) {
         Ok(()) => results.push((true, "lockfile binds the pinned crates".to_owned())),
+        Err(reason) => results.push((false, format!("lockfile check failed: {reason}"))),
+    }
+    match lockfile_clears_anyhow_advisory(&lock_text) {
+        Ok(()) => results.push((true, format!("lockfile keeps {ADVISORY_ANYHOW} out of the locked graph"))),
         Err(reason) => results.push((false, format!("lockfile check failed: {reason}"))),
     }
     match lockfile_clears_crypto_bigint_advisory(&lock_text) {

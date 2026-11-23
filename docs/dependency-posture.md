@@ -34,12 +34,12 @@ These results use advisory-db revision `55e1c3df`:
 - `RUSTSEC-2024-0436` (`paste 1.0.15`, unmaintained): applies, and it is
   pinned in `deny.toml`. It is a dev-only dependency reached through
   `hegeltest`; no runtime path uses it.
-- `RUSTSEC-2026-0190` (`anyhow` `downcast_mut` unsoundness): not encountered.
-  The lock resolves `anyhow 1.0.104`, so `cargo-deny` reports the pin as
-  unused. The pin stays in `deny.toml` only because
-  `tools/check-dependency-posture.rs` requires it. Its original rationale
-  still describes the earlier exposure: the vendored `repo_index` tooling
-  module uses `chain()` and never calls `downcast_mut`.
+- `RUSTSEC-2026-0190` (`anyhow` `downcast_mut` unsoundness): resolved in the
+  locked graph (`anyhow 1.0.104`, patched in `1.0.103`). The stale ignore
+  entry was removed from `deny.toml`, `unused-ignored-advisory = "deny"` is
+  enabled under `[advisories]`, and `tools/check-dependency-posture.rs`
+  rejects both a stale `RUSTSEC-2026-0190` pin and any `anyhow` below
+  `1.0.103`.
 - `RUSTSEC-2026-0486` (`rustix 1.1.4`, unsound xattr buffer handling):
   applies, and it is open. It is not pinned. It is reached only through the
   dev-only `tempfile` dependency of `hegeltest`, `proptest`, and the root
@@ -47,18 +47,19 @@ These results use advisory-db revision `55e1c3df`:
 
 `cargo-deny check advisories -D warnings` treats any unpinned applicable
 advisory as an error, so the open `rustix` finding fails that scan until a
-reviewed policy change pins or removes it. Dropping the stale `anyhow` pin
-also needs a reviewed change to the posture checker. The license allow list
-covers the workspace licenses.
+reviewed policy change pins or removes it. The license allow list covers the
+workspace licenses.
 
 ## Enforcement
 
 - `tools/check-dependency-posture.rs` validates the policy and the lockfile
-  deterministically: both pins must carry a non-empty rationale, the
+  deterministically: the applicable `paste` pin must carry a non-empty
+  rationale, the stale `RUSTSEC-2026-0190` pin must remain absent, the
   license section must deny unlicensed packages, the lockfile must still bind
-  `paste` and `anyhow`, the lockfile must resolve exactly `k256 0.14.0` and
-  no `crypto-bigint` below `0.7.6`, and the positive fixture must pass while
-  the negative fixture must fail.
+  `paste`, the lockfile must resolve no `anyhow` below `1.0.103`, the
+  lockfile must resolve exactly `k256 0.14.0` and no `crypto-bigint` below
+  `0.7.6`, and the positive fixture must pass while the negative fixture must
+  fail.
 - The Nix `dependency-posture` check runs the checker and then invokes
   `cargo-deny check advisories` against the committed `Cargo.lock` with the
   committed policy. The check never resolves a fresh dependency set.

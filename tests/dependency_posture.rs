@@ -25,6 +25,8 @@ const REVIEWED_ZEROIZE_IDENTITY: &str = "zeroize@1.9.0";
 const DRIFTED_ZEROIZE_IDENTITY: &str = "zeroize@1.8.2";
 const ADVISORY_PASTE: &str = "RUSTSEC-2024-0436";
 const ADVISORY_ANYHOW: &str = "RUSTSEC-2026-0190";
+const ADVISORY_ANYHOW_PATCHED: (u64, u64, u64) = (1, 0, 103);
+const DRIFTED_ANYHOW_LOCK_ENTRY: &str = "\n[[package]]\nname = \"anyhow\"\nversion = \"1.0.102\"\n";
 const REVIEWED_K256: &str = "k256 = { version = \"=0.14.0\"";
 const DRIFTED_K256: &str = "k256 = { version = \"=0.13.4\"";
 const REVIEWED_K256_LOCK: &str = "0.14.0";
@@ -74,10 +76,18 @@ fn k256_advisory_closure_holds(nostr: &str, nostr_context: &str, lock: &str) -> 
             .any(|version| version_below(version, ADVISORY_CRYPTO_BIGINT_PATCHED))
 }
 
+fn anyhow_advisory_closure_holds(deny: &str, lock: &str) -> bool {
+    !deny.contains(ADVISORY_ANYHOW)
+        && !locked_versions(lock, "anyhow")
+            .iter()
+            .any(|version| version_below(version, ADVISORY_ANYHOW_PATCHED))
+}
+
 #[test]
-fn locked_policy_pins_both_applicable_advisories_with_rationale() {
+fn locked_policy_pins_applicable_advisories_with_rationale() {
     assert!(has_pin_with_reason(DENY_TOML, ADVISORY_PASTE));
-    assert!(has_pin_with_reason(DENY_TOML, ADVISORY_ANYHOW));
+    assert!(DENY_TOML.contains("unused-ignored-advisory = \"deny\""));
+    assert!(!DENY_TOML.contains(ADVISORY_ANYHOW));
     assert!(DENY_TOML.contains("MPL-2.0"));
     assert!(DENY_TOML.contains("AGPL-3.0-or-later"));
 }
@@ -85,7 +95,14 @@ fn locked_policy_pins_both_applicable_advisories_with_rationale() {
 #[test]
 fn workspace_lockfile_still_binds_pinned_crates() {
     assert!(CARGO_LOCK.contains("name = \"paste\""));
-    assert!(CARGO_LOCK.contains("name = \"anyhow\""));
+}
+
+#[test]
+fn anyhow_lock_keeps_rustsec_2026_0190_out_without_stale_pin() {
+    assert!(anyhow_advisory_closure_holds(DENY_TOML, CARGO_LOCK));
+
+    let drifted_lock = format!("{CARGO_LOCK}{DRIFTED_ANYHOW_LOCK_ENTRY}");
+    assert!(!anyhow_advisory_closure_holds(DENY_TOML, &drifted_lock));
 }
 
 #[test]
@@ -135,9 +152,9 @@ fn stale_zeroize_identity_is_rejected() {
 #[test]
 fn fixture_rail_rejects_a_missing_pin() {
     assert!(has_pin_with_reason(POSITIVE_FIXTURE, ADVISORY_PASTE));
-    assert!(has_pin_with_reason(POSITIVE_FIXTURE, ADVISORY_ANYHOW));
+    assert!(!POSITIVE_FIXTURE.contains(ADVISORY_ANYHOW));
     // The negative fixture drops the paste pin; the rail must reject it.
-    assert!(has_pin_with_reason(NEGATIVE_FIXTURE, ADVISORY_ANYHOW));
+    assert!(!NEGATIVE_FIXTURE.contains(ADVISORY_ANYHOW));
     assert!(!has_pin_with_reason(NEGATIVE_FIXTURE, ADVISORY_PASTE));
 }
 

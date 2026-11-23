@@ -8,14 +8,11 @@
 # full audit record.
 
 [advisories]
+unused-ignored-advisory = "deny"
 ignore = [
   {
     id = "RUSTSEC-2024-0436",
     reason = "paste is unmaintained but dev-only via hegeltest; it has no runtime impact on this workspace.",
-  },
-  {
-    id = "RUSTSEC-2026-0190",
-    reason = "the anyhow downcast_mut unsoundness reaches only the vendored repo_index tooling module, which uses chain() and never calls downcast_mut.",
   },
 ]
 
