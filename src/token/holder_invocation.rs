@@ -41,10 +41,16 @@ use crate::verified::verify_ed25519_signature;
 const DEFAULT_MAX_AUDIENCE_BYTES: usize = 512;
 const DEFAULT_MAX_RESOURCE_BYTES: usize = 4 * 1024;
 const DEFAULT_MAX_ABILITY_BYTES: usize = 256;
+const DEFAULT_MAX_VERIFIER_BYTES: usize = 512;
 const HARD_MAX_AUDIENCE_BYTES: usize = 1024;
 const HARD_MAX_RESOURCE_BYTES: usize = 16 * 1024;
 const HARD_MAX_ABILITY_BYTES: usize = 1024;
+const HARD_MAX_VERIFIER_BYTES: usize = 1024;
 const HARD_MAX_CANONICAL_BYTES: usize = 16 * 1024;
+pub const DEFAULT_HOLDER_MAX_AGE_SECONDS: u64 = 300;
+pub const DEFAULT_HOLDER_MAX_FUTURE_SKEW_SECONDS: u64 = 30;
+pub const HARD_MAX_HOLDER_AGE_SECONDS: u64 = 3_600;
+pub const HARD_MAX_HOLDER_FUTURE_SKEW_SECONDS: u64 = 300;
 
 pub type HolderInvocationResult<T> = std::result::Result<T, HolderInvocationError>;
 pub type HolderInvocationInputResult<T> = std::result::Result<T, HolderInvocationInputError>;
@@ -229,6 +235,14 @@ pub enum HolderInvocationLimitError {
         configured: usize,
         hard_maximum: usize,
     },
+    FreshnessMaxAgeTooLarge {
+        configured_seconds: u64,
+        hard_maximum_seconds: u64,
+    },
+    FreshnessFutureSkewTooLarge {
+        configured_seconds: u64,
+        hard_maximum_seconds: u64,
+    },
     CanonicalRequestTooLarge {
         byte_len: usize,
         hard_maximum: usize,
@@ -253,6 +267,20 @@ impl fmt::Display for HolderInvocationLimitError {
                 "configured {} limit {configured} exceeds reviewed hard maximum {hard_maximum}",
                 field.as_str()
             ),
+            Self::FreshnessMaxAgeTooLarge {
+                configured_seconds,
+                hard_maximum_seconds,
+            } => write!(
+                formatter,
+                "configured holder request max age {configured_seconds}s exceeds reviewed hard maximum {hard_maximum_seconds}s"
+            ),
+            Self::FreshnessFutureSkewTooLarge {
+                configured_seconds,
+                hard_maximum_seconds,
+            } => write!(
+                formatter,
+                "configured holder request future skew {configured_seconds}s exceeds reviewed hard maximum {hard_maximum_seconds}s"
+            ),
             Self::CanonicalRequestTooLarge { byte_len, hard_maximum } => write!(
                 formatter,
                 "canonical request byte length {byte_len} exceeds reviewed hard maximum {hard_maximum}"
@@ -270,8 +298,77 @@ impl std::error::Error for HolderInvocationLimitError {
         match self {
             Self::Canonical { source } => Some(source),
             Self::ConfiguredFieldLimitTooLarge { .. }
+            | Self::FreshnessMaxAgeTooLarge { .. }
+            | Self::FreshnessFutureSkewTooLarge { .. }
             | Self::CanonicalRequestTooLarge { .. }
             | Self::AllocationFailed { .. } => None,
+        }
+    }
+}
+
+/// Bounded freshness window applied to a signed holder-invocation `issued_at` timestamp.
+///
+/// Bounding request age allows replay stores to prune expired nonces instead of
+/// retaining every nonce for the entire token lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HolderInvocationFreshnessWindow {
+    max_age_seconds: u64,
+    max_future_skew_seconds: u64,
+}
+
+impl HolderInvocationFreshnessWindow {
+    /// Construct a bounded freshness window under reviewed hard maxima.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HolderInvocationLimitError`] when `max_age_seconds` or
+    /// `max_future_skew_seconds` exceeds the reviewed hard maximum.
+    pub const fn try_new(
+        max_age_seconds: u64,
+        max_future_skew_seconds: u64,
+    ) -> Result<Self, HolderInvocationLimitError> {
+        if max_age_seconds > HARD_MAX_HOLDER_AGE_SECONDS {
+            return Err(HolderInvocationLimitError::FreshnessMaxAgeTooLarge {
+                configured_seconds: max_age_seconds,
+                hard_maximum_seconds: HARD_MAX_HOLDER_AGE_SECONDS,
+            });
+        }
+        if max_future_skew_seconds > HARD_MAX_HOLDER_FUTURE_SKEW_SECONDS {
+            return Err(HolderInvocationLimitError::FreshnessFutureSkewTooLarge {
+                configured_seconds: max_future_skew_seconds,
+                hard_maximum_seconds: HARD_MAX_HOLDER_FUTURE_SKEW_SECONDS,
+            });
+        }
+        Ok(Self {
+            max_age_seconds,
+            max_future_skew_seconds,
+        })
+    }
+
+    #[must_use]
+    pub const fn strict() -> Self {
+        Self {
+            max_age_seconds: 60,
+            max_future_skew_seconds: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn max_age_seconds(self) -> u64 {
+        self.max_age_seconds
+    }
+
+    #[must_use]
+    pub const fn max_future_skew_seconds(self) -> u64 {
+        self.max_future_skew_seconds
+    }
+}
+
+impl Default for HolderInvocationFreshnessWindow {
+    fn default() -> Self {
+        Self {
+            max_age_seconds: DEFAULT_HOLDER_MAX_AGE_SECONDS,
+            max_future_skew_seconds: DEFAULT_HOLDER_MAX_FUTURE_SKEW_SECONDS,
         }
     }
 }
@@ -292,12 +389,19 @@ impl HolderInvocationLimits {
         max_audience_bytes: usize,
         max_resource_bytes: usize,
         max_ability_bytes: usize,
+        max_verifier_bytes: usize,
     ) -> Result<Self, HolderInvocationLimitError> {
         admit_configured_limit(HolderInvocationField::Audience, max_audience_bytes, HARD_MAX_AUDIENCE_BYTES)?;
         admit_configured_limit(HolderInvocationField::Resource, max_resource_bytes, HARD_MAX_RESOURCE_BYTES)?;
         admit_configured_limit(HolderInvocationField::Ability, max_ability_bytes, HARD_MAX_ABILITY_BYTES)?;
-        let fields = HolderInvocationFieldLimits::try_new(max_audience_bytes, max_resource_bytes, max_ability_bytes)
-            .map_err(|source| HolderInvocationLimitError::Canonical { source })?;
+        admit_configured_limit(HolderInvocationField::Verifier, max_verifier_bytes, HARD_MAX_VERIFIER_BYTES)?;
+        let fields = HolderInvocationFieldLimits::try_new(
+            max_audience_bytes,
+            max_resource_bytes,
+            max_ability_bytes,
+            max_verifier_bytes,
+        )
+        .map_err(|source| HolderInvocationLimitError::Canonical { source })?;
         Ok(Self { fields })
     }
 
@@ -321,6 +425,11 @@ impl HolderInvocationLimits {
     }
 
     #[must_use]
+    pub const fn max_verifier_bytes(self) -> usize {
+        self.fields.verifier_bytes()
+    }
+
+    #[must_use]
     pub const fn hard_max_canonical_bytes() -> usize {
         HARD_MAX_CANONICAL_BYTES
     }
@@ -328,8 +437,13 @@ impl HolderInvocationLimits {
 
 impl Default for HolderInvocationLimits {
     fn default() -> Self {
-        Self::try_new(DEFAULT_MAX_AUDIENCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, DEFAULT_MAX_ABILITY_BYTES)
-            .expect("default holder-invocation limits must fit the canonical format")
+        Self::try_new(
+            DEFAULT_MAX_AUDIENCE_BYTES,
+            DEFAULT_MAX_RESOURCE_BYTES,
+            DEFAULT_MAX_ABILITY_BYTES,
+            DEFAULT_MAX_VERIFIER_BYTES,
+        )
+        .expect("default holder-invocation limits must fit the canonical format")
     }
 }
 
@@ -391,7 +505,9 @@ impl std::error::Error for HolderInvocationReplayError {}
 
 pub struct HolderInvocationReplayCandidate<'a> {
     audience: &'a AudienceDid,
+    verifier: &'a str,
     nonce: HolderInvocationNonce,
+    issued_at: VerificationTime,
     request_digest: HolderInvocationRequestDigest,
 }
 
@@ -402,8 +518,18 @@ impl HolderInvocationReplayCandidate<'_> {
     }
 
     #[must_use]
+    pub const fn verifier(&self) -> &str {
+        self.verifier
+    }
+
+    #[must_use]
     pub const fn nonce(&self) -> HolderInvocationNonce {
         self.nonce
+    }
+
+    #[must_use]
+    pub const fn issued_at(&self) -> VerificationTime {
+        self.issued_at
     }
 
     #[must_use]
@@ -432,27 +558,34 @@ pub struct HolderInvocationSigningRequest<'a> {
     audience: &'a AudienceDid,
     resource: &'a str,
     ability: &'a str,
+    verifier: &'a str,
     operation: OperationBinding,
     nonce: HolderInvocationNonce,
+    issued_at: VerificationTime,
 }
 
 impl<'a> HolderInvocationSigningRequest<'a> {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         compact_token: &'a str,
         audience: &'a AudienceDid,
         resource: &'a str,
         ability: &'a str,
+        verifier: &'a str,
         operation: OperationBinding,
         nonce: HolderInvocationNonce,
+        issued_at: VerificationTime,
     ) -> Self {
         Self {
             compact_token,
             audience,
             resource,
             ability,
+            verifier,
             operation,
             nonce,
+            issued_at,
         }
     }
 }
@@ -463,6 +596,7 @@ pub struct HolderInvocationRequest<'a> {
     ability: &'a str,
     operation: OperationBinding,
     nonce: HolderInvocationNonce,
+    issued_at: VerificationTime,
     signature: &'a SignerSignature,
 }
 
@@ -474,6 +608,7 @@ impl<'a> HolderInvocationRequest<'a> {
         ability: &'a str,
         operation: OperationBinding,
         nonce: HolderInvocationNonce,
+        issued_at: VerificationTime,
         signature: &'a SignerSignature,
     ) -> Self {
         Self {
@@ -482,6 +617,7 @@ impl<'a> HolderInvocationRequest<'a> {
             ability,
             operation,
             nonce,
+            issued_at,
             signature,
         }
     }
@@ -509,6 +645,11 @@ impl<'a> HolderInvocationRequest<'a> {
     #[must_use]
     pub const fn nonce(&self) -> HolderInvocationNonce {
         self.nonce
+    }
+
+    #[must_use]
+    pub const fn issued_at(&self) -> VerificationTime {
+        self.issued_at
     }
 }
 
@@ -546,6 +687,8 @@ impl<'a> HolderTokenVerificationContext<'a> {
 }
 
 pub struct HolderInvocationPolicyContext<'a> {
+    verifier: &'a str,
+    freshness: HolderInvocationFreshnessWindow,
     caveats: &'a dyn CaveatPolicySet,
     profiles: &'a dyn OperationProfileAdmission,
     replay: &'a dyn HolderInvocationReplayAdmission,
@@ -555,12 +698,16 @@ pub struct HolderInvocationPolicyContext<'a> {
 impl<'a> HolderInvocationPolicyContext<'a> {
     #[must_use]
     pub const fn new(
+        verifier: &'a str,
+        freshness: HolderInvocationFreshnessWindow,
         caveats: &'a dyn CaveatPolicySet,
         profiles: &'a dyn OperationProfileAdmission,
         replay: &'a dyn HolderInvocationReplayAdmission,
         limits: HolderInvocationLimits,
     ) -> Self {
         Self {
+            verifier,
+            freshness,
             caveats,
             profiles,
             replay,
@@ -577,10 +724,12 @@ impl<'a> HolderInvocationPolicyContext<'a> {
 pub struct HolderInvocationAuthorized {
     issuer: IssuerDid,
     audience: AudienceDid,
+    verifier: String,
     resource: String,
     ability: String,
     matched_capability: CapabilityDocument,
     effective_time_bounds: TokenTimeBounds,
+    issued_at: VerificationTime,
     verified_at: VerificationTime,
     token_reference: HolderInvocationTokenReference,
     operation: OperationBinding,
@@ -594,10 +743,12 @@ impl fmt::Debug for HolderInvocationAuthorized {
             .debug_struct("HolderInvocationAuthorized")
             .field("issuer", &self.issuer)
             .field("audience", &self.audience)
+            .field("verifier", &self.verifier)
             .field("resource", &self.resource)
             .field("ability", &self.ability)
             .field("matched_capability", &self.matched_capability)
             .field("effective_time_bounds", &self.effective_time_bounds)
+            .field("issued_at", &self.issued_at)
             .field("verified_at", &self.verified_at)
             .field("token_reference", &self.token_reference)
             .field("operation", &self.operation)
@@ -619,6 +770,11 @@ impl HolderInvocationAuthorized {
     }
 
     #[must_use]
+    pub const fn verifier(&self) -> &str {
+        self.verifier.as_str()
+    }
+
+    #[must_use]
     pub const fn resource(&self) -> &str {
         self.resource.as_str()
     }
@@ -636,6 +792,11 @@ impl HolderInvocationAuthorized {
     #[must_use]
     pub const fn effective_time_bounds(&self) -> TokenTimeBounds {
         self.effective_time_bounds
+    }
+
+    #[must_use]
+    pub const fn issued_at(&self) -> VerificationTime {
+        self.issued_at
     }
 
     #[must_use]
@@ -661,19 +822,49 @@ impl HolderInvocationAuthorized {
 
 #[derive(Debug)]
 pub enum HolderInvocationError {
-    Input { source: HolderInvocationInputError },
-    Canonical { source: HolderInvocationCanonicalError },
-    Limit { source: HolderInvocationLimitError },
-    Token { source: TokenError },
-    Authorization { reason: AuthorizationDenialReason },
-    KeyResolution { source: KeyResolverError },
+    Input {
+        source: HolderInvocationInputError,
+    },
+    Canonical {
+        source: HolderInvocationCanonicalError,
+    },
+    Limit {
+        source: HolderInvocationLimitError,
+    },
+    Token {
+        source: TokenError,
+    },
+    RequestExpired {
+        issued_at_seconds: u64,
+        verified_at_seconds: u64,
+        max_age_seconds: u64,
+    },
+    RequestIssuedInFuture {
+        issued_at_seconds: u64,
+        verified_at_seconds: u64,
+        max_future_skew_seconds: u64,
+    },
+    Authorization {
+        reason: AuthorizationDenialReason,
+    },
+    KeyResolution {
+        source: KeyResolverError,
+    },
     ResolvedAudienceKeyMismatch,
-    Signer { source: SignerError },
+    Signer {
+        source: SignerError,
+    },
     SignerAudienceMismatch,
-    OperationProfile { source: OperationProfileAdmissionError },
-    SignaturePrimitive { source: VerifiedPrimitiveError },
+    OperationProfile {
+        source: OperationProfileAdmissionError,
+    },
+    SignaturePrimitive {
+        source: VerifiedPrimitiveError,
+    },
     InvalidHolderSignature,
-    Replay { source: HolderInvocationReplayError },
+    Replay {
+        source: HolderInvocationReplayError,
+    },
 }
 
 impl fmt::Display for HolderInvocationError {
@@ -683,6 +874,22 @@ impl fmt::Display for HolderInvocationError {
             Self::Canonical { source } => write!(formatter, "invalid holder invocation canonical request: {source}"),
             Self::Limit { source } => write!(formatter, "holder invocation limit failed: {source}"),
             Self::Token { source } => write!(formatter, "compact token verification failed: {source}"),
+            Self::RequestExpired {
+                issued_at_seconds,
+                verified_at_seconds,
+                max_age_seconds,
+            } => write!(
+                formatter,
+                "holder invocation issued at {issued_at_seconds}s is older than max age {max_age_seconds}s at {verified_at_seconds}s"
+            ),
+            Self::RequestIssuedInFuture {
+                issued_at_seconds,
+                verified_at_seconds,
+                max_future_skew_seconds,
+            } => write!(
+                formatter,
+                "holder invocation issued at {issued_at_seconds}s exceeds future skew {max_future_skew_seconds}s at {verified_at_seconds}s"
+            ),
             Self::Authorization { reason } => write!(formatter, "audience capability authorization failed: {reason:?}"),
             Self::KeyResolution { source } => write!(formatter, "audience key resolution failed: {source}"),
             Self::ResolvedAudienceKeyMismatch => {
@@ -714,7 +921,9 @@ impl std::error::Error for HolderInvocationError {
             Self::OperationProfile { source } => Some(source),
             Self::SignaturePrimitive { source } => Some(source),
             Self::Replay { source } => Some(source),
-            Self::Authorization { .. }
+            Self::RequestExpired { .. }
+            | Self::RequestIssuedInFuture { .. }
+            | Self::Authorization { .. }
             | Self::ResolvedAudienceKeyMismatch
             | Self::SignerAudienceMismatch
             | Self::InvalidHolderSignature => None,
@@ -747,8 +956,10 @@ where
         request.audience,
         request.resource,
         request.ability,
+        request.verifier,
         request.operation,
         request.nonce,
+        request.issued_at,
         holder_limits,
     )?;
     let signer_did = validate_signer_identity(signer).map_err(|source| HolderInvocationError::Token { source })?;
@@ -763,15 +974,16 @@ where
 /// Verify one borrowed holder-signed invocation through explicit injected boundaries.
 ///
 /// Token verification completes before request canonicalization. The fixed
-/// order is token verification, bounds and canonicalization, audience signature,
-/// non-consuming profile admission, non-consuming capability and caveat policy,
-/// prebuilt success, and one replay commit. No work occurs after replay accepts.
-/// Profile truth, replay truth, downstream action semantics, and execution remain caller-owned.
+/// order is token verification, freshness window, bounds and verifier-bound
+/// canonicalization, audience signature, non-consuming profile admission,
+/// non-consuming capability and caveat policy, prebuilt success, and one replay
+/// commit. No work occurs after replay accepts. Profile truth, replay truth,
+/// downstream action semantics, and execution remain caller-owned.
 ///
 /// # Errors
 ///
-/// Returns [`HolderInvocationError`] when any token, field, authorization,
-/// profile, audience-key, signature, or replay boundary fails.
+/// Returns [`HolderInvocationError`] when any token, freshness, field,
+/// authorization, profile, audience-key, signature, or replay boundary fails.
 pub fn verify_holder_signed_invocation(
     request: &HolderInvocationRequest<'_>,
     token_context: &HolderTokenVerificationContext<'_>,
@@ -788,14 +1000,18 @@ pub fn verify_holder_signed_invocation(
     )
     .map_err(|source| HolderInvocationError::Token { source })?;
 
+    enforce_request_freshness(request.issued_at, token_context.time, policy_context.freshness)?;
+
     let token_reference = token_reference(request.compact_token);
     let canonical = canonical_request(
         &token_reference,
         verified.audience(),
         request.resource,
         request.ability,
+        policy_context.verifier,
         request.operation,
         request.nonce,
+        request.issued_at,
         policy_context.limits,
     )?;
     let audience_issuer = IssuerDid::new(verified.audience().as_str().to_owned())
@@ -823,10 +1039,12 @@ pub fn verify_holder_signed_invocation(
     let authorized = HolderInvocationAuthorized {
         issuer: verified.issuer().clone(),
         audience: verified.audience().clone(),
+        verifier: policy_context.verifier.to_owned(),
         resource: request.resource.to_owned(),
         ability: request.ability.to_owned(),
         matched_capability,
         effective_time_bounds: verified.effective_delegation().time_bounds(),
+        issued_at: request.issued_at,
         verified_at: token_context.time,
         token_reference,
         operation: request.operation,
@@ -835,7 +1053,9 @@ pub fn verify_holder_signed_invocation(
     };
     let replay_candidate = HolderInvocationReplayCandidate {
         audience: authorized.audience(),
+        verifier: authorized.verifier(),
         nonce: authorized.nonce(),
+        issued_at: authorized.issued_at(),
         request_digest: authorized.request_digest(),
     };
     policy_context
@@ -856,6 +1076,30 @@ fn authorize_request(
     }
 }
 
+const fn enforce_request_freshness(
+    issued_at: VerificationTime,
+    verified_at: VerificationTime,
+    window: HolderInvocationFreshnessWindow,
+) -> HolderInvocationResult<()> {
+    let iat = issued_at.as_unix_seconds();
+    let now = verified_at.as_unix_seconds();
+    if iat > now.saturating_add(window.max_future_skew_seconds()) {
+        return Err(HolderInvocationError::RequestIssuedInFuture {
+            issued_at_seconds: iat,
+            verified_at_seconds: now,
+            max_future_skew_seconds: window.max_future_skew_seconds(),
+        });
+    }
+    if now > iat.saturating_add(window.max_age_seconds()) {
+        return Err(HolderInvocationError::RequestExpired {
+            issued_at_seconds: iat,
+            verified_at_seconds: now,
+            max_age_seconds: window.max_age_seconds(),
+        });
+    }
+    Ok(())
+}
+
 const fn enforce_signing_token_bound(token: &str, limits: VerificationLimits) -> HolderInvocationResult<()> {
     if token.len() > limits.max_compact_token_bytes() {
         return Err(HolderInvocationError::Token {
@@ -870,13 +1114,16 @@ const fn enforce_signing_token_bound(token: &str, limits: VerificationLimits) ->
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn canonical_request(
     token_reference: &HolderInvocationTokenReference,
     audience: &AudienceDid,
     resource: &str,
     ability: &str,
+    verifier: &str,
     operation: OperationBinding,
     nonce: HolderInvocationNonce,
+    issued_at: VerificationTime,
     limits: HolderInvocationLimits,
 ) -> HolderInvocationResult<Vec<u8>> {
     let profile = operation.profile();
@@ -886,9 +1133,11 @@ fn canonical_request(
         audience.as_str(),
         resource,
         ability,
+        verifier,
         profile.as_bytes(),
         request_binding.as_bytes(),
         nonce.as_bytes(),
+        issued_at.as_unix_seconds(),
     );
     let length = holder_invocation_canonical_len(&fields, limits.fields())
         .map_err(|source| HolderInvocationError::Canonical { source })?;
@@ -999,11 +1248,14 @@ mod tests {
     use super::DEFAULT_MAX_ABILITY_BYTES;
     use super::DEFAULT_MAX_AUDIENCE_BYTES;
     use super::DEFAULT_MAX_RESOURCE_BYTES;
+    use super::DEFAULT_MAX_VERIFIER_BYTES;
     use super::HARD_MAX_ABILITY_BYTES;
     use super::HARD_MAX_AUDIENCE_BYTES;
     use super::HARD_MAX_CANONICAL_BYTES;
     use super::HARD_MAX_RESOURCE_BYTES;
+    use super::HARD_MAX_VERIFIER_BYTES;
     use super::HolderInvocationAuthorized;
+    use super::HolderInvocationCanonicalError;
     use super::HolderInvocationError;
     use super::HolderInvocationFixedField;
     use super::HolderInvocationInputError;
@@ -1048,6 +1300,8 @@ mod tests {
     const OTHER_RESOURCE: &str = "did:key:z6Mkresource/videos";
     const ABILITY: &str = "store/add";
     const OTHER_ABILITY: &str = "store/remove";
+    const VERIFIER_ID: &str = "https://verifier-a.example/ucan";
+    const OTHER_VERIFIER_ID: &str = "https://verifier-b.example/ucan";
     const REQUEST_BYTES: &[u8] = b"basalt-request-v1";
     const OTHER_REQUEST_BYTES: &[u8] = b"basalt-request-v2";
     const CAVEAT_DOMAIN: &str = "example";
@@ -1307,8 +1561,14 @@ mod tests {
                 self.root_issuers,
                 self.token_limits,
             );
-            let policy_context =
-                HolderInvocationPolicyContext::new(self.caveats, self.profiles, self.replay, self.holder_limits);
+            let policy_context = HolderInvocationPolicyContext::new(
+                VERIFIER_ID,
+                super::HolderInvocationFreshnessWindow::default(),
+                self.caveats,
+                self.profiles,
+                self.replay,
+                self.holder_limits,
+            );
             verify_holder_signed_invocation(request, &token_context, &policy_context)
         }
     }
@@ -1364,6 +1624,10 @@ mod tests {
         )
     }
 
+    fn issued_at() -> VerificationTime {
+        VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS)
+    }
+
     fn sign_request(
         token: &CompactToken,
         audience: &AudienceDid,
@@ -1374,7 +1638,16 @@ mod tests {
         signer: &Ed25519InMemorySigner,
     ) -> SignerSignature {
         sign_holder_invocation(
-            &HolderInvocationSigningRequest::new(token.as_str(), audience, resource, ability, operation, nonce),
+            &HolderInvocationSigningRequest::new(
+                token.as_str(),
+                audience,
+                resource,
+                ability,
+                VERIFIER_ID,
+                operation,
+                nonce,
+                issued_at(),
+            ),
             signer,
             VerificationLimits::default(),
             HolderInvocationLimits::default(),
@@ -1403,8 +1676,15 @@ mod tests {
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
-        let request =
-            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
 
         let authorized = verifier.verify(&request).expect("direct holder invocation must verify");
 
@@ -1440,8 +1720,15 @@ mod tests {
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
-        let request =
-            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
 
         let authorized = verifier.verify(&request).expect("delegated holder invocation must verify");
 
@@ -1460,8 +1747,10 @@ mod tests {
                 &fixture.audience,
                 RESOURCE,
                 ABILITY,
+                VERIFIER_ID,
                 operation(),
                 nonce(),
+                issued_at(),
             ),
             &wrong_holder,
             VerificationLimits::default(),
@@ -1476,8 +1765,10 @@ mod tests {
             &fixture.audience,
             RESOURCE,
             ABILITY,
+            VERIFIER_ID,
             operation(),
             nonce(),
+            issued_at(),
             HolderInvocationLimits::default(),
         )
         .expect("test canonical request must build");
@@ -1505,6 +1796,7 @@ mod tests {
                 ABILITY,
                 operation(),
                 nonce(),
+                issued_at(),
                 &wrong_signature,
             ))
             .expect_err("wrong holder signature must fail");
@@ -1523,8 +1815,10 @@ mod tests {
             &fixture.audience,
             RESOURCE,
             ABILITY,
+            VERIFIER_ID,
             operation(),
             nonce(),
+            issued_at(),
             HolderInvocationLimits::default(),
         )
         .expect("test canonical request must build");
@@ -1550,6 +1844,8 @@ mod tests {
             VerificationLimits::default(),
         );
         let policy_context = HolderInvocationPolicyContext::new(
+            VERIFIER_ID,
+            super::HolderInvocationFreshnessWindow::default(),
             &DenyUnknownCaveats,
             &profiles,
             &replay,
@@ -1561,6 +1857,7 @@ mod tests {
             ABILITY,
             operation(),
             nonce(),
+            issued_at(),
             &wrong_signature,
         );
 
@@ -1593,8 +1890,15 @@ mod tests {
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
-        let request =
-            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
 
         verifier.verify(&request).expect("first nonce admission must succeed");
         let error = verifier.verify(&request).expect_err("duplicate nonce must fail");
@@ -1643,6 +1947,7 @@ mod tests {
                 ABILITY,
                 operation(),
                 other_nonce(),
+                issued_at(),
                 &signature,
             ))
             .expect_err("nonce substitution must invalidate the signature");
@@ -1691,6 +1996,7 @@ mod tests {
                     ability,
                     operation_binding,
                     nonce(),
+                    issued_at(),
                     &signature,
                 ))
                 .expect_err("substituted request field must fail");
@@ -1730,6 +2036,7 @@ mod tests {
                 ABILITY,
                 operation(),
                 nonce(),
+                issued_at(),
                 &signature,
             ))
             .expect_err("token substitution must invalidate the signature");
@@ -1776,6 +2083,7 @@ mod tests {
                 ABILITY,
                 operation(),
                 nonce(),
+                issued_at(),
                 &corrupted,
             ))
             .expect_err("corrupted signature must fail");
@@ -1797,6 +2105,7 @@ mod tests {
             HolderInvocationLimits::default().max_audience_bytes(),
             SHORT_RESOURCE_LIMIT,
             HolderInvocationLimits::default().max_ability_bytes(),
+            HolderInvocationLimits::default().max_verifier_bytes(),
         )
         .expect("test limits must fit canonical widths");
         let verifier = TestVerifier {
@@ -1818,6 +2127,7 @@ mod tests {
                 ABILITY,
                 operation(),
                 nonce(),
+                issued_at(),
                 &signature,
             ))
             .expect_err("oversized resource must fail");
@@ -1854,6 +2164,7 @@ mod tests {
             ABILITY,
             operation(),
             nonce(),
+            issued_at(),
             &direct_signature,
         );
         assert!(matches!(
@@ -1912,6 +2223,7 @@ mod tests {
                 ABILITY,
                 operation(),
                 nonce(),
+                issued_at(),
                 &delegated_signature,
             )),
             Err(HolderInvocationError::Token {
@@ -1956,6 +2268,7 @@ mod tests {
                 ABILITY,
                 operation(),
                 nonce(),
+                issued_at(),
                 &signature,
             )),
             Err(HolderInvocationError::Authorization { .. })
@@ -1992,6 +2305,7 @@ mod tests {
                 ABILITY,
                 unknown_operation,
                 nonce(),
+                issued_at(),
                 &unknown_signature,
             )),
             Err(HolderInvocationError::OperationProfile {
@@ -2008,6 +2322,7 @@ mod tests {
                 HARD_MAX_AUDIENCE_BYTES + 1,
                 DEFAULT_MAX_RESOURCE_BYTES,
                 DEFAULT_MAX_ABILITY_BYTES,
+                DEFAULT_MAX_VERIFIER_BYTES,
             ),
             Err(HolderInvocationLimitError::ConfiguredFieldLimitTooLarge {
                 field: ucan_core::holder_invocation::HolderInvocationField::Audience,
@@ -2019,6 +2334,7 @@ mod tests {
                 DEFAULT_MAX_AUDIENCE_BYTES,
                 HARD_MAX_RESOURCE_BYTES + 1,
                 DEFAULT_MAX_ABILITY_BYTES,
+                DEFAULT_MAX_VERIFIER_BYTES,
             ),
             Err(HolderInvocationLimitError::ConfiguredFieldLimitTooLarge {
                 field: ucan_core::holder_invocation::HolderInvocationField::Resource,
@@ -2030,6 +2346,7 @@ mod tests {
                 DEFAULT_MAX_AUDIENCE_BYTES,
                 DEFAULT_MAX_RESOURCE_BYTES,
                 HARD_MAX_ABILITY_BYTES + 1,
+                DEFAULT_MAX_VERIFIER_BYTES,
             ),
             Err(HolderInvocationLimitError::ConfiguredFieldLimitTooLarge {
                 field: ucan_core::holder_invocation::HolderInvocationField::Ability,
@@ -2039,9 +2356,13 @@ mod tests {
 
         let fixture = DirectFixture::new();
         let token_reference = token_reference(fixture.token.as_str());
-        let maximum_limits =
-            HolderInvocationLimits::try_new(HARD_MAX_AUDIENCE_BYTES, HARD_MAX_RESOURCE_BYTES, HARD_MAX_ABILITY_BYTES)
-                .expect("reviewed hard maxima must be valid configured limits");
+        let maximum_limits = HolderInvocationLimits::try_new(
+            HARD_MAX_AUDIENCE_BYTES,
+            HARD_MAX_RESOURCE_BYTES,
+            HARD_MAX_ABILITY_BYTES,
+            HARD_MAX_VERIFIER_BYTES,
+        )
+        .expect("reviewed hard maxima must be valid configured limits");
         let maximum_resource = "r".repeat(HARD_MAX_RESOURCE_BYTES);
         let maximum_ability = "a".repeat(HARD_MAX_ABILITY_BYTES);
         assert!(matches!(
@@ -2050,8 +2371,10 @@ mod tests {
                 &fixture.audience,
                 maximum_resource.as_str(),
                 maximum_ability.as_str(),
+                VERIFIER_ID,
                 operation(),
                 nonce(),
+                issued_at(),
                 maximum_limits,
             ),
             Err(HolderInvocationError::Limit {
@@ -2117,6 +2440,7 @@ mod tests {
             ABILITY,
             operation(),
             nonce(),
+            issued_at(),
             &corrupted_signature,
         );
 
@@ -2160,8 +2484,15 @@ mod tests {
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
-        let request =
-            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
 
         assert!(matches!(
             verifier.verify(&request),
@@ -2208,8 +2539,15 @@ mod tests {
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
-        let request =
-            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
 
         assert!(matches!(verifier.verify(&request), Err(HolderInvocationError::Authorization { .. })));
         assert_eq!(events.borrow().as_slice(), ["profile", "caveat"]);
@@ -2251,8 +2589,15 @@ mod tests {
             token_limits: VerificationLimits::default(),
             holder_limits: HolderInvocationLimits::default(),
         };
-        let request =
-            HolderInvocationRequest::new(fixture.token.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
 
         assert!(matches!(
             verifier.verify(&request),
@@ -2334,8 +2679,15 @@ mod tests {
         let profiles = KnownProfile::new(profile());
         let replay = RecordingReplay::default();
         let signature = sign_request(&forged_root, &holder_audience, RESOURCE, ABILITY, operation(), nonce(), &holder);
-        let request =
-            HolderInvocationRequest::new(forged_root.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            forged_root.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
         let token_context = HolderTokenVerificationContext::new(
             VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
             &shared_keys,
@@ -2346,6 +2698,8 @@ mod tests {
             VerificationLimits::default(),
         );
         let policy_context = HolderInvocationPolicyContext::new(
+            VERIFIER_ID,
+            super::HolderInvocationFreshnessWindow::default(),
             &DenyUnknownCaveats,
             &profiles,
             &replay,
@@ -2410,6 +2764,8 @@ mod tests {
             VerificationLimits::default(),
         );
         let policy_context = HolderInvocationPolicyContext::new(
+            VERIFIER_ID,
+            super::HolderInvocationFreshnessWindow::default(),
             &DenyUnknownCaveats,
             &profiles,
             &replay,
@@ -2417,8 +2773,15 @@ mod tests {
         );
 
         let valid_sig = sign_request(&legitimate, &holder_audience, RESOURCE, ABILITY, operation(), nonce(), &holder);
-        let valid_request =
-            HolderInvocationRequest::new(legitimate.as_str(), RESOURCE, ABILITY, operation(), nonce(), &valid_sig);
+        let valid_request = HolderInvocationRequest::new(
+            legitimate.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &valid_sig,
+        );
         verify_holder_signed_invocation(&valid_request, &token_context, &policy_context)
             .expect("separate issuer and holder resolvers must admit legitimate invocation");
         assert_eq!(replay.calls.get(), 1);
@@ -2438,6 +2801,7 @@ mod tests {
             ABILITY,
             operation(),
             other_nonce(),
+            issued_at(),
             &forged_sig,
         );
         let error = verify_holder_signed_invocation(&forged_request, &token_context, &policy_context)
@@ -2487,7 +2851,15 @@ mod tests {
         let profiles = KnownProfile::new(profile());
         let replay = RecordingReplay::default();
         let signature = sign_request(&child, &holder_audience, RESOURCE, ABILITY, operation(), nonce(), &holder);
-        let request = HolderInvocationRequest::new(child.as_str(), RESOURCE, ABILITY, operation(), nonce(), &signature);
+        let request = HolderInvocationRequest::new(
+            child.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
         let token_context = HolderTokenVerificationContext::new(
             VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
             &shared_keys,
@@ -2498,6 +2870,8 @@ mod tests {
             VerificationLimits::default(),
         );
         let policy_context = HolderInvocationPolicyContext::new(
+            VERIFIER_ID,
+            super::HolderInvocationFreshnessWindow::default(),
             &DenyUnknownCaveats,
             &profiles,
             &replay,
@@ -2512,5 +2886,314 @@ mod tests {
             }
         }));
         assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn expired_holder_request_is_rejected_before_replay() {
+        let fixture = DirectFixture::new();
+        let old_issued_at =
+            VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS - super::DEFAULT_HOLDER_MAX_AGE_SECONDS - 1);
+        let signature = sign_holder_invocation(
+            &HolderInvocationSigningRequest::new(
+                fixture.token.as_str(),
+                &fixture.audience,
+                RESOURCE,
+                ABILITY,
+                VERIFIER_ID,
+                operation(),
+                nonce(),
+                old_issued_at,
+            ),
+            &fixture.holder,
+            VerificationLimits::default(),
+            HolderInvocationLimits::default(),
+        )
+        .expect("old request should sign");
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = RecordingReplay::default();
+        let verifier = TestVerifier {
+            time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            keys: &fixture.keys,
+            proofs: &proofs,
+            revocations: &revocations,
+            root_issuers: &fixture.trusted_roots,
+            profiles: &profiles,
+            replay: &replay,
+            caveats: &DenyUnknownCaveats,
+            token_limits: VerificationLimits::default(),
+            holder_limits: HolderInvocationLimits::default(),
+        };
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            old_issued_at,
+            &signature,
+        );
+
+        let error = verifier.verify(&request).expect_err("stale holder request must be rejected");
+        assert!(matches!(error, HolderInvocationError::RequestExpired { .. }));
+        assert_eq!(profiles.calls.get(), 0);
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn future_dated_holder_request_is_rejected_before_replay() {
+        let fixture = DirectFixture::new();
+        let future_issued_at =
+            VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS + super::DEFAULT_HOLDER_MAX_FUTURE_SKEW_SECONDS + 1);
+        let signature = sign_holder_invocation(
+            &HolderInvocationSigningRequest::new(
+                fixture.token.as_str(),
+                &fixture.audience,
+                RESOURCE,
+                ABILITY,
+                VERIFIER_ID,
+                operation(),
+                nonce(),
+                future_issued_at,
+            ),
+            &fixture.holder,
+            VerificationLimits::default(),
+            HolderInvocationLimits::default(),
+        )
+        .expect("future request should sign");
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = RecordingReplay::default();
+        let verifier = TestVerifier {
+            time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            keys: &fixture.keys,
+            proofs: &proofs,
+            revocations: &revocations,
+            root_issuers: &fixture.trusted_roots,
+            profiles: &profiles,
+            replay: &replay,
+            caveats: &DenyUnknownCaveats,
+            token_limits: VerificationLimits::default(),
+            holder_limits: HolderInvocationLimits::default(),
+        };
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            future_issued_at,
+            &signature,
+        );
+
+        let error = verifier.verify(&request).expect_err("future-dated holder request must be rejected");
+        assert!(matches!(error, HolderInvocationError::RequestIssuedInFuture { .. }));
+        assert_eq!(profiles.calls.get(), 0);
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn tampered_issued_at_fails_holder_signature_before_replay() {
+        let fixture = DirectFixture::new();
+        let signed_at = VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS - 10);
+        let signature = sign_holder_invocation(
+            &HolderInvocationSigningRequest::new(
+                fixture.token.as_str(),
+                &fixture.audience,
+                RESOURCE,
+                ABILITY,
+                VERIFIER_ID,
+                operation(),
+                nonce(),
+                signed_at,
+            ),
+            &fixture.holder,
+            VerificationLimits::default(),
+            HolderInvocationLimits::default(),
+        )
+        .expect("request should sign");
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = RecordingReplay::default();
+        let verifier = TestVerifier {
+            time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            keys: &fixture.keys,
+            proofs: &proofs,
+            revocations: &revocations,
+            root_issuers: &fixture.trusted_roots,
+            profiles: &profiles,
+            replay: &replay,
+            caveats: &DenyUnknownCaveats,
+            token_limits: VerificationLimits::default(),
+            holder_limits: HolderInvocationLimits::default(),
+        };
+        let tampered_request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            &signature,
+        );
+
+        let error =
+            verifier.verify(&tampered_request).expect_err("tampered issued_at must invalidate holder signature");
+        assert!(matches!(error, HolderInvocationError::InvalidHolderSignature));
+        assert_eq!(profiles.calls.get(), 0);
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn cross_verifier_replay_fails_holder_signature_before_replay() {
+        let fixture = DirectFixture::new();
+        let signature =
+            sign_request(&fixture.token, &fixture.audience, RESOURCE, ABILITY, operation(), nonce(), &fixture.holder);
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = RecordingReplay::default();
+        let token_context = HolderTokenVerificationContext::new(
+            VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            &fixture.keys,
+            &fixture.keys,
+            &proofs,
+            &revocations,
+            &fixture.trusted_roots,
+            VerificationLimits::default(),
+        );
+        let other_verifier_policy = HolderInvocationPolicyContext::new(
+            OTHER_VERIFIER_ID,
+            super::HolderInvocationFreshnessWindow::default(),
+            &DenyUnknownCaveats,
+            &profiles,
+            &replay,
+            HolderInvocationLimits::default(),
+        );
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
+
+        let error = verify_holder_signed_invocation(&request, &token_context, &other_verifier_policy)
+            .expect_err("request signed for verifier A must not verify on verifier B");
+        assert!(matches!(error, HolderInvocationError::InvalidHolderSignature));
+        assert_eq!(profiles.calls.get(), 0);
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn empty_verifier_and_overbroad_freshness_window_fail_closed() {
+        assert!(matches!(
+            super::HolderInvocationFreshnessWindow::try_new(super::HARD_MAX_HOLDER_AGE_SECONDS + 1, 0),
+            Err(HolderInvocationLimitError::FreshnessMaxAgeTooLarge { .. })
+        ));
+        assert!(matches!(
+            super::HolderInvocationFreshnessWindow::try_new(60, super::HARD_MAX_HOLDER_FUTURE_SKEW_SECONDS + 1),
+            Err(HolderInvocationLimitError::FreshnessFutureSkewTooLarge { .. })
+        ));
+
+        let fixture = DirectFixture::new();
+        let signature =
+            sign_request(&fixture.token, &fixture.audience, RESOURCE, ABILITY, operation(), nonce(), &fixture.holder);
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = RecordingReplay::default();
+        let token_context = HolderTokenVerificationContext::new(
+            VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            &fixture.keys,
+            &fixture.keys,
+            &proofs,
+            &revocations,
+            &fixture.trusted_roots,
+            VerificationLimits::default(),
+        );
+        let empty_verifier_policy = HolderInvocationPolicyContext::new(
+            "",
+            super::HolderInvocationFreshnessWindow::default(),
+            &DenyUnknownCaveats,
+            &profiles,
+            &replay,
+            HolderInvocationLimits::default(),
+        );
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
+
+        let error = verify_holder_signed_invocation(&request, &token_context, &empty_verifier_policy)
+            .expect_err("empty verifier identity must fail closed");
+        assert!(matches!(error, HolderInvocationError::Canonical {
+            source: HolderInvocationCanonicalError::EmptyField {
+                field: ucan_core::holder_invocation::HolderInvocationField::Verifier
+            }
+        }));
+        assert_eq!(replay.calls.get(), 0);
+    }
+
+    #[test]
+    fn replay_candidate_exposes_verifier_and_issued_at_for_bounded_pruning() {
+        struct CapturingReplay {
+            captured: RefCell<Option<(String, VerificationTime)>>,
+        }
+        impl HolderInvocationReplayAdmission for CapturingReplay {
+            fn admit_holder_invocation(
+                &self,
+                candidate: &HolderInvocationReplayCandidate<'_>,
+            ) -> Result<(), HolderInvocationReplayError> {
+                *self.captured.borrow_mut() = Some((candidate.verifier().to_owned(), candidate.issued_at()));
+                Ok(())
+            }
+        }
+
+        let fixture = DirectFixture::new();
+        let signature =
+            sign_request(&fixture.token, &fixture.audience, RESOURCE, ABILITY, operation(), nonce(), &fixture.holder);
+        let proofs = ProofCollection::empty();
+        let revocations = NoRevocations;
+        let profiles = KnownProfile::new(profile());
+        let replay = CapturingReplay {
+            captured: RefCell::new(None),
+        };
+        let verifier = TestVerifier {
+            time: VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
+            keys: &fixture.keys,
+            proofs: &proofs,
+            revocations: &revocations,
+            root_issuers: &fixture.trusted_roots,
+            profiles: &profiles,
+            replay: &replay,
+            caveats: &DenyUnknownCaveats,
+            token_limits: VerificationLimits::default(),
+            holder_limits: HolderInvocationLimits::default(),
+        };
+        let request = HolderInvocationRequest::new(
+            fixture.token.as_str(),
+            RESOURCE,
+            ABILITY,
+            operation(),
+            nonce(),
+            issued_at(),
+            &signature,
+        );
+
+        let authorized = verifier.verify(&request).expect("valid fresh verifier-bound request must succeed");
+        assert_eq!(authorized.verifier(), VERIFIER_ID);
+        assert_eq!(authorized.issued_at(), issued_at());
+        assert_eq!(*replay.captured.borrow(), Some((VERIFIER_ID.to_owned(), issued_at())));
     }
 }

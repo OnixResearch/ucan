@@ -12,6 +12,7 @@ use ucan::CaveatPolicy;
 use ucan::CaveatPolicySet;
 use ucan::ED25519_SECRET_KEY_BYTES;
 use ucan::Ed25519InMemorySigner;
+use ucan::HolderInvocationFreshnessWindow;
 use ucan::HolderInvocationLimits;
 use ucan::HolderInvocationNonce;
 use ucan::HolderInvocationPolicyContext;
@@ -47,6 +48,7 @@ const TOKEN_NOT_BEFORE_SECONDS: u64 = 1_000;
 const TOKEN_EXPIRES_SECONDS: u64 = 2_000;
 const RESOURCE: &str = "did:key:z6Mkresource/photos";
 const ABILITY: &str = "store/add";
+const VERIFIER_ID: &str = "https://example.invalid/ucan-verifier";
 const OPERATION_PROFILE: &[u8] = b"basalt.closed-action.store-add.v1";
 const DOWNSTREAM_REQUEST: &[u8] = b"basalt-request:target=photos;action=store-add";
 
@@ -145,8 +147,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         RequestBindingDigest::from_bytes(*blake3::hash(DOWNSTREAM_REQUEST).as_bytes()),
     );
     let nonce = HolderInvocationNonce::from_bytes([INVOCATION_NONCE_BYTE; blake3::OUT_LEN]);
+    let issued_at = VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS);
     let signature = sign_holder_invocation(
-        &HolderInvocationSigningRequest::new(token.as_str(), &audience, RESOURCE, ABILITY, operation, nonce),
+        &HolderInvocationSigningRequest::new(
+            token.as_str(),
+            &audience,
+            RESOURCE,
+            ABILITY,
+            VERIFIER_ID,
+            operation,
+            nonce,
+            issued_at,
+        ),
         &audience_key,
         VerificationLimits::default(),
         HolderInvocationLimits::default(),
@@ -164,9 +176,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         &trusted_roots,
         VerificationLimits::default(),
     );
-    let policy_context =
-        HolderInvocationPolicyContext::new(&policies, &profiles, &replay, HolderInvocationLimits::default());
-    let request = HolderInvocationRequest::new(token.as_str(), RESOURCE, ABILITY, operation, nonce, &signature);
+    let policy_context = HolderInvocationPolicyContext::new(
+        VERIFIER_ID,
+        HolderInvocationFreshnessWindow::default(),
+        &policies,
+        &profiles,
+        &replay,
+        HolderInvocationLimits::default(),
+    );
+    let request =
+        HolderInvocationRequest::new(token.as_str(), RESOURCE, ABILITY, operation, nonce, issued_at, &signature);
     let authorized = verify_holder_signed_invocation(&request, &token_context, &policy_context)?;
 
     println!("holder-signed invocation allowed for {} with {}", authorized.audience(), authorized.ability());

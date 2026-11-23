@@ -50,21 +50,29 @@ fn admit_direct(
     fixture: &super::DirectFixture,
     verifier: &super::TestVerifier<'_>,
 ) -> Result<crate::HolderInvocationAuthorized, crate::HolderInvocationError> {
-    let signature = super::sign_request(
-        &fixture.token,
-        &fixture.audience,
-        super::RESOURCE,
-        super::ABILITY,
-        super::operation(),
-        super::nonce(),
+    let signature = crate::sign_holder_invocation(
+        &crate::HolderInvocationSigningRequest::new(
+            fixture.token.as_str(),
+            &fixture.audience,
+            super::RESOURCE,
+            super::ABILITY,
+            super::VERIFIER_ID,
+            super::operation(),
+            super::nonce(),
+            verifier.time,
+        ),
         &fixture.holder,
-    );
+        crate::VerificationLimits::default(),
+        crate::HolderInvocationLimits::default(),
+    )
+    .expect("holder request should sign");
     verifier.verify(&crate::HolderInvocationRequest::new(
         fixture.token.as_str(),
         super::RESOURCE,
         super::ABILITY,
         super::operation(),
         super::nonce(),
+        verifier.time,
         &signature,
     ))
 }
@@ -294,6 +302,7 @@ fn delegated_recheck_visits_parent_and_denies_revoked_or_missing_proof() {
         super::ABILITY,
         super::operation(),
         super::nonce(),
+        super::issued_at(),
         &signature,
     );
     let authorized = verifier.verify(&request).expect("delegated initial admission");

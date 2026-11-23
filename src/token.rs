@@ -218,6 +218,7 @@ pub enum TokenError {
     InvalidPublicKeyLength { actual: usize },
     DidEncodingUtf8,
     MissingVerificationKey { issuer: String },
+    ResolvedIssuerKeyMismatch { expected: String, actual: String },
     KeyResolver { source: KeyResolverError },
     ProofStore { source: ProofStoreError },
     Revocation { source: RevocationError },
@@ -272,6 +273,9 @@ impl fmt::Display for TokenError {
             Self::MissingVerificationKey { issuer } => {
                 write!(formatter, "no verification key registered for issuer {issuer}")
             }
+            Self::ResolvedIssuerKeyMismatch { expected, actual } => {
+                write!(formatter, "resolved verification key for issuer {expected} encodes {actual}")
+            }
             Self::KeyResolver { source } => write!(formatter, "key resolver failed: {source}"),
             Self::ProofStore { source } => write!(formatter, "proof store failed: {source}"),
             Self::Revocation { source } => write!(formatter, "revocation check failed: {source}"),
@@ -323,6 +327,7 @@ impl std::error::Error for TokenError {
             | Self::InvalidPublicKeyLength { .. }
             | Self::DidEncodingUtf8
             | Self::MissingVerificationKey { .. }
+            | Self::ResolvedIssuerKeyMismatch { .. }
             | Self::Revoked { .. }
             | Self::Signature { .. }
             | Self::Temporal { .. }
@@ -3033,6 +3038,13 @@ where
         KeyResolverError::MissingKey { issuer } => TokenError::MissingVerificationKey { issuer },
         source => TokenError::KeyResolver { source },
     })?;
+    let resolved_issuer = public_key.issuer()?;
+    if resolved_issuer != issuer {
+        return Err(TokenError::ResolvedIssuerKeyMismatch {
+            expected: issuer.as_str().to_owned(),
+            actual: resolved_issuer.as_str().to_owned(),
+        });
+    }
     let valid = verify_ed25519_signature(public_key.as_bytes(), token.signing_input, token.signature.as_slice())?;
     if !valid {
         return Err(TokenError::Signature {
@@ -3053,6 +3065,14 @@ where
     let issuer = IssuerDid::new(token.claims.issuer_did().to_owned())?;
     let public_key = match resolver.resolve_key(&issuer) {
         Ok(public_key) => {
+            let resolved_issuer = public_key.issuer()?;
+            if resolved_issuer != issuer {
+                traversal.record_backend_operation(VerifiedBackendOperation::KeyResolution, false);
+                return Err(TokenError::ResolvedIssuerKeyMismatch {
+                    expected: issuer.as_str().to_owned(),
+                    actual: resolved_issuer.as_str().to_owned(),
+                });
+            }
             traversal.record_backend_operation(VerifiedBackendOperation::KeyResolution, true);
             public_key
         }
@@ -7034,6 +7054,71 @@ mod tests {
             TokenError::RootIssuer {
                 source: super::RootIssuerError::Backend { message, .. }
             } if message == BACKEND_FAILURE_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn mismatched_resolved_issuer_key_is_rejected_even_with_valid_signature() {
+        struct ConfusedKeyResolver {
+            substitute: Ed25519PublicKey,
+        }
+        impl KeyResolver for ConfusedKeyResolver {
+            fn resolve_key(&self, _issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError> {
+                Ok(self.substitute.clone())
+            }
+        }
+
+        let trusted_root = signing_key(ISSUER_SECRET_BYTE);
+        let attacker = signing_key(OTHER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience should derive");
+        let trusted_did = trusted_root.issuer().expect("trusted root DID");
+        let attacker_did = attacker.issuer().expect("attacker DID");
+
+        // Build a compact token claiming `iss = trusted_did` but signed by `attacker`.
+        let header_json = r#"{"alg":"EdDSA","typ":"JWT"}"#;
+        let payload_json = format!(
+            r#"{{"iss":"{}","aud":"{}","att":[{{"with":"did:key:z6Mkresource/docs","can":"store/add"}}],"prf":[],"exp":{},"nbf":{}}}"#,
+            trusted_did.as_str(),
+            audience.as_str(),
+            TOKEN_EXPIRES_AT_SECONDS,
+            TOKEN_NOT_BEFORE_SECONDS
+        );
+        let header_b64 = super::URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload_b64 = super::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
+        let signing_input = format!("{header_b64}.{payload_b64}");
+        let attacker_sig = crate::verified::sign_ed25519(attacker.as_bytes(), signing_input.as_bytes())
+            .expect("attacker signature should sign");
+        let sig_b64 = super::URL_SAFE_NO_PAD.encode(attacker_sig.as_slice());
+        let forged = test_compact_token(&header_b64, &payload_b64, &sig_b64);
+
+        let confused_resolver = ConfusedKeyResolver {
+            substitute: attacker.public_key().expect("attacker public key"),
+        };
+
+        let decoded = parse_compact_token(&forged).expect("forged token should parse");
+        let valid = validate_decoded_token(decoded).expect("forged token should validate structurally");
+        let direct_error = super::verify_token_signature_with_resolver(valid, &confused_resolver)
+            .expect_err("mismatched resolved issuer key must fail direct signature verification");
+        assert!(matches!(
+            direct_error,
+            TokenError::ResolvedIssuerKeyMismatch { expected, actual }
+            if expected == trusted_did.as_str() && actual == attacker_did.as_str()
+        ));
+
+        let trusted_roots = super::TrustedRootIssuers::empty().with_issuer(trusted_did.clone());
+        let compact_error = super::verify_compact_token_with_resolvers(
+            &forged,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &confused_resolver,
+            &ProofCollection::empty(),
+            &trusted_roots,
+            VerificationLimits::default(),
+        )
+        .expect_err("mismatched resolved issuer key must fail compact verification");
+        assert!(matches!(
+            compact_error,
+            TokenError::ResolvedIssuerKeyMismatch { expected, actual }
+            if expected == trusted_did.as_str() && actual == attacker_did.as_str()
         ));
     }
 
