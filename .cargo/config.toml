@@ -1,13 +1,7 @@
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--allow-multiple-definition"]
-
-[target.aarch64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--allow-multiple-definition"]
-
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-Wl,-multiply_defined,suppress"]
-
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-Wl,-multiply_defined,suppress"]
+# Keep Cargo configuration toolchain-neutral so builds work outside the Nix dev
+# shell without requiring `clang` or `mold`. Duplicate-symbol linker suppression
+# (`--allow-multiple-definition` / `-multiply_defined,suppress`) is intentionally
+# omitted so linker conflicts fail closed instead of picking a symbol silently.
+#
+# Fast linker selection for local development is configured by `flake.nix`'s
+# `devShells.default` (or caller-provided `CARGO_TARGET_*` environment vars).

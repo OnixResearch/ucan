@@ -258,24 +258,34 @@
               '';
         };
 
-        devShells.default = craneLib.devShell {
-          inherit buildInputs;
-          UV_CONSTRAINT = "${./tests/hegel-constraints.txt}";
+        devShells.default = craneLib.devShell (
+          {
+            inherit buildInputs;
+            UV_CONSTRAINT = "${./tests/hegel-constraints.txt}";
 
-          packages = with pkgs; [
-            cargo-fuzz
-            cargo-mutants
-            cargo-nextest
-            cargo-watch
-            rust-analyzer
-            uv
-            nickelCohort
-          ];
+            packages = with pkgs; [
+              cargo-fuzz
+              cargo-mutants
+              cargo-nextest
+              cargo-watch
+              rust-analyzer
+              uv
+              nickelCohort
+            ];
 
-          # Ensure the nightly toolchain and vendored verified-logic source are
-          # present in the same cleaned build tree used by the package.
-          inputsFrom = [ ucan ];
-        };
+            # Ensure the nightly toolchain and vendored verified-logic source are
+            # present in the same cleaned build tree used by the package.
+            inputsFrom = [ ucan ];
+          }
+          // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "clang";
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+          }
+          // pkgs.lib.optionalAttrs (system == "aarch64-linux") {
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "clang";
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+          }
+        );
       }
     );
 }
