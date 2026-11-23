@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .time(VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS))
         .keys(KeyResolutionContext::new(vec![ucan::Ed25519VerificationKey::from_signing_key(&issuer_key)?]))
         .proofs(ProofCollection::empty())
+        .trusted_root(issuer_key.issuer()?)
         .build()?;
     let verified = verify_compact_token_str(token_from_header, &context)?;
     let decision = verified.authorize(RESOURCE_DID, ABILITY);

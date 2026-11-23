@@ -15,6 +15,7 @@ use ucan::RevocationList;
 use ucan::TokenError;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
+use ucan::TrustedRootIssuers;
 use ucan::VerificationLimits;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
@@ -68,6 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let keys = KeyResolutionContext::new(vec![root.verification_key()?, child.verification_key()?]);
     let proofs = ProofCollection::from_tokens(vec![parent_token]);
+    let trusted_roots = TrustedRootIssuers::empty().with_issuer(root.issuer()?);
     let verification_time = VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS);
 
     let verified = verify_compact_token_with_resolvers_and_revocations(
@@ -76,6 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &keys,
         &proofs,
         &NoRevocations,
+        &trusted_roots,
         VerificationLimits::default(),
     )?;
     println!("verified child issuer: {}", verified.issuer());
@@ -88,6 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &keys,
         &proofs,
         &revoked_parent,
+        &trusted_roots,
         VerificationLimits::default(),
     )
     .expect_err("revoked parent proof must fail verification");
@@ -105,6 +109,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &keys,
         &proofs,
         &UnavailableRevocationBackend,
+        &trusted_roots,
         VerificationLimits::default(),
     )
     .expect_err("unavailable revocation backend must fail closed");

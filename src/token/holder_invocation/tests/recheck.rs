@@ -1,6 +1,7 @@
 fn verifier<'a>(
     keys: &'a crate::KeyResolutionContext,
     proofs: &'a crate::ProofCollection,
+    root_issuers: &'a dyn crate::RootIssuerAdmission,
     profiles: &'a dyn crate::OperationProfileAdmission,
     replay: &'a dyn crate::HolderInvocationReplayAdmission,
     caveats: &'a dyn crate::CaveatPolicySet,
@@ -10,6 +11,7 @@ fn verifier<'a>(
         keys,
         proofs,
         revocations: &crate::NoRevocations,
+        root_issuers,
         profiles,
         replay,
         caveats,
@@ -30,8 +32,10 @@ impl super::TestVerifier<'_> {
             &crate::HolderTokenVerificationContext::new(
                 self.time,
                 self.keys,
+                self.keys,
                 self.proofs,
                 self.revocations,
+                self.root_issuers,
                 self.token_limits,
             ),
             &crate::HolderRecheckPolicies {
@@ -71,7 +75,14 @@ fn repeated_observations_never_readmit_the_nonce() {
     let proofs = crate::ProofCollection::empty();
     let profiles = super::KnownProfile::new(super::profile());
     let replay = super::RecordingReplay::default();
-    let mut verifier = verifier(&fixture.keys, &proofs, &profiles, &replay, &crate::token::DenyUnknownCaveats);
+    let mut verifier = verifier(
+        &fixture.keys,
+        &proofs,
+        &fixture.trusted_roots,
+        &profiles,
+        &replay,
+        &crate::token::DenyUnknownCaveats,
+    );
     let authorized = admit_direct(&fixture, &verifier).expect("initial holder admission");
     verifier.token_limits = verifier.token_limits.with_clock_skew_tolerance_seconds(0);
     for seconds in [1500, 1501, 1502, 2000] {
@@ -97,7 +108,14 @@ fn missing_current_key_denies_before_profile_and_replay() {
     let proofs = crate::ProofCollection::empty();
     let profiles = super::KnownProfile::new(super::profile());
     let replay = super::RecordingReplay::default();
-    let mut verifier = verifier(&fixture.keys, &proofs, &profiles, &replay, &crate::token::DenyUnknownCaveats);
+    let mut verifier = verifier(
+        &fixture.keys,
+        &proofs,
+        &fixture.trusted_roots,
+        &profiles,
+        &replay,
+        &crate::token::DenyUnknownCaveats,
+    );
     let authorized = admit_direct(&fixture, &verifier).expect("initial holder admission");
     let missing = crate::KeyResolutionContext::new(Vec::new());
     verifier.keys = &missing;
@@ -132,6 +150,12 @@ impl crate::RevocationChecker for ForbiddenServices {
     }
 }
 
+impl crate::RootIssuerAdmission for ForbiddenServices {
+    fn admit_root_issuer(&self, _: &crate::IssuerDid, _: &crate::CapabilitySet) -> Result<(), crate::RootIssuerError> {
+        panic!("preflight denial must precede root-issuer admission")
+    }
+}
+
 #[test]
 fn substitution_regression_and_size_fail_before_external_services() {
     let fixture = super::DirectFixture::new();
@@ -139,7 +163,14 @@ fn substitution_regression_and_size_fail_before_external_services() {
     let proofs = crate::ProofCollection::empty();
     let profiles = super::KnownProfile::new(super::profile());
     let replay = super::RecordingReplay::default();
-    let verifier = verifier(&fixture.keys, &proofs, &profiles, &replay, &crate::token::DenyUnknownCaveats);
+    let verifier = verifier(
+        &fixture.keys,
+        &proofs,
+        &fixture.trusted_roots,
+        &profiles,
+        &replay,
+        &crate::token::DenyUnknownCaveats,
+    );
     let authorized = admit_direct(&fixture, &verifier).expect("initial holder admission");
     let limits = crate::VerificationLimits::default();
     let oversized = "x".repeat(limits.max_compact_token_bytes() + 1);
@@ -153,6 +184,8 @@ fn substitution_regression_and_size_fail_before_external_services() {
             token,
             &crate::HolderTokenVerificationContext::new(
                 crate::VerificationTime::from_unix_seconds(time),
+                &ForbiddenServices,
+                &ForbiddenServices,
                 &ForbiddenServices,
                 &ForbiddenServices,
                 &ForbiddenServices,
@@ -194,7 +227,14 @@ fn expiry_leaf_revocation_and_outage_deny_without_replay() {
     let proofs = crate::ProofCollection::empty();
     let profiles = super::KnownProfile::new(super::profile());
     let replay = super::RecordingReplay::default();
-    let mut verifier = verifier(&fixture.keys, &proofs, &profiles, &replay, &crate::token::DenyUnknownCaveats);
+    let mut verifier = verifier(
+        &fixture.keys,
+        &proofs,
+        &fixture.trusted_roots,
+        &profiles,
+        &replay,
+        &crate::token::DenyUnknownCaveats,
+    );
     let authorized = admit_direct(&fixture, &verifier).expect("initial holder admission");
     verifier.time = crate::VerificationTime::from_unix_seconds(super::EXPIRED_VERIFY_AT_SECONDS);
     assert!(matches!(
@@ -207,7 +247,14 @@ fn expiry_leaf_revocation_and_outage_deny_without_replay() {
             is_unavailable,
             calls: std::cell::RefCell::new(Vec::new()),
         };
-        let mut checked = self::verifier(&fixture.keys, &proofs, &profiles, &replay, &crate::token::DenyUnknownCaveats);
+        let mut checked = self::verifier(
+            &fixture.keys,
+            &proofs,
+            &fixture.trusted_roots,
+            &profiles,
+            &replay,
+            &crate::token::DenyUnknownCaveats,
+        );
         checked.time = crate::VerificationTime::from_unix_seconds(1501);
         checked.revocations = &revocations;
         assert!(matches!(
@@ -224,7 +271,14 @@ fn delegated_recheck_visits_parent_and_denies_revoked_or_missing_proof() {
     let fixture = super::DelegatedFixture::new();
     let profiles = super::KnownProfile::new(super::profile());
     let replay = super::RecordingReplay::default();
-    let mut verifier = verifier(&fixture.keys, &fixture.proofs, &profiles, &replay, &crate::token::DenyUnknownCaveats);
+    let mut verifier = verifier(
+        &fixture.keys,
+        &fixture.proofs,
+        &fixture.trusted_roots,
+        &profiles,
+        &replay,
+        &crate::token::DenyUnknownCaveats,
+    );
     let signature = super::sign_request(
         &fixture.token,
         &fixture.audience,
@@ -280,7 +334,7 @@ fn changed_profile_or_caveat_denies_original_operation() {
     };
     let profiles = super::KnownProfile::new(super::profile());
     let replay = super::RecordingReplay::default();
-    let mut verifier = verifier(&fixture.keys, &proofs, &profiles, &replay, &policies);
+    let mut verifier = verifier(&fixture.keys, &proofs, &fixture.trusted_roots, &profiles, &replay, &policies);
     let authorized = admit_direct(&fixture, &verifier).expect("initial caveated admission");
     assert!(verifier.recheck(&authorized, fixture.token.as_str()).is_ok());
     let denied = super::OrderedCaveatSet {
@@ -303,5 +357,33 @@ fn changed_profile_or_caveat_denies_original_operation() {
         Err(crate::HolderRecheckError::Verification(crate::HolderInvocationError::OperationProfile { .. }))
     ));
     assert_eq!(events.borrow().len(), calls);
+    assert_eq!(replay.calls.get(), 1);
+}
+
+#[test]
+fn removed_root_issuer_denies_recheck_without_replay() {
+    let fixture = super::DirectFixture::new();
+    let proofs = crate::ProofCollection::empty();
+    let profiles = super::KnownProfile::new(super::profile());
+    let replay = super::RecordingReplay::default();
+    let mut verifier = verifier(
+        &fixture.keys,
+        &proofs,
+        &fixture.trusted_roots,
+        &profiles,
+        &replay,
+        &crate::token::DenyUnknownCaveats,
+    );
+    let authorized = admit_direct(&fixture, &verifier).expect("initial holder admission");
+    let empty_roots = crate::TrustedRootIssuers::empty();
+    verifier.root_issuers = &empty_roots;
+    assert!(matches!(
+        verifier.recheck(&authorized, fixture.token.as_str()),
+        Err(crate::HolderRecheckError::Verification(crate::HolderInvocationError::Token {
+            source: crate::TokenError::RootIssuer {
+                source: crate::RootIssuerError::UntrustedRootIssuer { .. }
+            }
+        }))
+    ));
     assert_eq!(replay.calls.get(), 1);
 }

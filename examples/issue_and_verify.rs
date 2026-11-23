@@ -11,6 +11,7 @@ use ucan::ProofCollection;
 use ucan::ProofReferences;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
+use ucan::TrustedRootIssuers;
 use ucan::VerificationContext;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
@@ -39,6 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
         keys,
         ProofCollection::empty(),
+        TrustedRootIssuers::empty().with_issuer(issuer.issuer()?),
     );
     let verified = verify_compact_token(&token, &context)?;
 

@@ -13,6 +13,7 @@ use ucan::ProofReferences;
 use ucan::ProofStoreError;
 use ucan::TokenError;
 use ucan::TokenTimeBounds;
+use ucan::TrustedRootIssuers;
 use ucan::VerificationContext;
 use ucan::VerificationTime;
 use ucan::issue_token;
@@ -69,6 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .build()?;
     let missing_proof_child = issue_token(&missing_proof_request)?;
 
+    let trusted_roots = TrustedRootIssuers::empty().with_issuer(issuer_key.issuer()?);
     let context = VerificationContext::new(
         VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
         KeyResolutionContext::new(vec![
@@ -76,11 +78,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ed25519VerificationKey::from_signing_key(&audience_key)?,
         ]),
         ProofCollection::empty(),
+        trusted_roots.clone(),
     );
     let missing_key_context = VerificationContext::new(
         VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
         KeyResolutionContext::new(Vec::new()),
         ProofCollection::empty(),
+        trusted_roots,
     );
 
     assert_eq!(map_verification_str(" not-a-token ", &context), ApplicationOutcome::BadBearerToken);

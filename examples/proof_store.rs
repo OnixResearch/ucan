@@ -11,6 +11,7 @@ use ucan::ProofReferences;
 use ucan::ProofToken;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
+use ucan::TrustedRootIssuers;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
 use ucan::token::ProofReference;
@@ -81,11 +82,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let keys = KeyResolutionContext::new(vec![root.verification_key()?, child.verification_key()?]);
     let proofs = MapProofStore::from_tokens(vec![parent_token]);
+    let trusted_roots = TrustedRootIssuers::empty().with_issuer(root.issuer()?);
     let verified = verify_compact_token_with_resolvers(
         &child_token,
         VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
         &keys,
         &proofs,
+        &trusted_roots,
         VerificationLimits::default(),
     )?;
 

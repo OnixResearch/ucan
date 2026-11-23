@@ -125,9 +125,10 @@ pub fn recheck_holder_authorization<'live>(
     let verified = super::verify_compact_token_str_with_resolvers_and_revocations(
         compact_token,
         token_context.time,
-        token_context.key_resolver,
+        token_context.issuer_key_resolver,
         token_context.proof_store,
         token_context.revocations,
+        token_context.root_issuers,
         token_context.limits,
     )
     .map_err(|source| HolderRecheckError::Verification(super::HolderInvocationError::Token { source }))?;

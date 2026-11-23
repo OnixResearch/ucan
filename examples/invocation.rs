@@ -32,6 +32,7 @@ use ucan::ProofReferences;
 use ucan::RequestBindingDigest;
 use ucan::TokenSigner;
 use ucan::TokenTimeBounds;
+use ucan::TrustedRootIssuers;
 use ucan::VerificationLimits;
 use ucan::VerificationTime;
 use ucan::issue_token_with_signer;
@@ -129,7 +130,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         &ProofReferences::empty(),
         TokenTimeBounds::new(TOKEN_NOT_BEFORE_SECONDS, TOKEN_EXPIRES_SECONDS)?,
     )?;
-    let keys = KeyResolutionContext::new(vec![issuer.verification_key()?, audience_key.verification_key()?]);
+    let issuer_keys = KeyResolutionContext::new(vec![issuer.verification_key()?]);
+    let holder_keys = KeyResolutionContext::new(vec![audience_key.verification_key()?]);
+    let trusted_roots = TrustedRootIssuers::empty().with_issuer(issuer.issuer()?);
     let proofs = ProofCollection::empty();
     let revocations = NoRevocations;
     let policies = ExamplePolicies {
@@ -154,9 +157,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let replay = ExampleReplayAdmission::default();
     let token_context = HolderTokenVerificationContext::new(
         VerificationTime::from_unix_seconds(VERIFY_AT_SECONDS),
-        &keys,
+        &issuer_keys,
+        &holder_keys,
         &proofs,
         &revocations,
+        &trusted_roots,
         VerificationLimits::default(),
     );
     let policy_context =

@@ -222,6 +222,7 @@ pub enum TokenError {
     ProofStore { source: ProofStoreError },
     Revocation { source: RevocationError },
     Revoked { reference: ProofReference },
+    RootIssuer { source: RootIssuerError },
     LimitExceeded { source: VerificationLimitError },
     Signature { issuer: String },
     Temporal { message: String },
@@ -275,6 +276,7 @@ impl fmt::Display for TokenError {
             Self::ProofStore { source } => write!(formatter, "proof store failed: {source}"),
             Self::Revocation { source } => write!(formatter, "revocation check failed: {source}"),
             Self::Revoked { reference } => write!(formatter, "token reference {reference} is revoked"),
+            Self::RootIssuer { source } => write!(formatter, "root issuer admission failed: {source}"),
             Self::LimitExceeded { source } => write!(formatter, "verification limit exceeded: {source}"),
             Self::Signature { issuer } => write!(formatter, "signature failed for issuer {issuer}"),
             Self::Temporal { message } => write!(formatter, "temporal verification failed: {message}"),
@@ -304,6 +306,7 @@ impl std::error::Error for TokenError {
             Self::KeyResolver { source } => Some(source),
             Self::ProofStore { source } => Some(source),
             Self::Revocation { source } => Some(source),
+            Self::RootIssuer { source } => Some(source),
             Self::LimitExceeded { source } => Some(source),
             Self::VerifiedPrimitive { source } => Some(source),
             Self::EmptyCompactToken
@@ -426,6 +429,31 @@ impl fmt::Display for ProofStoreError {
 }
 
 impl std::error::Error for ProofStoreError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootIssuerError {
+    UntrustedRootIssuer { issuer: String },
+    Denied { issuer: String, message: String },
+    Backend { issuer: String, message: String },
+}
+
+impl fmt::Display for RootIssuerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UntrustedRootIssuer { issuer } => {
+                write!(formatter, "issuer {issuer} is not an admitted root issuer")
+            }
+            Self::Denied { issuer, message } => {
+                write!(formatter, "root issuer {issuer} denied: {message}")
+            }
+            Self::Backend { issuer, message } => {
+                write!(formatter, "root issuer admission backend failed for {issuer}: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RootIssuerError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RevocationError {
@@ -1436,6 +1464,87 @@ pub trait KeyResolver {
     fn resolve_key(&self, issuer: &IssuerDid) -> std::result::Result<Ed25519PublicKey, KeyResolverError>;
 }
 
+/// Synchronous caller-owned policy admitting proof-less root issuers.
+///
+/// Checked against every proof-less token in a verified chain, including
+/// proof-less root leaves reached through `prf`. Key resolution alone never
+/// grants root-issuance authority.
+pub trait RootIssuerAdmission {
+    /// Admit or deny a proof-less root token issued by `issuer` carrying `capabilities`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RootIssuerError`] when `issuer` is not trusted to mint a
+    /// proof-less root token or when the admission boundary fails.
+    fn admit_root_issuer(
+        &self,
+        issuer: &IssuerDid,
+        capabilities: &CapabilitySet,
+    ) -> std::result::Result<(), RootIssuerError>;
+}
+
+/// Explicit, fail-closed allowlist of issuer DIDs trusted to mint proof-less root tokens.
+///
+/// An empty allowlist denies every proof-less root token.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrustedRootIssuers {
+    roots: Vec<IssuerDid>,
+}
+
+impl TrustedRootIssuers {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self { roots: Vec::new() }
+    }
+
+    #[must_use]
+    pub fn from_issuers<I>(issuers: I) -> Self
+    where I: IntoIterator<Item = IssuerDid> {
+        let mut set = Self::empty();
+        for issuer in issuers {
+            set.insert(issuer);
+        }
+        set
+    }
+
+    #[must_use]
+    pub fn with_issuer(mut self, issuer: IssuerDid) -> Self {
+        self.insert(issuer);
+        self
+    }
+
+    pub fn insert(&mut self, issuer: IssuerDid) {
+        if !self.contains(&issuer) {
+            self.roots.push(issuer);
+        }
+    }
+
+    #[must_use]
+    pub fn contains(&self, issuer: &IssuerDid) -> bool {
+        self.roots.iter().any(|candidate| candidate == issuer)
+    }
+
+    #[must_use]
+    pub const fn as_slice(&self) -> &[IssuerDid] {
+        self.roots.as_slice()
+    }
+}
+
+impl RootIssuerAdmission for TrustedRootIssuers {
+    fn admit_root_issuer(
+        &self,
+        issuer: &IssuerDid,
+        _capabilities: &CapabilitySet,
+    ) -> std::result::Result<(), RootIssuerError> {
+        if self.contains(issuer) {
+            return Ok(());
+        }
+        Err(RootIssuerError::UntrustedRootIssuer {
+            issuer: issuer.as_str().to_owned(),
+        })
+    }
+}
+
 /// A proof token returned by a caller-owned proof store.
 ///
 /// Borrowed values avoid token copies. Owned values retain zeroizing ownership.
@@ -2275,6 +2384,7 @@ pub struct VerificationContext {
     time: VerificationTime,
     keys: KeyResolutionContext,
     proofs: ProofCollection,
+    trusted_roots: TrustedRootIssuers,
     limits: VerificationLimits,
 }
 
@@ -2285,6 +2395,7 @@ impl fmt::Debug for VerificationContext {
             .field("time", &self.time)
             .field("keys", &self.keys)
             .field("proof_count", &self.proofs.as_slice().len())
+            .field("trusted_roots", &self.trusted_roots)
             .field("limits", &self.limits)
             .finish()
     }
@@ -2292,8 +2403,13 @@ impl fmt::Debug for VerificationContext {
 
 impl VerificationContext {
     #[must_use]
-    pub fn new(time: VerificationTime, keys: KeyResolutionContext, proofs: ProofCollection) -> Self {
-        Self::with_limits(time, keys, proofs, VerificationLimits::default())
+    pub fn new(
+        time: VerificationTime,
+        keys: KeyResolutionContext,
+        proofs: ProofCollection,
+        trusted_roots: TrustedRootIssuers,
+    ) -> Self {
+        Self::with_limits(time, keys, proofs, trusted_roots, VerificationLimits::default())
     }
 
     #[must_use]
@@ -2301,12 +2417,14 @@ impl VerificationContext {
         time: VerificationTime,
         keys: KeyResolutionContext,
         proofs: ProofCollection,
+        trusted_roots: TrustedRootIssuers,
         limits: VerificationLimits,
     ) -> Self {
         Self {
             time,
             keys,
             proofs,
+            trusted_roots,
             limits,
         }
     }
@@ -2327,6 +2445,11 @@ impl VerificationContext {
     }
 
     #[must_use]
+    pub const fn trusted_roots(&self) -> &TrustedRootIssuers {
+        &self.trusted_roots
+    }
+
+    #[must_use]
     pub const fn limits(&self) -> VerificationLimits {
         self.limits
     }
@@ -2342,6 +2465,7 @@ pub struct VerificationContextBuilder {
     time: Option<VerificationTime>,
     keys: Option<KeyResolutionContext>,
     proofs: Option<ProofCollection>,
+    trusted_roots: Option<TrustedRootIssuers>,
     limits: Option<VerificationLimits>,
 }
 
@@ -2352,6 +2476,7 @@ impl VerificationContextBuilder {
             time: None,
             keys: None,
             proofs: None,
+            trusted_roots: None,
             limits: None,
         }
     }
@@ -2375,6 +2500,18 @@ impl VerificationContextBuilder {
     }
 
     #[must_use]
+    pub fn trusted_roots(mut self, trusted_roots: TrustedRootIssuers) -> Self {
+        self.trusted_roots = Some(trusted_roots);
+        self
+    }
+
+    #[must_use]
+    pub fn trusted_root(mut self, issuer: IssuerDid) -> Self {
+        self.trusted_roots.get_or_insert_with(TrustedRootIssuers::empty).insert(issuer);
+        self
+    }
+
+    #[must_use]
     pub const fn limits(mut self, limits: VerificationLimits) -> Self {
         self.limits = Some(limits);
         self
@@ -2390,6 +2527,7 @@ impl VerificationContextBuilder {
             self.time.ok_or(BuilderError::MissingField { field: "time" })?,
             self.keys.ok_or(BuilderError::MissingField { field: "keys" })?,
             self.proofs.ok_or(BuilderError::MissingField { field: "proofs" })?,
+            self.trusted_roots.ok_or(BuilderError::MissingField { field: "trusted_roots" })?,
             self.limits.unwrap_or_default(),
         ))
     }
@@ -2950,7 +3088,8 @@ pub fn verify_compact_token(token: &CompactToken, context: &VerificationContext)
 /// # Errors
 ///
 /// Returns [`TokenError`] when size limits, parsing, structural validation,
-/// signature validation, temporal validation, or proof-chain validation fails.
+/// signature validation, temporal validation, root-issuer admission, or
+/// proof-chain validation fails.
 pub fn verify_compact_token_str(token: &str, context: &VerificationContext) -> TokenResult<VerifiedToken> {
     verify_compact_token_str_with_resolvers_and_revocations(
         token,
@@ -2958,44 +3097,50 @@ pub fn verify_compact_token_str(token: &str, context: &VerificationContext) -> T
         &context.keys,
         &context.proofs,
         &NoRevocations,
+        &context.trusted_roots,
         context.limits,
     )
 }
 
-/// Verify a compact-token owner through explicit resolver and proof-store inputs.
+/// Verify a compact-token owner through explicit resolver, proof-store, and root-issuer inputs.
 ///
 /// # Errors
 ///
 /// Returns [`TokenError`] when any verification stage fails.
-pub fn verify_compact_token_with_resolvers<R, S>(
+pub fn verify_compact_token_with_resolvers<R, S, T>(
     token: &CompactToken,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
+    root_issuers: &T,
     limits: VerificationLimits,
 ) -> TokenResult<VerifiedToken>
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
-    verify_compact_token_str_with_resolvers(token.as_str(), time, key_resolver, proof_store, limits)
+    verify_compact_token_str_with_resolvers(token.as_str(), time, key_resolver, proof_store, root_issuers, limits)
 }
 
-/// Verify borrowed compact-token text through explicit resolver and proof-store inputs.
+/// Verify borrowed compact-token text through explicit resolver, proof-store, and root-issuer
+/// inputs.
 ///
 /// # Errors
 ///
 /// Returns [`TokenError`] when any verification stage fails.
-pub fn verify_compact_token_str_with_resolvers<R, S>(
+pub fn verify_compact_token_str_with_resolvers<R, S, T>(
     token: &str,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
+    root_issuers: &T,
     limits: VerificationLimits,
 ) -> TokenResult<VerifiedToken>
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
     verify_compact_token_str_with_resolvers_and_revocations(
         token,
@@ -3003,27 +3148,31 @@ where
         key_resolver,
         proof_store,
         &NoRevocations,
+        root_issuers,
         limits,
     )
 }
 
-/// Verify a compact-token owner with explicit resolver, proof-store, and revocation inputs.
+/// Verify a compact-token owner with explicit resolver, proof-store, revocation, and root-issuer
+/// inputs.
 ///
 /// # Errors
 ///
 /// Returns [`TokenError`] when any verification stage fails.
-pub fn verify_compact_token_with_resolvers_and_revocations<R, S, V>(
+pub fn verify_compact_token_with_resolvers_and_revocations<R, S, V, T>(
     token: &CompactToken,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
     revocations: &V,
+    root_issuers: &T,
     limits: VerificationLimits,
 ) -> TokenResult<VerifiedToken>
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
     V: RevocationChecker + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
     verify_compact_token_str_with_resolvers_and_revocations(
         token.as_str(),
@@ -3031,27 +3180,33 @@ where
         key_resolver,
         proof_store,
         revocations,
+        root_issuers,
         limits,
     )
 }
 
 /// Verify borrowed compact-token text with every external truth supplied explicitly.
 ///
+/// Every proof-less token in the verified chain (whether the top-level token or
+/// a root leaf reached through `prf`) must be admitted by `root_issuers`.
+///
 /// # Errors
 ///
 /// Returns [`TokenError`] when any verification stage fails.
-pub fn verify_compact_token_str_with_resolvers_and_revocations<R, S, V>(
+pub fn verify_compact_token_str_with_resolvers_and_revocations<R, S, V, T>(
     token: &str,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
     revocations: &V,
+    root_issuers: &T,
     limits: VerificationLimits,
 ) -> TokenResult<VerifiedToken>
 where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
     V: RevocationChecker + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
     let mut traversal = VerificationTraversal::default();
     let verified = verify_compact_token_with_traversal(
@@ -3060,6 +3215,7 @@ where
         key_resolver,
         proof_store,
         revocations,
+        root_issuers,
         limits,
         &mut traversal,
         0,
@@ -3092,12 +3248,14 @@ fn verify_successful_verification_stage_flow() -> TokenResult<()> {
     })
 }
 
-fn verify_compact_token_with_traversal<R, S, V>(
+#[allow(clippy::too_many_arguments)]
+fn verify_compact_token_with_traversal<R, S, V, T>(
     token: &str,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
     revocations: &V,
+    root_issuers: &T,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -3106,6 +3264,7 @@ where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
     V: RevocationChecker + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
     enforce_proof_depth(depth, limits)?;
     enforce_compact_token_size(token, limits)?;
@@ -3116,18 +3275,29 @@ where
     let decoded = parse_compact_token_str_bounded(token, limits)?;
     let valid = validate_decoded_token(decoded)?;
     let signed = verify_token_signature_with_traversal(valid, key_resolver, traversal)?;
-    let verified =
-        authorize_signed_token(signed, time, key_resolver, proof_store, revocations, limits, traversal, depth)?;
+    let verified = authorize_signed_token(
+        signed,
+        time,
+        key_resolver,
+        proof_store,
+        revocations,
+        root_issuers,
+        limits,
+        traversal,
+        depth,
+    )?;
     let _removed = traversal.trail.pop();
     Ok(verified)
 }
 
-fn authorize_signed_token<R, S, V>(
+#[allow(clippy::too_many_arguments)]
+fn authorize_signed_token<R, S, V, T>(
     signed: SignatureVerifiedToken<'_>,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
     revocations: &V,
+    root_issuers: &T,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -3136,6 +3306,7 @@ where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
     V: RevocationChecker + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
     let token = signed.token;
     validate_envelope_for_token(&token, time, limits)?;
@@ -3154,6 +3325,7 @@ where
         key_resolver,
         proof_store,
         revocations,
+        root_issuers,
         limits,
         traversal,
         depth,
@@ -3181,7 +3353,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn effective_delegation<R, S, V>(
+fn effective_delegation<R, S, V, T>(
     child_issuer: &IssuerDid,
     capabilities: &CapabilitySet,
     time_bounds: TokenTimeBounds,
@@ -3190,6 +3362,7 @@ fn effective_delegation<R, S, V>(
     key_resolver: &R,
     proof_store: &S,
     revocations: &V,
+    root_issuers: &T,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -3198,8 +3371,12 @@ where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
     V: RevocationChecker + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
     if proofs.as_slice().is_empty() {
+        root_issuers
+            .admit_root_issuer(child_issuer, capabilities)
+            .map_err(|source| TokenError::RootIssuer { source })?;
         return Ok(EffectiveDelegationEvaluation {
             effective: EffectiveDelegation {
                 capabilities: capabilities.clone(),
@@ -3208,8 +3385,17 @@ where
             parent_proof_transcript: None,
         });
     }
-    let parent_tokens =
-        verify_parent_tokens(proofs, time, key_resolver, proof_store, revocations, limits, traversal, depth + 1)?;
+    let parent_tokens = verify_parent_tokens(
+        proofs,
+        time,
+        key_resolver,
+        proof_store,
+        revocations,
+        root_issuers,
+        limits,
+        traversal,
+        depth + 1,
+    )?;
     verify_child_is_linked_to_parent_audience(child_issuer, &parent_tokens)?;
     let effective_time = verify_temporal_attenuation(time_bounds, parent_tokens.as_slice())?;
     let effective_capabilities = verify_capability_attenuation(capabilities, parent_tokens.as_slice())?;
@@ -3222,12 +3408,14 @@ where
     })
 }
 
-fn verify_parent_tokens<R, S, V>(
+#[allow(clippy::too_many_arguments)]
+fn verify_parent_tokens<R, S, V, T>(
     proofs: &ProofReferences,
     time: VerificationTime,
     key_resolver: &R,
     proof_store: &S,
     revocations: &V,
+    root_issuers: &T,
     limits: VerificationLimits,
     traversal: &mut VerificationTraversal,
     depth: usize,
@@ -3236,6 +3424,7 @@ where
     R: KeyResolver + ?Sized,
     S: ProofStore + ?Sized,
     V: RevocationChecker + ?Sized,
+    T: RootIssuerAdmission + ?Sized,
 {
     let mut parents = Vec::with_capacity(proofs.as_slice().len());
     for reference in proofs.as_slice() {
@@ -3271,6 +3460,7 @@ where
             key_resolver,
             proof_store,
             revocations,
+            root_issuers,
             limits,
             traversal,
             depth,
@@ -4669,6 +4859,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             KeyResolutionContext::new(Vec::new()),
             ProofCollection::empty(),
+            super::TrustedRootIssuers::empty(),
             VerificationLimits::new(0, 0, INPUT_BYTE_LIMIT),
         );
 
@@ -4780,18 +4971,35 @@ mod tests {
         let keys = KeyResolutionContext::new(vec![
             Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
         ]);
+        let trusted_roots =
+            super::TrustedRootIssuers::empty().with_issuer(issuer_key.issuer().expect("issuer should derive"));
         let time = VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS);
         let limits = VerificationLimits::new(2, 3, 4_096);
-        let positional_context = VerificationContext::with_limits(time, keys.clone(), ProofCollection::empty(), limits);
+        let positional_context = VerificationContext::with_limits(
+            time,
+            keys.clone(),
+            ProofCollection::empty(),
+            trusted_roots.clone(),
+            limits,
+        );
         let built_context = VerificationContext::builder()
             .time(time)
             .keys(keys)
             .proofs(ProofCollection::empty())
+            .trusted_roots(trusted_roots)
             .limits(limits)
             .build()
             .expect("verification builder should complete");
         assert_eq!(built_context, positional_context);
         assert_eq!(VerificationContext::builder().build(), Err(BuilderError::MissingField { field: "time" }));
+        assert_eq!(
+            VerificationContext::builder()
+                .time(time)
+                .keys(KeyResolutionContext::new(Vec::new()))
+                .proofs(ProofCollection::empty())
+                .build(),
+            Err(BuilderError::MissingField { field: "trusted_roots" })
+        );
     }
 
     #[test]
@@ -5314,6 +5522,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             KeyResolutionContext::new(vec![signer.verification_key().expect("verification key should derive")]),
             ProofCollection::empty(),
+            super::TrustedRootIssuers::empty().with_issuer(signer.issuer().expect("issuer should derive")),
         );
 
         let verified = verify_compact_token(&token, &context).expect("signer-issued token should verify");
@@ -5791,6 +6000,7 @@ mod tests {
             &keys,
             &ProofCollection::empty(),
             &FailingRevocationChecker,
+            &super::TrustedRootIssuers::empty().with_issuer(issuer_key.issuer().expect("issuer should derive")),
             VerificationLimits::default(),
         )
         .expect_err("revocation backend failure must deny");
@@ -5818,6 +6028,7 @@ mod tests {
             &keys,
             &FailingProofStore,
             &NoRevocations,
+            &super::TrustedRootIssuers::empty().with_issuer(parent_key.issuer().expect("parent issuer should derive")),
             VerificationLimits::default(),
         )
         .expect_err("proof store backend failure must deny");
@@ -5987,10 +6198,16 @@ mod tests {
         ])
     }
 
+    fn boundary_scope_roots() -> super::TrustedRootIssuers {
+        super::TrustedRootIssuers::empty()
+            .with_issuer(signing_key(BOUNDARY_ISSUER_BYTE).issuer().expect("issuer should derive"))
+    }
+
     #[test]
     fn clock_skew_default_grace_admits_documented_boundaries() {
         let token = boundary_scope_token();
         let keys = boundary_scope_keys();
+        let roots = boundary_scope_roots();
         for at in [
             BOUNDARY_NOT_BEFORE_SECONDS - 1,
             BOUNDARY_NOT_BEFORE_SECONDS,
@@ -6002,6 +6219,7 @@ mod tests {
                 VerificationTime::from_unix_seconds(at),
                 &keys,
                 &ProofCollection::empty(),
+                &roots,
                 VerificationLimits::default(),
             );
             assert!(result.is_ok(), "default surface must admit the in-grace boundary time {at}");
@@ -6012,6 +6230,7 @@ mod tests {
     fn clock_skew_out_of_grace_reports_temporal_error() {
         let token = boundary_scope_token();
         let keys = boundary_scope_keys();
+        let roots = boundary_scope_roots();
         for at in [
             BOUNDARY_NOT_BEFORE_SECONDS - CLOCK_SKEW_GRACE_SECONDS - 1,
             BOUNDARY_EXPIRES_AT_SECONDS + CLOCK_SKEW_GRACE_SECONDS + 1,
@@ -6021,6 +6240,7 @@ mod tests {
                 VerificationTime::from_unix_seconds(at),
                 &keys,
                 &ProofCollection::empty(),
+                &roots,
                 VerificationLimits::default(),
             )
             .expect_err("out-of-grace time must be rejected");
@@ -6035,6 +6255,7 @@ mod tests {
     fn clock_skew_strict_opt_in_rejects_in_grace_token() {
         let token = boundary_scope_token();
         let keys = boundary_scope_keys();
+        let roots = boundary_scope_roots();
         let at = BOUNDARY_EXPIRES_AT_SECONDS + 50;
 
         let default_result = super::verify_compact_token_with_resolvers(
@@ -6042,6 +6263,7 @@ mod tests {
             VerificationTime::from_unix_seconds(at),
             &keys,
             &ProofCollection::empty(),
+            &roots,
             VerificationLimits::default(),
         );
         assert!(default_result.is_ok(), "default surface must remain lenient at {at}");
@@ -6051,6 +6273,7 @@ mod tests {
             VerificationTime::from_unix_seconds(at),
             &keys,
             &ProofCollection::empty(),
+            &roots,
             VerificationLimits::strict(),
         )
         .expect_err("strict surface must reject an in-grace token");
@@ -6106,6 +6329,7 @@ mod tests {
                 Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
             ]),
             ProofCollection::empty(),
+            super::TrustedRootIssuers::empty().with_issuer(issuer_key.issuer().expect("issuer should derive")),
         );
 
         assert_repeated_verification_retains_bounded_memory(
@@ -6128,6 +6352,7 @@ mod tests {
                 Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
             ]),
             ProofCollection::empty(),
+            super::TrustedRootIssuers::empty().with_issuer(issuer_key.issuer().expect("issuer should derive")),
         );
 
         assert_repeated_verification_retains_bounded_memory(
@@ -6343,6 +6568,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             &resolver,
             &context.proofs,
+            context.trusted_roots(),
             context.limits(),
         )
         .expect_err("resolver backend should fail");
@@ -6374,6 +6600,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             &keys,
             &store,
+            &super::TrustedRootIssuers::empty().with_issuer(parent_key.issuer().expect("parent issuer should derive")),
             VerificationLimits::default(),
         )
         .expect_err("proof store backend should fail");
@@ -6405,6 +6632,7 @@ mod tests {
             context.keys(),
             context.proofs(),
             &NoRevocations,
+            context.trusted_roots(),
             context.limits(),
         )
         .expect("no-op revocation checker should preserve verification");
@@ -6441,6 +6669,7 @@ mod tests {
             context.keys(),
             context.proofs(),
             &revoked,
+            context.trusted_roots(),
             context.limits(),
         )
         .expect_err("revoked leaf should fail");
@@ -6470,6 +6699,7 @@ mod tests {
             context.keys(),
             context.proofs(),
             &revoked,
+            context.trusted_roots(),
             context.limits(),
         )
         .expect_err("revoked parent should fail child verification");
@@ -6490,6 +6720,7 @@ mod tests {
             context.keys(),
             context.proofs(),
             &BackendFailingRevocationChecker,
+            context.trusted_roots(),
             context.limits(),
         )
         .expect_err("revocation backend failure should fail closed");
@@ -6505,6 +6736,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             KeyResolutionContext::new(Vec::new()),
             ProofCollection::empty(),
+            super::TrustedRootIssuers::empty(),
             VerificationLimits::new(1, 1, 3),
         );
         let error = super::verify_compact_token_str("not.enough.parts", &context)
@@ -6537,6 +6769,7 @@ mod tests {
                     .expect("keys should derive"),
             ),
             ProofCollection::from_tokens(vec![parent]),
+            super::TrustedRootIssuers::empty().with_issuer(parent_key.issuer().expect("parent issuer should derive")),
             VerificationLimits::new(0, 1, usize::MAX),
         );
         let error = verify_compact_token(&child, &context).expect_err("depth limit should fail");
@@ -6568,6 +6801,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             &keys,
             &CountingProofStore,
+            &super::TrustedRootIssuers::empty().with_issuer(parent_key.issuer().expect("parent issuer should derive")),
             limits,
         )
         .expect_err("proof count limit should fail");
@@ -6599,6 +6833,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             &keys,
             &OversizedProofStore,
+            &super::TrustedRootIssuers::empty().with_issuer(parent_key.issuer().expect("parent issuer should derive")),
             limits,
         )
         .expect_err("oversized resolved proof should fail before parse");
@@ -6630,6 +6865,7 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             &keys,
             &store,
+            &super::TrustedRootIssuers::empty().with_issuer(parent_key.issuer().expect("parent issuer should derive")),
             VerificationLimits::default(),
         )
         .expect_err("a substituted proof token must fail the reference binding");
@@ -6667,11 +6903,138 @@ mod tests {
             VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
             &keys,
             &store,
+            &super::TrustedRootIssuers::empty().with_issuer(parent_key.issuer().expect("parent issuer should derive")),
             VerificationLimits::default(),
         )
         .expect("a correctly resolved proof must verify");
 
         assert_eq!(verified.issuer().as_str(), child_key.issuer().expect("child issuer should derive").as_str());
+    }
+
+    #[test]
+    fn empty_trusted_roots_rejects_proof_less_token_even_when_key_resolves() {
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let keys = KeyResolutionContext::new(vec![
+            Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
+        ]);
+        let context = VerificationContext::new(
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            keys,
+            ProofCollection::empty(),
+            super::TrustedRootIssuers::empty(),
+        );
+
+        let error = verify_compact_token(&token, &context)
+            .expect_err("empty trusted-root allowlist must fail closed on proof-less root token");
+        assert!(matches!(error, TokenError::RootIssuer {
+            source: super::RootIssuerError::UntrustedRootIssuer { .. }
+        }));
+    }
+
+    #[test]
+    fn multi_proof_dag_rejects_when_any_root_leaf_is_untrusted() {
+        let trusted_root = signing_key(ISSUER_SECRET_BYTE);
+        let untrusted_root = signing_key(77);
+        let delegate = signing_key(CHILD_SECRET_BYTE);
+        let holder = signing_key(OTHER_SECRET_BYTE);
+        let delegate_audience = AudienceDid::from(delegate.issuer().expect("delegate issuer"));
+        let holder_audience = AudienceDid::from(holder.issuer().expect("holder issuer"));
+
+        let trusted_parent = issue_token(&IssueRequest::new(
+            trusted_root.clone(),
+            delegate_audience.clone(),
+            capabilities("did:key:z6Mkresource/docs/", "store/*"),
+            ProofReferences::empty(),
+            token_time_bounds(),
+        ))
+        .expect("trusted parent should issue");
+        let untrusted_parent = issue_token(&IssueRequest::new(
+            untrusted_root.clone(),
+            delegate_audience,
+            capabilities("did:key:z6Mkresource/secrets/", "store/*"),
+            ProofReferences::empty(),
+            token_time_bounds(),
+        ))
+        .expect("untrusted parent should issue");
+        let child = issue_token(&IssueRequest::new(
+            delegate.clone(),
+            holder_audience,
+            capabilities("did:key:z6Mkresource/docs/report", "store/add"),
+            ProofReferences::from_references(vec![
+                proof_reference(&trusted_parent),
+                proof_reference(&untrusted_parent),
+            ]),
+            token_time_bounds(),
+        ))
+        .expect("child token should issue");
+
+        let keys = KeyResolutionContext::new(vec![
+            Ed25519VerificationKey::from_signing_key(&trusted_root).expect("trusted key"),
+            Ed25519VerificationKey::from_signing_key(&untrusted_root).expect("untrusted key"),
+            Ed25519VerificationKey::from_signing_key(&delegate).expect("delegate key"),
+        ]);
+        let proofs = ProofCollection::from_tokens(vec![trusted_parent, untrusted_parent]);
+        let roots = super::TrustedRootIssuers::empty().with_issuer(trusted_root.issuer().expect("trusted root issuer"));
+
+        let error = super::verify_compact_token_with_resolvers(
+            &child,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &proofs,
+            &roots,
+            VerificationLimits::default(),
+        )
+        .expect_err("multi-proof DAG with any untrusted root leaf must fail closed");
+        assert!(matches!(
+            error,
+            TokenError::RootIssuer {
+                source: super::RootIssuerError::UntrustedRootIssuer { issuer }
+            } if issuer == untrusted_root.issuer().expect("untrusted issuer").as_str()
+        ));
+    }
+
+    #[test]
+    fn root_issuer_admission_backend_failure_fails_closed() {
+        struct FailingRootAdmission;
+        impl super::RootIssuerAdmission for FailingRootAdmission {
+            fn admit_root_issuer(
+                &self,
+                issuer: &IssuerDid,
+                _capabilities: &CapabilitySet,
+            ) -> std::result::Result<(), super::RootIssuerError> {
+                Err(super::RootIssuerError::Backend {
+                    issuer: issuer.as_str().to_owned(),
+                    message: BACKEND_FAILURE_MESSAGE.to_owned(),
+                })
+            }
+        }
+
+        let issuer_key = signing_key(ISSUER_SECRET_BYTE);
+        let audience = signing_key(AUDIENCE_SECRET_BYTE).issuer().expect("audience should derive");
+        let token = issue_token(&issue_request(&issuer_key, AudienceDid::from(audience), ProofCollection::empty()))
+            .expect("token should issue");
+        let keys = KeyResolutionContext::new(vec![
+            Ed25519VerificationKey::from_signing_key(&issuer_key).expect("key should derive"),
+        ]);
+
+        let error = super::verify_compact_token_with_resolvers(
+            &token,
+            VerificationTime::from_unix_seconds(VERIFICATION_TIME_SECONDS),
+            &keys,
+            &ProofCollection::empty(),
+            &FailingRootAdmission,
+            VerificationLimits::default(),
+        )
+        .expect_err("root-issuer backend failure must fail closed");
+        assert!(matches!(
+            error,
+            TokenError::RootIssuer {
+                source: super::RootIssuerError::Backend { message, .. }
+            } if message == BACKEND_FAILURE_MESSAGE
+        ));
     }
 
     #[test]
@@ -7133,6 +7496,9 @@ mod tests {
         proofs: ProofCollection,
         time_seconds: u64,
     ) -> VerificationContext {
+        let trusted_roots = super::TrustedRootIssuers::from_issuers(
+            signing_keys.iter().map(|key| key.issuer().expect("issuer should derive")),
+        );
         let keys = signing_keys
             .into_iter()
             .map(Ed25519VerificationKey::from_signing_key)
@@ -7142,6 +7508,7 @@ mod tests {
             VerificationTime::from_unix_seconds(time_seconds),
             KeyResolutionContext::new(keys),
             proofs,
+            trusted_roots,
         )
     }
 
